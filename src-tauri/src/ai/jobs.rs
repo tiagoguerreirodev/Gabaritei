@@ -98,9 +98,10 @@ impl GenerationManager {
                 }
                 on_event(&manager.status());
             });
+            // A draft that was saved wins over a cancel that arrived afterwards.
             let outcome = match result {
-                _ if cancel.is_cancelled() => GenerationOutcome::Cancelled,
                 Ok(draft_id) => GenerationOutcome::Draft { draft_id },
+                Err(_) if cancel.is_cancelled() => GenerationOutcome::Cancelled,
                 Err(error) => GenerationOutcome::Failed {
                     message: error.to_string(),
                 },
@@ -232,6 +233,26 @@ mod tests {
             Some(GenerationOutcome::Cancelled)
         );
         assert!(!manager.cancel(), "nothing left to cancel");
+    }
+
+    #[test]
+    fn a_saved_draft_is_reported_even_if_cancel_arrived_late() {
+        let manager = GenerationManager::default();
+        manager
+            .start(
+                |cancel, _| {
+                    cancel.cancel();
+                    Ok("draft-9".into())
+                },
+                |_| {},
+            )
+            .unwrap();
+        assert_eq!(
+            wait_until_done(&manager).outcome,
+            Some(GenerationOutcome::Draft {
+                draft_id: "draft-9".into()
+            })
+        );
     }
 
     #[test]

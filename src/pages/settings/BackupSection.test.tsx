@@ -120,7 +120,7 @@ describe("BackupSection", () => {
 
   it("warns not to share one folder between two computers", async () => {
     backend();
-    render(() => <BackupSection />);
+    render(() => <BackupSection busy={createBusy()} />);
 
     expect(await screen.findByText(/Não use a mesma pasta nos dois computadores/)).toBeVisible();
   });
@@ -128,7 +128,7 @@ describe("BackupSection", () => {
   it("says what a folder change leaves behind, and lets the user dismiss it", async () => {
     backend({}, {}, { folder: "/dados/backups", backups: 3, safety: 1 });
     const user = userEvent.setup();
-    render(() => <BackupSection />);
+    render(() => <BackupSection busy={createBusy()} />);
 
     expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "Escolher pasta…" }));
@@ -154,7 +154,7 @@ describe("BackupSection", () => {
       },
     );
     const user = userEvent.setup();
-    render(() => <BackupSection />);
+    render(() => <BackupSection busy={createBusy()} />);
 
     await user.click(await screen.findByRole("button", { name: "Usar a pasta padrão" }));
 
@@ -169,7 +169,7 @@ describe("BackupSection", () => {
   it("shows no notice when the old folder had no backups", async () => {
     backend();
     const user = userEvent.setup();
-    render(() => <BackupSection />);
+    render(() => <BackupSection busy={createBusy()} />);
 
     await user.click(await screen.findByRole("button", { name: "Escolher pasta…" }));
 

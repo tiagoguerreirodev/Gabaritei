@@ -20,7 +20,7 @@ use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportRes
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, RemNoteTest};
 use crate::attempts::{self, AttemptView, SessionStart};
-use crate::backup::{BackupInfo, BackupService, BackupStatus};
+use crate::backup::{BackupInfo, BackupService, BackupStatus, OpenableFolder};
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
@@ -109,6 +109,30 @@ pub fn backup_status(
     service: State<'_, BackupService>,
 ) -> AppResult<BackupStatus> {
     service.status(&db, &paths)
+}
+
+/// The app data folder, shown in Configurações → Dados.
+#[tauri::command]
+pub fn data_folder(paths: State<'_, AppPaths>) -> String {
+    paths.data_dir().display().to_string()
+}
+
+/// Opens the app data folder or the backup folder in the system file manager. The frontend
+/// can only name one of the two; it never sends a path.
+#[tauri::command(async)]
+pub fn open_folder<R: Runtime>(
+    app: AppHandle<R>,
+    db: State<'_, Database>,
+    paths: State<'_, AppPaths>,
+    which: OpenableFolder,
+) -> AppResult<()> {
+    let path = crate::backup::folder_to_open(&db, &paths, which)?;
+    tauri_plugin_opener::OpenerExt::opener(&app)
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|error| {
+            eprintln!("Gabaritei: could not open the folder: {error}");
+            AppError::Invalid("Não foi possível abrir a pasta.".into())
+        })
 }
 
 /// Makes a backup now.

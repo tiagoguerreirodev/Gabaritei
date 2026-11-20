@@ -39,6 +39,8 @@ function backend(
           ],
           lastError: null,
         };
+      case "data_folder":
+        return "/home/dados/gabaritei";
       case "backup_now":
         return backingUp;
       case "import_data":

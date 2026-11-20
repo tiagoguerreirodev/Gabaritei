@@ -92,6 +92,11 @@ pub enum Outcome {
     Annulled,
 }
 
+/// SQL for when a response counts as given, over `responses r` joined to `attempts a`: the time
+/// the user answered, or the attempt's finish time for a blank. Desempenho and the error
+/// notebook both rank a question's responses by it, so they pick the same latest one.
+pub const RESPONSE_TIME_SQL: &str = "COALESCE(r.answered_at, a.finished_at)";
+
 /// The one scoring rule. Annulment wins over everything; otherwise blank, correct or wrong.
 pub fn outcome(choice: Option<&str>, answer_id: &str, annulled: bool) -> Outcome {
     match choice {

@@ -98,7 +98,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 
 ### 3.4 Performance (*Desempenho*)
 - **Scoring:** correct, wrong, blank or annulled (§3.4 of the analysis, without essays or pending grades).
-- **Topic strength** uses the latest *answered* response per question (a later blank never hides an earlier answer; a never-answered question counts as blank). Coverage counts questions answered at least once. It reports achievement, accuracy and coverage by area › matter › topic. Weakest topics come first, with a small-sample warning.
+- **Topic strength** uses the latest *answered* response per question, ranked by when it was answered, the same ordering as the error notebook (a later blank never hides an earlier answer; a never-answered question counts as blank). Coverage counts questions answered at least once. It reports achievement, accuracy and coverage by area › matter › topic. Weakest topics come first, with a small-sample warning.
 - **Trend:** weekly accuracy from all answers.
 - **Filters:** contest tag, board tag (both from the collections a question belongs to), feedback mode.
 - **Other views:** history per collection and per session, a home dashboard, and CSV export.

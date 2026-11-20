@@ -149,6 +149,26 @@ pub fn finish(
     db.transaction(|tx| attempts::finish(tx, &attempt_id, revision, &crate::clock::now()))
 }
 
+/// Annuls a revealed question: it leaves every score until restored.
+#[tauri::command]
+pub fn annul(db: State<'_, Database>, attempt_id: String, position: u32) -> AppResult<AttemptView> {
+    db.transaction(|tx| {
+        attempts::set_annulled(tx, &attempt_id, position, true, &crate::clock::now())
+    })
+}
+
+/// Restores an annulled question to every score.
+#[tauri::command]
+pub fn unannul(
+    db: State<'_, Database>,
+    attempt_id: String,
+    position: u32,
+) -> AppResult<AttemptView> {
+    db.transaction(|tx| {
+        attempts::set_annulled(tx, &attempt_id, position, false, &crate::clock::now())
+    })
+}
+
 /// Deletes an unfinished attempt.
 #[tauri::command]
 pub fn abandon(db: State<'_, Database>, attempt_id: String) -> AppResult<()> {

@@ -4,7 +4,7 @@ import type { AttemptView } from "../../bindings/AttemptView";
 import type { Score } from "../../bindings/Score";
 import Modal from "../../components/Modal";
 import { ErrorState, Loading } from "../../components/states";
-import { showError } from "../../components/toasts";
+import { showError, showToast } from "../../components/toasts";
 import Navigator from "./Navigator";
 import QuestionCard from "./QuestionCard";
 import { formatPercent, optionLetters } from "./format";
@@ -96,6 +96,16 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     const q = current();
     if (!q || finished()) return;
     enqueue((id) => api.flag(id, q.position, !q.flagged));
+  };
+
+  const annul = (annulled: boolean) => {
+    const q = current();
+    if (!q?.reveal) return;
+    enqueue(async (id) => {
+      const next = await (annulled ? api.annul(id, q.position) : api.unannul(id, q.position));
+      showToast(annulled ? "Questão anulada." : "Anulação desfeita.");
+      return next;
+    });
   };
 
   const finish = async () => {
@@ -210,6 +220,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                   onAnswer={answer}
                   onEliminate={eliminate}
                   onFlag={flag}
+                  onAnnul={annul}
                 />
               )}
             </Show>

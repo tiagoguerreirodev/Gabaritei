@@ -505,3 +505,83 @@ fn empty_sources_are_a_pt_br_error() {
     });
     assert_eq!(missing.unwrap_err().to_string(), "Caderno não encontrado.");
 }
+
+#[test]
+fn annulling_leaves_every_denominator_and_unannulling_restores_it() {
+    let (db, _) = bank();
+    // A finished attempt where position 0 was answered wrong.
+    let first = start_collection(&db, FeedbackMode::Exam);
+    let wrong = wrong_of(&db, &first.questions[0]);
+    let target = first.questions[0].question_id.clone();
+    let first = db
+        .transaction(|tx| answer(tx, &first.id, 0, Some(&wrong), T1))
+        .unwrap();
+    let first = db
+        .transaction(|tx| finish(tx, &first.id, first.revision, T1))
+        .unwrap();
+    let before = first.score.clone().unwrap();
+    assert_eq!((before.wrong, before.evaluated, before.annulled), (1, 4, 0));
+
+    // A Study attempt reveals the same question, then annuls it from there.
+    let second = start_collection(&db, FeedbackMode::Study);
+    let position = second
+        .questions
+        .iter()
+        .position(|q| q.question_id == target)
+        .unwrap() as u32;
+    let other = (position + 1) % 4;
+    let early = db.transaction(|tx| set_annulled(tx, &second.id, other, true, T2));
+    assert!(
+        early
+            .unwrap_err()
+            .to_string()
+            .contains("depois de ver o gabarito"),
+        "an unrevealed question can't be annulled"
+    );
+    let key = key_of(&db, &target);
+    db.transaction(|tx| answer(tx, &second.id, position, Some(&key), T2))
+        .unwrap();
+    let second = db
+        .transaction(|tx| set_annulled(tx, &second.id, position, true, T2))
+        .unwrap();
+    let reveal = second.questions[position as usize].reveal.clone().unwrap();
+    assert!(reveal.annulled);
+    assert_eq!(reveal.outcome, Outcome::Annulled);
+
+    // The earlier, finished attempt is re-scored: the wrong answer leaves the denominator.
+    let after = db.with(|c| load(c, &first.id)).unwrap().score.unwrap();
+    assert_eq!(
+        (after.wrong, after.annulled, after.evaluated),
+        (0, 1, 3),
+        "{after:?}"
+    );
+    assert_eq!(after.achievement, Some(0.0));
+    assert_eq!(after.accuracy, None);
+
+    // Topic sessions skip it now.
+    let topic_id: i64 = db
+        .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
+        .unwrap();
+    let topic = db
+        .transaction(|tx| {
+            start(
+                tx,
+                &SessionStart {
+                    source: SessionSource::Topic {
+                        topic_id,
+                        count: 10,
+                    },
+                    feedback_mode: FeedbackMode::Exam,
+                },
+                T2,
+            )
+        })
+        .unwrap();
+    assert!(topic.questions.iter().all(|q| q.question_id != target));
+
+    // Unannulling restores everything.
+    db.transaction(|tx| set_annulled(tx, &second.id, position, false, T2))
+        .unwrap();
+    let restored = db.with(|c| load(c, &first.id)).unwrap().score.unwrap();
+    assert_eq!(restored, before);
+}

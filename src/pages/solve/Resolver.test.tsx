@@ -120,6 +120,16 @@ function backend(mode: FeedbackMode) {
           },
         };
         return view;
+      case "annul":
+      case "unannul":
+        return update(position, (q) => {
+          const annulled = command === "annul";
+          const reveal = revealOf(q);
+          return {
+            ...q,
+            reveal: { ...reveal, annulled, outcome: annulled ? "annulled" : reveal.outcome },
+          };
+        });
       case "abandon":
         return null;
     }
@@ -254,5 +264,24 @@ describe("Resolver", () => {
 
     await waitFor(() => expect(onLeave).toHaveBeenCalled());
     expect(calls.at(-1)).toEqual({ command: "abandon", args: { attemptId: "att" } });
+  });
+
+  it("annuls a revealed question and undoes it", async () => {
+    const { user, calls } = await open("study");
+    expect(screen.queryByRole("button", { name: "Anular questão" })).not.toBeInTheDocument();
+
+    await user.click(option("B"));
+    await user.click(await screen.findByRole("button", { name: "Anular questão" }));
+
+    const reveal = await screen.findByRole("region", { name: "Gabarito e explicação" });
+    await waitFor(() => expect(reveal).toHaveTextContent("Questão anulada"));
+    expect(screen.getByRole("button", { name: /Questão 1, respondida, anulada/ })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Desfazer anulação" }));
+    await waitFor(() => expect(reveal).toHaveTextContent("Você acertou."));
+
+    expect(calls.filter((c) => ["annul", "unannul"].includes(c.command))).toEqual([
+      { command: "annul", args: { attemptId: "att", position: 0 } },
+      { command: "unannul", args: { attemptId: "att", position: 0 } },
+    ]);
   });
 });

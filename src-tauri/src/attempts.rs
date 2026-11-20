@@ -67,7 +67,7 @@ pub enum SessionSource {
     Topic { topic_id: i64, count: u32 },
     /// The error notebook, most recent errors first (up to 100). Blanks join when asked.
     Errors { include_blanks: bool },
-    /// Due spaced-repetition reviews, most overdue first (up to 100).
+    /// Due reviews (most overdue first), then recent errors (up to 100 in all).
     Reviews,
 }
 
@@ -420,7 +420,7 @@ pub fn start(conn: &Connection, request: &SessionStart, now: &str) -> AppResult<
         SessionSource::Reviews => (
             "reviews",
             None,
-            crate::learning::due_questions(conn, now, crate::learning::MAX_SESSION)?,
+            crate::learning::review_session(conn, now, crate::learning::MAX_SESSION)?,
         ),
     };
     if questions.is_empty() {

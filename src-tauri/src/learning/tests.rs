@@ -11,6 +11,7 @@ const D0: &str = "2026-11-01T10:00:00.000Z";
 const D1: &str = "2026-11-02T10:00:00.000Z";
 const D4: &str = "2026-11-05T10:00:00.000Z";
 const D5: &str = "2026-11-06T10:00:00.000Z";
+const D11: &str = "2026-11-12T10:00:00.000Z";
 const D25: &str = "2026-11-26T10:00:00.000Z";
 
 /// Questions `q1..` whose key is option `o0`; tests say `o0` for a hit and `o1` for a miss.
@@ -156,31 +157,32 @@ use rusqlite::OptionalExtension;
 #[test]
 fn intervals_grow_on_hits_along_the_ladder() {
     let b = bank(&["q1"]);
-    // 3, 7, 14, 30, 60, then it stays at 60.
+    // 1, 3, 7, 14, 30, 60, then it stays at 60.
     let expected = [
-        ("2026-11-01", 3),
-        ("2026-11-04", 7),
-        ("2026-11-11", 14),
-        ("2026-11-25", 30),
-        ("2026-12-25", 60),
-        ("2027-02-23", 60),
+        ("2026-11-01", 1),
+        ("2026-11-02", 3),
+        ("2026-11-05", 7),
+        ("2026-11-12", 14),
+        ("2026-11-26", 30),
+        ("2026-12-26", 60),
+        ("2027-02-25", 60),
     ];
     for (day, interval) in expected {
         b.answer(&format!("{day}T10:00:00.000Z"), &[("q1", "o0")]);
         assert_eq!(b.interval("q1"), Some(interval), "after {day}");
     }
-    assert_eq!(b.due("q1").as_deref(), Some("2027-04-24T10:00:00.000Z"));
+    assert_eq!(b.due("q1").as_deref(), Some("2027-04-26T10:00:00.000Z"));
 }
 
 #[test]
-fn a_new_question_starts_at_one_day_so_the_first_hit_moves_it_to_three() {
+fn the_first_hit_schedules_one_day_and_the_second_three() {
     let b = bank(&["q1"]);
     b.answer(D0, &[("q1", "o0")]);
-    assert_eq!(b.interval("q1"), Some(3));
-    assert_eq!(b.due("q1").as_deref(), Some("2026-11-04T10:00:00.000Z"));
+    assert_eq!(b.interval("q1"), Some(1));
+    assert_eq!(b.due("q1").as_deref(), Some(D1));
     b.answer(D1, &[("q1", "o0")]);
-    assert_eq!(b.interval("q1"), Some(7));
-    assert_eq!(b.due("q1").as_deref(), Some("2026-11-09T10:00:00.000Z"));
+    assert_eq!(b.interval("q1"), Some(3));
+    assert_eq!(b.due("q1").as_deref(), Some(D4));
 }
 
 #[test]
@@ -193,6 +195,8 @@ fn a_miss_resets_the_interval_to_one_day() {
     assert_eq!(b.due("q1").as_deref(), Some(D5));
     // And the climb starts over from the bottom.
     b.answer(D5, &[("q1", "o0")]);
+    assert_eq!(b.interval("q1"), Some(1));
+    b.answer(D11, &[("q1", "o0")]);
     assert_eq!(b.interval("q1"), Some(3));
 }
 
@@ -214,8 +218,8 @@ fn refreshing_twice_does_not_create_duplicate_events() {
         b.db.transaction(|tx| refresh_attempt(tx, &a1)).unwrap();
         b.db.transaction(|tx| refresh_attempt(tx, &a2)).unwrap();
     }
-    assert_eq!(b.interval("q1"), Some(7));
-    assert_eq!(b.due("q1").as_deref(), Some("2026-11-09T10:00:00.000Z"));
+    assert_eq!(b.interval("q1"), Some(3));
+    assert_eq!(b.due("q1").as_deref(), Some(D4));
 }
 
 #[test]
@@ -307,9 +311,9 @@ fn a_key_change_moves_reviews_and_errors() {
     b.answer(D0, &[("q1", "o1")]);
     assert_eq!(b.interval("q1"), Some(1));
     assert_eq!(b.errors(false), vec![b.id("q1")]);
-    // Hit afterwards on o0: the interval climbs.
+    // A hit afterwards on o0 starts a streak at the first rung.
     b.answer(D1, &[("q1", "o0")]);
-    assert_eq!(b.interval("q1"), Some(3));
+    assert_eq!(b.interval("q1"), Some(1));
 
     // The re-check moves the key to o1: both answers are re-scored (miss→hit, hit→miss).
     let q1 = b.id("q1");
@@ -487,4 +491,80 @@ fn the_overview_lists_blank_errors_only_when_asked() {
     let with = b.db.with(|c| overview(c, D0, true)).unwrap();
     assert_eq!(without.errors, 0);
     assert_eq!(with.errors, 1);
+}
+
+#[test]
+fn refresh_all_schedules_history_that_has_no_review_yet() {
+    let b = bank(&["q1", "q2"]);
+    // Attempts finished before reviews existed: nothing refreshed them.
+    b.finished_attempt(D0, &[("q1", "o0"), ("q2", "o1")]);
+    b.finished_attempt(D1, &[("q1", "o0")]);
+    assert_eq!(b.due("q1"), None);
+    b.db.transaction(|tx| refresh_all(tx)).unwrap();
+    assert_eq!(b.interval("q1"), Some(3));
+    assert_eq!(b.interval("q2"), Some(1));
+    // Running it again changes nothing.
+    b.db.transaction(|tx| refresh_all(tx)).unwrap();
+    assert_eq!(b.interval("q1"), Some(3));
+}
+
+#[test]
+fn refresh_all_drops_reviews_without_history() {
+    let b = bank(&["q1"]);
+    let q1 = b.id("q1");
+    b.db.transaction(|tx| {
+        tx.execute(
+            "INSERT INTO review_state (question_id, due_at, state) VALUES (?1, ?2, '{}')",
+            params![q1, D1],
+        )?;
+        refresh_all(tx)
+    })
+    .unwrap();
+    assert_eq!(b.due("q1"), None);
+}
+
+#[test]
+fn a_reviews_session_takes_due_reviews_then_recent_errors() {
+    let b = bank(&["q1", "q2", "q3"]);
+    b.answer(D0, &[("q1", "o1")]); // error, due D1
+    b.answer(D1, &[("q2", "o0")]); // hit, due D1 + 1 day
+    b.answer(D4, &[("q3", "o1")]); // error, due D5: not due at D4
+    let session = b.db.with(|c| review_session(c, D4, 100)).unwrap();
+    // q1 and q2 are due; q3 is not due but is a recent error.
+    assert_eq!(session, vec![b.id("q1"), b.id("q2"), b.id("q3")]);
+    let capped = b.db.with(|c| review_session(c, D4, 2)).unwrap();
+    assert_eq!(capped, vec![b.id("q1"), b.id("q2")]);
+    let ov = b.db.with(|c| overview(c, D4, false)).unwrap();
+    assert_eq!(ov.practice, 3);
+}
+
+#[test]
+fn the_overview_list_caps_upcoming_reviews_but_not_their_count() {
+    let locals: Vec<String> = (0..60).map(|i| format!("q{i}")).collect();
+    let refs: Vec<&str> = locals.iter().map(String::as_str).collect();
+    let b = bank(&refs);
+    let responses: Vec<(&str, &str)> = refs.iter().map(|l| (*l, "o0")).collect();
+    b.answer(D0, &responses);
+    let ov = b.db.with(|c| overview(c, D0, false)).unwrap();
+    assert_eq!(ov.upcoming, 60);
+    assert_eq!(ov.items.len(), MAX_UPCOMING_ROWS);
+}
+
+#[test]
+fn scoring_in_sql_agrees_with_attempts_outcome() {
+    let b = bank(&["q1"]);
+    let key = b.option("q1", "o0");
+    let wrong = b.option("q1", "o1");
+    for choice in [key.as_deref(), wrong.as_deref(), None] {
+        let hit = choice == key.as_deref();
+        let expected = attempts::outcome(choice, key.as_deref().unwrap(), false);
+        assert_eq!(hit, expected == attempts::Outcome::Correct);
+    }
+    // The replay agrees on a hit, a miss and a blank.
+    b.answer(D0, &[("q1", "o0")]);
+    assert_eq!(b.interval("q1"), Some(1));
+    b.answer(D1, &[("q1", "o1")]);
+    assert_eq!(b.errors(false).len(), 1);
+    b.answer(D4, &[("q1", "blank")]);
+    assert!(b.errors(false).is_empty());
 }

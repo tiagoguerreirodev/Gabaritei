@@ -15,6 +15,11 @@ upcoming: number,
  */
 errors: number, 
 /**
+ * How many questions "practice now" would take: due reviews, then recent errors (at most
+ * [`MAX_SESSION`]).
+ */
+practice: number, 
+/**
  * Due reviews first (most overdue first), then upcoming ones, then errors with no review.
  */
 items: Array<LearningItem>, };

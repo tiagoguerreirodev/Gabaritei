@@ -649,9 +649,18 @@ fn absurd_time_zone_offsets_are_clamped() {
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
-    let p = f.query(&PerformanceQuery {
-        utc_offset_minutes: i32::MAX,
-        ..Default::default()
-    });
-    assert_eq!(p.trend.len(), 1, "still produces a week instead of failing");
+    let week = |offset: i32| {
+        f.query(&PerformanceQuery {
+            utc_offset_minutes: offset,
+            ..Default::default()
+        })
+        .trend[0]
+            .week_start
+            .clone()
+    };
+    // 10:00 UTC on Monday 2 Nov: UTC+14 is Tuesday 3 Nov (same week), UTC-12 is Sunday 1 Nov.
+    assert_eq!(week(i32::MAX), "2026-11-02", "clamped to UTC+14");
+    assert_eq!(week(14 * 60), "2026-11-02");
+    assert_eq!(week(i32::MIN), "2026-10-26", "clamped to UTC-12");
+    assert_eq!(week(-12 * 60), "2026-10-26");
 }

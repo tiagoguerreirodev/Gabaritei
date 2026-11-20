@@ -38,7 +38,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 | 16 | Sessions | From a **collection**, by **topic** (N questions, unseen first), or from **errors and due reviews**. |
 | 17 | Kept study tools | **Eliminate options** and **flag questions**. **Error notebook** and **spaced repetition** (1/3/7/14/30/60 days). |
 | 18 | Dropped study tools | Timer, exam mode with a locked timer, essays and AI grading. |
-| 19 | Counting | Topic strength uses the **latest answer per question**. A **weekly accuracy trend** uses all answers. **Every attempt is kept forever**, with no 5-attempt cap. |
+| 19 | Counting | Topic strength uses the **latest answer per question**: a blank in a newer attempt never hides an earlier answer, and a question counts as blank only if it was never answered. A **weekly accuracy trend** uses all answers. **Every attempt is kept forever**, with no 5-attempt cap. |
 | 20 | Safety | **Daily automatic backup, 7 kept**, with a restore button. Plus the export/import file. |
 | 21 | Platforms | **Windows 11 x64** and **macOS Apple Silicon**. |
 | 22 | Repo | **This repository (Gabaritei).** Study data stays **out of git**: it lives in the app data folder, backups and exports. |
@@ -98,7 +98,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 
 ### 3.4 Performance (*Desempenho*)
 - **Scoring:** correct, wrong, blank or annulled (§3.4 of the analysis, without essays or pending grades).
-- **Topic strength** uses the latest answer per question, with achievement, accuracy and coverage by area › matter › topic. Weakest topics come first, with a small-sample warning.
+- **Topic strength** uses the latest *answered* response per question (a later blank never hides an earlier answer; a never-answered question counts as blank). Coverage counts questions answered at least once. It reports achievement, accuracy and coverage by area › matter › topic. Weakest topics come first, with a small-sample warning.
 - **Trend:** weekly accuracy from all answers.
 - **Filters:** contest tag, board tag (both from the collections a question belongs to), feedback mode.
 - **Other views:** history per collection and per session, a home dashboard, and CSV export.

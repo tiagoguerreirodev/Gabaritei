@@ -13,6 +13,7 @@ const overview: LearningOverview = {
   due: 1,
   upcoming: 1,
   errors: 1,
+  practice: 2,
   items: [
     {
       questionId: "q-secret-id",
@@ -66,6 +67,15 @@ describe("Erros e revisões", () => {
     }
   });
 
+  it("says a review due later today is due today", async () => {
+    const later = new Date();
+    later.setHours(23, 59, 0, 0);
+    const soon = { ...overview.items[1]!, dueAt: later.toISOString() };
+    mockIPC(() => ({ ...overview, items: [soon] }));
+    render(() => <Learning />);
+    expect(await screen.findByText(/Vence hoje/)).toBeVisible();
+  });
+
   it("links each row to the past attempt result", async () => {
     backend();
     const user = userEvent.setup();
@@ -98,7 +108,7 @@ describe("Erros e revisões", () => {
     const user = userEvent.setup();
     render(() => <Learning />);
 
-    await user.click(await screen.findByRole("button", { name: "Praticar agora (1)" }));
+    await user.click(await screen.findByRole("button", { name: "Praticar agora (2)" }));
     await user.click(await screen.findByRole("button", { name: "Começar" }));
     const started = calls.find(([c]) => c === "session_start");
     expect(started?.[1]).toEqual({
@@ -124,7 +134,7 @@ describe("Erros e revisões", () => {
   });
 
   it("has a pt-BR empty state and disabled practice buttons with nothing to review", async () => {
-    mockIPC(() => ({ due: 0, upcoming: 0, errors: 0, items: [] }));
+    mockIPC(() => ({ due: 0, upcoming: 0, errors: 0, practice: 0, items: [] }));
     render(() => <Learning />);
 
     expect(await screen.findByText("Nada para revisar por enquanto.")).toBeVisible();

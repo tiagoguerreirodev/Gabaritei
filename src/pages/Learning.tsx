@@ -18,9 +18,9 @@ const topicLabel = (item: LearningItem) =>
 /** "Vence hoje", "Venceu em 12/11/2026" or "Próxima revisão em 25/11/2026". */
 function dueText(dueAt: string, now: number) {
   const due = new Date(dueAt);
-  if (due.getTime() > now) return `Próxima revisão em ${formatDate(dueAt)}`;
-  return due.toDateString() === new Date(now).toDateString()
-    ? "Vence hoje"
+  if (due.toDateString() === new Date(now).toDateString()) return "Vence hoje";
+  return due.getTime() > now
+    ? `Próxima revisão em ${formatDate(dueAt)}`
     : `Venceu em ${formatDate(dueAt)}`;
 }
 
@@ -72,12 +72,12 @@ export default function Learning() {
                 <button
                   type="button"
                   class="primary"
-                  disabled={data().due === 0}
+                  disabled={data().practice === 0}
                   onClick={() =>
                     setPractice({ title: "Praticar revisões", source: { kind: "reviews" } })
                   }
                 >
-                  Praticar agora ({formatNumber(Math.min(data().due, MAX_SESSION))})
+                  Praticar agora ({formatNumber(data().practice)})
                 </button>
                 <button
                   type="button"

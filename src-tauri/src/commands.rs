@@ -10,6 +10,7 @@ use ts_rs::TS;
 use crate::ai::agent::Agent;
 use crate::ai::blind_check;
 use crate::ai::discovery::{self, CliStatus};
+use crate::ai::draft_files;
 use crate::ai::explain;
 use crate::ai::generate::GenerateRequest;
 use crate::ai::jobs::{GenerationManager, GenerationStatus};
@@ -460,16 +461,18 @@ pub fn generation_start<R: Runtime>(
     app: AppHandle<R>,
     manager: State<'_, GenerationManager>,
     service: State<'_, BackupService>,
+    paths: State<'_, AppPaths>,
     mut request: GenerateRequest,
 ) -> AppResult<()> {
     ensure_not_backing_up(&service)?;
     request.validate()?;
+    let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
         move |cancel, progress| {
             let db = worker.state::<Database>();
             let secrets = worker.state::<Secrets>();
-            blind_check::generate_and_check(&db, &secrets, request, cancel, progress)
+            blind_check::generate_and_check(&db, &secrets, &files_dir, request, cancel, progress)
         },
         move |status| {
             let _ = app.emit(GENERATION_EVENT, status);
@@ -484,15 +487,17 @@ pub fn blind_check_start<R: Runtime>(
     app: AppHandle<R>,
     manager: State<'_, GenerationManager>,
     service: State<'_, BackupService>,
+    paths: State<'_, AppPaths>,
     draft_id: String,
 ) -> AppResult<()> {
     ensure_not_backing_up(&service)?;
+    let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
         move |cancel, progress| {
             let db = worker.state::<Database>();
             let secrets = worker.state::<Secrets>();
-            blind_check::recheck_draft(&db, &secrets, &draft_id, cancel, progress)
+            blind_check::recheck_draft(&db, &secrets, &files_dir, &draft_id, cancel, progress)
         },
         move |status| {
             let _ = app.emit(GENERATION_EVENT, status);
@@ -516,16 +521,25 @@ pub fn draft_summary(db: State<'_, Database>, id: String) -> AppResult<DraftSumm
 #[tauri::command]
 pub fn draft_import(
     db: State<'_, Database>,
+    paths: State<'_, AppPaths>,
     id: String,
     mode: ImportMode,
 ) -> AppResult<ImportResult> {
-    db.transaction(|tx| review::import(tx, &id, mode, &crate::clock::now()))
+    let result = db.transaction(|tx| review::import(tx, &id, mode, &crate::clock::now()))?;
+    draft_files::remove(&paths.draft_files_dir(), &id);
+    Ok(result)
 }
 
 /// Discards a draft that is waiting for review.
 #[tauri::command]
-pub fn draft_discard(db: State<'_, Database>, id: String) -> AppResult<()> {
-    db.with(|conn| review::discard(conn, &id))
+pub fn draft_discard(
+    db: State<'_, Database>,
+    paths: State<'_, AppPaths>,
+    id: String,
+) -> AppResult<()> {
+    db.with(|conn| review::discard(conn, &id))?;
+    draft_files::remove(&paths.draft_files_dir(), &id);
+    Ok(())
 }
 
 /// Asks which PDF, Markdown or text files to attach to a generation. Empty if cancelled.

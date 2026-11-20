@@ -10,6 +10,7 @@ mod claude;
 mod codex;
 pub mod discovery;
 pub mod draft;
+pub mod draft_files;
 pub mod explain;
 pub mod generate;
 pub mod jobs;

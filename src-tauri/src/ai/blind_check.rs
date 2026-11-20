@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::draft::{self, Draft, DraftStatus, GenerationInfo};
+use super::draft_files;
 use super::generate::GenerateRequest;
 use super::prompts::{self, CheckerView, Objection};
 use super::roles::RoleConfig;
@@ -376,21 +377,26 @@ pub fn stored(draft: &Draft) -> AppResult<Option<BlindCheck>> {
 pub fn generate_and_check(
     db: &Database,
     secrets: &Secrets,
+    files_dir: &std::path::Path,
     request: GenerateRequest,
     cancel: &CancelToken,
     progress: &mut dyn FnMut(Progress),
 ) -> AppResult<String> {
     progress(Progress::new(ProgressKind::Started, "Gerando as questões…"));
-    let attachments: Vec<std::path::PathBuf> = request
+    let originals: Vec<std::path::PathBuf> = request
         .sources
         .attachments
         .iter()
         .map(std::path::PathBuf::from)
         .collect();
     let draft = super::generate::generate_draft(db, secrets, request, cancel, progress)?;
+    // Keep copies for the life of the draft so a retry can give the generator the same files.
+    // If copying fails (the file moved meanwhile), this run still uses the originals.
+    let attachments = draft_files::keep(files_dir, &draft.id, &originals).unwrap_or(originals);
     match run(db, secrets, &draft.id, &attachments, cancel, progress) {
         Ok(_) => Ok(draft.id),
         Err(_) if cancel.is_cancelled() => {
+            draft_files::remove(files_dir, &draft.id);
             db.with(|conn| draft::set_status(conn, &draft.id, DraftStatus::Discarded))?;
             Err(invalid("A execução foi cancelada."))
         }
@@ -401,16 +407,18 @@ pub fn generate_and_check(
     }
 }
 
-/// Re-runs the blind check of a draft that has none or whose check failed. The original
-/// attachments are not kept (only their names), so the dispute round runs without them.
+/// Re-runs the blind check of a draft that has none or whose check failed. The dispute round
+/// gets the attachments kept for the draft (see [`draft_files`]); if they are gone (an older
+/// draft, or one restored from a backup) it runs without them and says so in the progress.
 pub fn recheck_draft(
     db: &Database,
     secrets: &Secrets,
+    files_dir: &std::path::Path,
     draft_id: &str,
     cancel: &CancelToken,
     progress: &mut dyn FnMut(Progress),
 ) -> AppResult<String> {
-    db.transaction(|tx| {
+    let wanted = db.transaction(|tx| {
         let draft = draft::load(tx, draft_id)?;
         if draft.status != DraftStatus::Review {
             return Err(invalid("Este pacote já foi importado ou descartado."));
@@ -418,9 +426,18 @@ pub fn recheck_draft(
         if stored(&draft)?.is_some_and(|check| check.pending) {
             return Err(invalid("A conferência deste pacote já está em andamento."));
         }
-        draft::set_blind_check(tx, draft_id, &pending_record())
+        draft::set_blind_check(tx, draft_id, &pending_record())?;
+        Ok(draft.request.request.sources.attachments.len())
     })?;
-    match run(db, secrets, draft_id, &[], cancel, progress) {
+    let attachments = draft_files::load(files_dir, draft_id).unwrap_or_default();
+    if attachments.len() != wanted {
+        // Drafts from before attachments were kept, or restored from a backup, have no copies.
+        progress(Progress::new(
+            ProgressKind::Thinking,
+            "Os anexos originais não estão mais guardados; a contestação segue sem eles.",
+        ));
+    }
+    match run(db, secrets, draft_id, &attachments, cancel, progress) {
         Ok(_) => Ok(draft_id.to_owned()),
         Err(_) if cancel.is_cancelled() => {
             record_failure(db, draft_id, "A conferência foi cancelada.")?;

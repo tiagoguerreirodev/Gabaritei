@@ -11,6 +11,7 @@ const past = new Date(Date.now() - 3 * 86_400_000).toISOString();
 
 const overview: LearningOverview = {
   due: 1,
+  dueInOpenAttempt: 0,
   upcoming: 1,
   errors: 1,
   practice: 2,
@@ -142,8 +143,31 @@ describe("Erros e revisões", () => {
     expect(screen.getByRole("button", { name: "Praticar erros (0)" })).toBeDisabled();
   });
 
+  it("says how many due reviews are in an open attempt", async () => {
+    mockIPC(() => ({ ...overview, due: 3, dueInOpenAttempt: 2, practice: 1 }));
+    render(() => <Learning />);
+
+    expect(await screen.findByText(/2 em tentativa aberta/)).toBeVisible();
+  });
+
+  it("shows no open-attempt note when none are held", async () => {
+    mockIPC(() => overview);
+    render(() => <Learning />);
+
+    await screen.findByRole("list", { name: "Resumo" });
+    expect(screen.queryByText(/em tentativa aberta/)).toBeNull();
+  });
+
   it("has a pt-BR empty state and disabled practice buttons with nothing to review", async () => {
-    mockIPC(() => ({ due: 0, upcoming: 0, errors: 0, practice: 0, practiceErrors: 0, items: [] }));
+    mockIPC(() => ({
+      due: 0,
+      dueInOpenAttempt: 0,
+      upcoming: 0,
+      errors: 0,
+      practice: 0,
+      practiceErrors: 0,
+      items: [],
+    }));
     render(() => <Learning />);
 
     expect(await screen.findByText("Nada para revisar por enquanto.")).toBeVisible();

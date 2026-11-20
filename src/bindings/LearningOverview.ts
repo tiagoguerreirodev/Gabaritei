@@ -7,6 +7,11 @@ export type LearningOverview = {
  */
 due: number, 
 /**
+ * Of the reviews due now, how many sit in an unfinished attempt: they stay due, but a new
+ * session leaves them out.
+ */
+dueInOpenAttempt: number, 
+/**
  * Reviews scheduled for later.
  */
 upcoming: number, 

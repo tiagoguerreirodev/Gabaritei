@@ -742,3 +742,18 @@ fn the_overview_still_lists_questions_in_an_open_attempt_but_practice_leaves_the
     assert_eq!(ov.errors, 2);
     assert_eq!(ov.practice_errors, 0);
 }
+
+#[test]
+fn the_overview_says_how_many_due_reviews_are_held_by_an_open_attempt() {
+    let b = bank(&["q1", "q2", "q3"]);
+    b.answer(D0, &[("q1", "o1"), ("q2", "o1"), ("q3", "o1")]); // all due D1
+    let first = b.start_view(SessionSource::Reviews, D1);
+    assert_eq!(first.questions.len(), 3);
+    let ov = b.db.with(|c| overview(c, D1, false)).unwrap();
+    assert_eq!(ov.due, 3);
+    assert_eq!(ov.due_in_open_attempt, 3);
+    assert_eq!(ov.practice, 0);
+    // Not yet due at D0: nothing counts.
+    let early = b.db.with(|c| overview(c, D0, false)).unwrap();
+    assert_eq!(early.due_in_open_attempt, 0);
+}

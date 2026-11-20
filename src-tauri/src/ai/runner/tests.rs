@@ -2,6 +2,8 @@
 //! calls. The fake scripts need `sh`, so these tests run on Unix only; argument building is
 //! covered on every platform.
 
+#![cfg_attr(not(unix), allow(dead_code, unused_imports))] // fake CLIs need `sh`
+
 use super::*;
 use serde_json::json;
 

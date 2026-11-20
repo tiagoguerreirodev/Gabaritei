@@ -124,6 +124,26 @@ pub(super) struct Captured {
     pub stderr: String,
 }
 
+/// Starts `command`, retrying briefly when the OS answers "text file busy" (`ETXTBSY`, Unix only).
+///
+/// That error means another thread forked while the executable was still open for writing, which
+/// is only a race (it shows up when a script is written right before it runs) and clears within
+/// milliseconds.
+pub(super) fn spawn_retrying(command: &mut Command) -> std::io::Result<std::process::Child> {
+    let mut attempts = 0;
+    loop {
+        match command.spawn() {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 50 =>
+            {
+                attempts += 1;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            result => return result,
+        }
+    }
+}
+
 /// Runs a short probe command with a timeout, with no stdin.
 pub(super) fn capture(cli: &Path, args: &[&str]) -> Option<Captured> {
     let mut command = Command::new(cli);
@@ -137,7 +157,7 @@ pub(super) fn capture(cli: &Path, args: &[&str]) -> Option<Captured> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let mut child = command.spawn().ok()?;
+    let mut child = spawn_retrying(&mut command).ok()?;
     let mut stdout = child.stdout.take()?;
     let mut stderr = child.stderr.take()?;
     let out = std::thread::spawn(move || read_all(&mut stdout));
@@ -346,5 +366,28 @@ esac"#,
             cli_test(Agent::Codex, Some(&logged_out)).logged_in,
             Some(false)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn probes_survive_scripts_written_while_other_threads_fork() {
+        // Regression for #60: writing a script and running it at once can hit ETXTBSY.
+        let dir = tempfile::tempdir().unwrap();
+        std::thread::scope(|scope| {
+            for thread in 0..8 {
+                let dir = dir.path();
+                scope.spawn(move || {
+                    for round in 0..60 {
+                        let script = crate::ai::runner::tests::write_script(
+                            dir,
+                            &format!("codex-{thread}-{round}"),
+                            "exit 0",
+                        );
+                        let out = capture(&script, &["login", "status"]);
+                        assert!(out.is_some_and(|out| out.success));
+                    }
+                });
+            }
+        });
     }
 }

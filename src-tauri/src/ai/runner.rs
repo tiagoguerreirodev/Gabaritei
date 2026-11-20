@@ -460,8 +460,7 @@ fn spawn(spec: &JobSpec, work: &Workdir) -> Result<(Child, Box<dyn Parser>), Run
         command.env(key, value);
     }
     isolate(&mut command);
-    let child = command
-        .spawn()
+    let child = super::discovery::spawn_retrying(&mut command)
         .map_err(|error| RunError::Spawn(error.to_string()))?;
     Ok((child, parser))
 }

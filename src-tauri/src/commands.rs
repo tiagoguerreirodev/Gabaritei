@@ -22,6 +22,7 @@ use crate::attempts::{self, AttemptView, SessionStart};
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
+use crate::learning::{self, LearningOverview};
 use crate::metrics::{self, HomeSummary, Performance, PerformanceQuery};
 use crate::migrate::{self, LegacyImportOutcome, LegacyImportStatus};
 use crate::paths::AppPaths;
@@ -108,6 +109,15 @@ pub fn performance(db: State<'_, Database>, query: PerformanceQuery) -> AppResul
 #[tauri::command(async)]
 pub fn home(db: State<'_, Database>) -> AppResult<HomeSummary> {
     db.with(|conn| metrics::home(conn, &crate::clock::now()))
+}
+
+/// The *Erros e revisões* page: counts, and the list of reviews and errors. No answer keys.
+#[tauri::command(async)]
+pub fn learning_overview(
+    db: State<'_, Database>,
+    include_blanks: bool,
+) -> AppResult<LearningOverview> {
+    db.with(|conn| learning::overview(conn, &crate::clock::now(), include_blanks))
 }
 
 /// Asks where to save the performance table as CSV (using the same filters) and writes it.
@@ -611,6 +621,19 @@ mod tests {
         for secret in ["SEGREDO", "REF-", "answerId", "outcome"] {
             assert!(!text.contains(secret), "{secret} leaked: {text}");
         }
+    }
+
+    #[test]
+    fn learning_overview_decodes_camel_case_and_has_no_question_content() {
+        let app = MockApp::new(solving_db());
+        let overview = app
+            .call("learning_overview", json!({ "includeBlanks": true }))
+            .expect("overview succeeds");
+        assert_eq!(overview["due"], json!(0));
+        assert_eq!(overview["errors"], json!(0));
+        assert_eq!(overview["items"], json!([]));
+        let missing = app.call("learning_overview", json!({}));
+        assert!(missing.is_err(), "includeBlanks is required");
     }
 
     #[test]

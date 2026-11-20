@@ -20,6 +20,7 @@ import type { GenerateRequest } from "./bindings/GenerateRequest";
 import type { GenerationStatus } from "./bindings/GenerationStatus";
 import type { DraftListItem } from "./bindings/DraftListItem";
 import type { DraftSummary } from "./bindings/DraftSummary";
+import type { LearningOverview } from "./bindings/LearningOverview";
 import type { HomeSummary } from "./bindings/HomeSummary";
 import type { ImportMode } from "./bindings/ImportMode";
 import type { ImportResult } from "./bindings/ImportResult";
@@ -71,6 +72,9 @@ export const api = {
   collection: (id: string) => call<CollectionDetail>("collection", { id }),
   /** Home page: summary numbers, attempts to resume, due reviews and pending drafts. */
   home: () => call<HomeSummary>("home"),
+  /** Erros e revisões: counts and the list of reviews and errors (no answer keys). */
+  learningOverview: (includeBlanks: boolean) =>
+    call<LearningOverview>("learning_overview", { includeBlanks }),
   /** Topic strength, weekly trend and filter options. */
   performance: (query: PerformanceQuery) => call<Performance>("performance", { query }),
   /** Asks where to save the performance table as CSV and writes it. `false` if cancelled. */

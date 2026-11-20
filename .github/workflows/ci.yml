@@ -2,8 +2,6 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -12,9 +10,9 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# Caching notes: a PR run can restore caches saved by the same PR, its base branch, or main.
-# Pushes to main save the cache that new PRs start from; until main has one, the first run of
-# each PR compiles every dependency (Tauri + WebKitGTK) from scratch.
+# Caching notes: CI runs only on pull requests, not on pushes to main. A PR run can restore
+# caches saved by the same PR, so the first run of each PR compiles every dependency
+# (Tauri + WebKitGTK) from scratch.
 env:
   CARGO_TERM_COLOR: always
 

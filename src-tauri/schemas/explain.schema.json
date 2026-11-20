@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The explainer's structured answer.",
+  "properties": {
+    "explanation": {
+      "type": "string"
+    },
+    "refs": {
+      "description": "Verifiable sources. Never invented.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "explanation",
+    "refs"
+  ],
+  "title": "Explicação",
+  "type": "object"
+}

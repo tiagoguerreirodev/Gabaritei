@@ -139,6 +139,9 @@ export const api = {
   /** Drops the AI's proposal and keeps the current key. */
   recheckDismiss: (attemptId: string, position: number) =>
     call<null>("recheck_dismiss", { attemptId, position }),
+  /** Writes the missing explanation of a revealed question with the AI. Waits for the answer. */
+  explainAsk: (attemptId: string, position: number) =>
+    call<AttemptView>("explain_ask", { attemptId, position }),
   /** Cancels the on-demand AI request that is running. */
   aiRequestCancel: () => call<boolean>("ai_request_cancel"),
   /** Runs the blind check again on a draft whose check failed (same background slot). */

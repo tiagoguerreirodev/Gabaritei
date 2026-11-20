@@ -1,4 +1,4 @@
-import { For, Show } from "solid-js";
+import { For, Show, createEffect, createSignal, on } from "solid-js";
 import type { Outcome } from "../../bindings/Outcome";
 import type { RecheckView } from "../../bindings/RecheckView";
 import type { ResponseView } from "../../bindings/ResponseView";
@@ -6,6 +6,7 @@ import QuestionImage from "../../components/QuestionImage";
 import RichText from "../../components/RichText";
 import { optionLetters } from "./format";
 import RecheckPanel from "./RecheckPanel";
+import { showError } from "../../components/toasts";
 
 const outcomeText: Record<Outcome, string> = {
   correct: "Você acertou.",
@@ -39,7 +40,29 @@ export default function QuestionCard(props: {
   onRecheckApply: () => void;
   onRecheckDismiss: () => void;
   onAiCancel: () => void;
+  /** Asks the AI to write the missing explanation. */
+  onExplain: () => Promise<void>;
 }) {
+  const [explaining, setExplaining] = createSignal(false);
+  // Moving to another question ends the "explaining" state of this card.
+  createEffect(
+    on(
+      () => props.question.position,
+      () => setExplaining(false),
+      { defer: true },
+    ),
+  );
+  const explain = async () => {
+    const asked = props.question.position;
+    setExplaining(true);
+    try {
+      await props.onExplain();
+    } catch (error) {
+      showError(error);
+    } finally {
+      if (props.question.position === asked) setExplaining(false);
+    }
+  };
   const letters = () => optionLetters(props.question);
   const reveal = () => props.question.reveal;
   const keyLetter = () => {
@@ -138,7 +161,19 @@ export default function QuestionCard(props: {
             </p>
             <Show
               when={revealed().explanation.trim()}
-              fallback={<p class="muted">Esta questão não tem explicação.</p>}
+              fallback={
+                <div class="ai-panel">
+                  <p class="muted">Esta questão não tem explicação.</p>
+                  <button type="button" disabled={explaining()} onClick={() => void explain()}>
+                    {explaining() ? "Escrevendo a explicação…" : "Explicar"}
+                  </button>
+                  <Show when={explaining()}>
+                    <button type="button" onClick={() => props.onAiCancel()}>
+                      Cancelar
+                    </button>
+                  </Show>
+                </div>
+              }
             >
               <h3>Explicação</h3>
               <RichText class="explanation" text={revealed().explanation} />

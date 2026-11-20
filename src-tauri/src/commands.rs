@@ -165,14 +165,39 @@ pub fn backup_restore(
     paths: State<'_, AppPaths>,
     service: State<'_, BackupService>,
     generation: State<'_, GenerationManager>,
+    on_demand: State<'_, OnDemand>,
     name: String,
 ) -> AppResult<()> {
-    if generation.status().running {
+    service.restore(&db, &paths, &name, &crate::clock::now(), || {
+        ensure_no_ai_job(&generation, &on_demand, "restaurar")
+    })?;
+    on_demand.clear_proposals();
+    Ok(())
+}
+
+/// Replacing the data under a running AI job would lose what the job writes.
+fn ensure_no_ai_job(
+    generation: &GenerationManager,
+    on_demand: &OnDemand,
+    action: &str,
+) -> AppResult<()> {
+    if generation.status().running || on_demand.is_running() {
+        return Err(AppError::Invalid(format!(
+            "Há uma consulta à IA em andamento. Espere ou cancele antes de {action}."
+        )));
+    }
+    Ok(())
+}
+
+/// Backups, restores and imports replace the data, so no AI job starts meanwhile.
+fn ensure_not_backing_up(service: &BackupService) -> AppResult<()> {
+    if service.is_busy() {
         return Err(AppError::Invalid(
-            "Há uma geração de questões em andamento. Espere ou cancele antes de restaurar.".into(),
+            "Um backup, restauração ou importação está em andamento. Tente de novo em instantes."
+                .into(),
         ));
     }
-    service.restore(&db, &paths, &name, &crate::clock::now())
+    Ok(())
 }
 
 /// Topic strength, weekly trend and filter options under the given filters.
@@ -375,8 +400,10 @@ pub const GENERATION_EVENT: &str = "generation-status";
 pub fn generation_start<R: Runtime>(
     app: AppHandle<R>,
     manager: State<'_, GenerationManager>,
+    service: State<'_, BackupService>,
     mut request: GenerateRequest,
 ) -> AppResult<()> {
+    ensure_not_backing_up(&service)?;
     request.validate()?;
     let worker = app.clone();
     manager.start(
@@ -397,8 +424,10 @@ pub fn generation_start<R: Runtime>(
 pub fn blind_check_start<R: Runtime>(
     app: AppHandle<R>,
     manager: State<'_, GenerationManager>,
+    service: State<'_, BackupService>,
     draft_id: String,
 ) -> AppResult<()> {
+    ensure_not_backing_up(&service)?;
     let worker = app.clone();
     manager.start(
         move |cancel, progress| {

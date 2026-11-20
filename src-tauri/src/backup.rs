@@ -616,6 +616,8 @@ mod tests {
             "CREATE TRIGGER sqliteXevil AFTER INSERT ON responses BEGIN DELETE FROM settings; END",
             "CREATE TABLE sqliteXextra (x TEXT) STRICT",
             "CREATE TABLE extra (x TEXT) STRICT",
+            // A row whose `type` says index but whose SQL is a trigger, as a hand-built file could.
+            "PRAGMA writable_schema = ON; INSERT INTO sqlite_schema VALUES ('index', 'sqlite_evil', 'responses', 0, 'CREATE TRIGGER sqlite_evil AFTER INSERT ON responses BEGIN DELETE FROM settings; END')",
         ] {
             let f = fixture();
             add_question(&f.db, "q-1");

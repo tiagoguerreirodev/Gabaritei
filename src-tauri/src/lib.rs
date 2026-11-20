@@ -63,6 +63,10 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::set_remnote_token,
             commands::cli_test,
             commands::remnote_test,
+            commands::generation_start,
+            commands::generation_cancel,
+            commands::generation_status,
+            commands::generation_dismiss,
         ])
 }
 
@@ -76,6 +80,7 @@ fn open_database<R: Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error:
     app.manage(database);
     app.manage(paths);
     app.manage(ai::secrets::Secrets::keychain());
+    app.manage(ai::jobs::GenerationManager::default());
     Ok(())
 }
 

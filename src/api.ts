@@ -15,6 +15,8 @@ import type { CollectionDetail } from "./bindings/CollectionDetail";
 import type { CollectionPage } from "./bindings/CollectionPage";
 import type { CollectionQuery } from "./bindings/CollectionQuery";
 import type { ErrorPayload } from "./bindings/ErrorPayload";
+import type { GenerateRequest } from "./bindings/GenerateRequest";
+import type { GenerationStatus } from "./bindings/GenerationStatus";
 import type { HomeSummary } from "./bindings/HomeSummary";
 import type { LegacyImportOutcome } from "./bindings/LegacyImportOutcome";
 import type { LegacyImportStatus } from "./bindings/LegacyImportStatus";
@@ -102,4 +104,12 @@ export const api = {
   cliTest: (agent: Agent) => call<CliStatus>("cli_test", { agent }),
   /** Checks the saved RemNote connection and lists the tools the server offers. */
   remnoteTest: () => call<RemNoteTest>("remnote_test"),
+  /** Starts a generation in the background; progress arrives as `generation-status` events. */
+  generationStart: (request: GenerateRequest) => call<null>("generation_start", { request }),
+  /** Stops the running generation. `false` if none was running. */
+  generationCancel: () => call<boolean>("generation_cancel"),
+  /** What the generation is doing now, or how the last one ended. */
+  generationStatus: () => call<GenerationStatus>("generation_status"),
+  /** Forgets how the last generation ended. */
+  generationDismiss: () => call<null>("generation_dismiss"),
 };

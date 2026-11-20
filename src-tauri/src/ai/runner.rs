@@ -151,7 +151,7 @@ pub struct Progress {
 }
 
 impl Progress {
-    pub(super) fn new(kind: ProgressKind, label: &str) -> Self {
+    pub fn new(kind: ProgressKind, label: &str) -> Self {
         Self {
             kind,
             label: label.to_owned(),

@@ -249,7 +249,7 @@ fn expected_schema() -> AppResult<Vec<(String, String, Option<String>)>> {
 
 fn read_schema(conn: &Connection) -> AppResult<Vec<(String, String, Option<String>)>> {
     let mut stmt = conn.prepare(
-        "SELECT type, name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+        "SELECT type, name, sql FROM sqlite_schema WHERE substr(name, 1, 7) <> 'sqlite_' ORDER BY type, name",
     )?;
     Ok(stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
@@ -282,6 +282,18 @@ pub fn stage(dir: &Path) -> AppResult<Staged> {
         return Err(corrupt());
     }
     let mut conn = Connection::open(staged.database()).map_err(|_| corrupt())?;
+    // This app's schema has no triggers or views, so one can only come from the file. Refused
+    // before anything runs on the file, migrations included.
+    let foreign: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE type IN ('trigger', 'view')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| corrupt())?;
+    if foreign != 0 {
+        return Err(corrupt());
+    }
     db::prepare_restored(&mut conn).map_err(|error| match error {
         AppError::Invalid(_) => error,
         _ => corrupt(),

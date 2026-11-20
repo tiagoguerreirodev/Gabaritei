@@ -589,6 +589,9 @@ mod tests {
             "DROP TABLE settings",
             "CREATE TRIGGER evil AFTER INSERT ON responses BEGIN DELETE FROM settings; END",
             "CREATE VIEW sneaky AS SELECT 1",
+            // A name that a `LIKE 'sqlite_%'` filter would have taken for an internal one.
+            "CREATE TRIGGER sqliteXevil AFTER INSERT ON responses BEGIN DELETE FROM settings; END",
+            "CREATE TABLE sqliteXextra (x TEXT) STRICT",
             "CREATE TABLE extra (x TEXT) STRICT",
         ] {
             let f = fixture();

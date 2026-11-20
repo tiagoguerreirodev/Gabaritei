@@ -28,6 +28,7 @@ time = { version = "0.3", features = ["formatting", "macros"] }
 flate2 = "1"
 tauri-plugin-dialog = "2"
 unicode-normalization = "0.1"
+rand = "0.9"
 
 [dev-dependencies]
 # Enables `tauri::test` (mock runtime) so commands can be exercised through the IPC layer.

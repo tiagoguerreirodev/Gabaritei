@@ -46,6 +46,13 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::collection,
             commands::legacy_import_status,
             commands::import_legacy_bank,
+            commands::session_start,
+            commands::attempt,
+            commands::answer,
+            commands::eliminate,
+            commands::flag,
+            commands::finish,
+            commands::abandon,
         ])
 }
 

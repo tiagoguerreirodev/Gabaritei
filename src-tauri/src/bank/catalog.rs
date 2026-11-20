@@ -11,6 +11,7 @@ use ts_rs::TS;
 use unicode_normalization::UnicodeNormalization;
 use unicode_normalization::char::is_combining_mark;
 
+use crate::attempts::FeedbackMode;
 use crate::error::{AppError, AppResult};
 
 /// Default and maximum page sizes for the collections list.
@@ -325,14 +326,6 @@ pub fn collections(conn: &Connection, query: &CollectionQuery) -> AppResult<Coll
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
-#[serde(rename_all = "lowercase")]
-#[ts(export)]
-pub enum FeedbackMode {
-    Study,
-    Exam,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -406,15 +399,7 @@ pub fn collection(conn: &Connection, id: &str) -> AppResult<CollectionDetail> {
         })?
         .map(|row| {
             let (id, mode, started_at, finished_at, answered, total) = row?;
-            let feedback_mode = match mode.as_str() {
-                "study" => FeedbackMode::Study,
-                "exam" => FeedbackMode::Exam,
-                other => {
-                    return Err(AppError::Internal(format!(
-                        "unknown feedback mode {other:?}"
-                    )));
-                }
-            };
+            let feedback_mode = FeedbackMode::parse(&mode)?;
             Ok(AttemptListItem {
                 id,
                 feedback_mode,

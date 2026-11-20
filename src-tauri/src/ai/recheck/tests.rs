@@ -68,9 +68,18 @@ fn world(answer: impl FnOnce(&str, &str) -> Value) -> World {
             Ok((id, question.answer_id, other))
         })
         .unwrap();
+    // The AI names options by letter (or Certo/Errado), never by their internal ids.
+    let question = db
+        .with(|conn| load_question(conn, &question_id))
+        .unwrap()
+        .unwrap();
+    let label_of = |id: &str| {
+        let index = question.options.iter().position(|o| o.id == id).unwrap();
+        prompts::option_label(&question, index)
+    };
     std::fs::write(
         dir.path().join("answer.json"),
-        answer(&old_key, &other_option).to_string(),
+        answer(&label_of(&old_key), &label_of(&other_option)).to_string(),
     )
     .unwrap();
     let cli = fake_codex(dir.path());
@@ -199,7 +208,19 @@ mod flow {
         ask_it(&w, &attempt).unwrap();
         let sent = std::fs::read_to_string(w.dir.path().join("stdin.txt")).unwrap();
         assert!(sent.contains("COMENTARIO-ATUAL"));
-        assert!(sent.contains(&format!("Gabarito atual: ({})", w.old_key)));
+        let question =
+            w.db.with(|conn| load_question(conn, &w.question_id))
+                .unwrap()
+                .unwrap();
+        let key_index = question
+            .options
+            .iter()
+            .position(|o| o.id == w.old_key)
+            .unwrap();
+        let label = prompts::option_label(&question, key_index);
+        assert!(sent.contains(&format!("Gabarito atual: ({label})")));
+        // Letters, never the hex ids the user never sees.
+        assert!(sent.contains("(A) ") && !sent.contains(&w.old_key));
         assert!(sent.contains("NUNCA invente"));
     }
 
@@ -270,6 +291,27 @@ mod flow {
         let attempt = start(&w, FeedbackMode::Study);
         answer_with(&w, &attempt, &w.old_key);
         assert!(ask_it(&w, &attempt).is_err());
+    }
+
+    #[test]
+    fn a_proposal_is_stale_if_the_key_changed_after_it_was_made() {
+        let w = world(wrong_answer);
+        let attempt = start(&w, FeedbackMode::Study);
+        answer_with(&w, &attempt, &w.old_key);
+        ask_it(&w, &attempt).unwrap();
+        // Someone applied a different change to the same question in the meantime.
+        w.db.with(|conn| {
+            conn.execute(
+                "UPDATE questions SET answer_id = ?1",
+                params![w.other_option],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let error =
+            w.db.transaction(|tx| apply(tx, &w.jobs, &attempt, 0, T0))
+                .unwrap_err();
+        assert!(error.to_string().contains("mudou desde a revisão"));
     }
 
     #[test]

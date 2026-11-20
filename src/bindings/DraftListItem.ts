@@ -4,4 +4,8 @@ import type { TopicPath } from "./TopicPath";
 /**
  * A draft in the "waiting for review" list.
  */
-export type DraftListItem = { id: string, topic: TopicPath, count: number, createdAt: string, disputed: number, };
+export type DraftListItem = { id: string, topic: TopicPath, count: number, createdAt: string, disputed: number, 
+/**
+ * Its blind check is still running.
+ */
+checking: boolean, };

@@ -14,4 +14,8 @@ duplicates: number, agreed: number, fixed: number, disputed: number, unchecked: 
 /**
  * Why the blind check could not complete, if it failed.
  */
-checkFailed: string | null, };
+checkFailed: string | null, 
+/**
+ * The blind check is still running: the package can't be imported or discarded yet.
+ */
+checking: boolean, };

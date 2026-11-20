@@ -60,6 +60,9 @@ let recheckAnswer: RecheckView = {
   sources: ["CF/88, art. 37"],
 };
 
+/** Lets a test hold the AI's answer back; by default it answers at once. */
+let recheckGate: Promise<void> = Promise.resolve();
+
 /** A fake backend that applies the same rules as `attempts.rs`, recording each command. */
 function backend(mode: FeedbackMode) {
   let view: AttemptView = {
@@ -147,7 +150,7 @@ function backend(mode: FeedbackMode) {
         explanations[view.questions[position]!.questionId] = "Explicação escrita pela IA.";
         return update(position, (q) => ({ ...q, reveal: revealOf(q) }));
       case "recheck_ask":
-        return recheckAnswer;
+        return recheckGate.then(() => recheckAnswer);
       case "recheck_apply":
         keys[view.questions[position]!.questionId] = recheckAnswer.correctedKey!;
         return update(position, (q) => ({ ...q, reveal: revealOf(q) }));
@@ -210,19 +213,19 @@ describe("Resolver", () => {
     // Question 2 (q1) was disputed in the blind check.
     await user.keyboard("{ArrowRight}");
     await screen.findByRole("article", { name: "Questão 2 de 3" });
-    expect(screen.queryByText(/Gabarito contestado/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Gabarito não confirmado/)).not.toBeInTheDocument();
 
     // Question 2 is Certo/Errado.
     await user.click(option("C"));
     const reveal = await screen.findByRole("region", { name: "Gabarito e explicação" });
-    expect(reveal).toHaveTextContent("Gabarito contestado na conferência");
+    expect(reveal).toHaveTextContent("Gabarito não confirmado pela conferência");
 
     // A question the checker agreed with has no badge.
     await user.keyboard("{ArrowLeft}");
     await screen.findByRole("article", { name: "Questão 1 de 3" });
     await user.click(option("A"));
     const other = await screen.findByRole("region", { name: "Gabarito e explicação" });
-    expect(other).not.toHaveTextContent("Gabarito contestado");
+    expect(other).not.toHaveTextContent("Gabarito não confirmado");
   });
 
   it("asks the AI to re-check a revealed question and applies the key only after confirming", async () => {
@@ -264,6 +267,30 @@ describe("Resolver", () => {
     expect(screen.getByRole("region", { name: "Gabarito e explicação" })).toHaveTextContent(
       "Gabarito: B.",
     );
+  });
+
+  it("does not show a late re-check under another question", async () => {
+    let release = () => {};
+    const { user } = await open("study");
+    // Reveal questions 1 and 2, so the card stays mounted when moving between them.
+    await user.click(option("A"));
+    await user.keyboard("{ArrowRight}");
+    await screen.findByRole("article", { name: "Questão 2 de 3" });
+    await user.click(option("C"));
+    await screen.findByRole("region", { name: "Gabarito e explicação" });
+    await user.keyboard("{ArrowLeft}");
+    await screen.findByRole("article", { name: "Questão 1 de 3" });
+
+    recheckGate = new Promise<void>((resolve) => (release = resolve));
+    await user.click(await screen.findByRole("button", { name: "Pedir revisão à IA" }));
+    await user.keyboard("{ArrowRight}");
+    await screen.findByRole("article", { name: "Questão 2 de 3" });
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Question 1's verdict must not appear under question 2.
+    expect(screen.queryByRole("region", { name: "Revisão da IA" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pedir revisão à IA" })).toBeVisible();
+    recheckGate = Promise.resolve();
   });
 
   it("offers no key change when the AI confirms the key", async () => {

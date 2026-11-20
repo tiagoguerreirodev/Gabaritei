@@ -1,11 +1,12 @@
 import { A, useNavigate, useSearchParams } from "@solidjs/router";
-import { For, Show, createResource, createSignal } from "solid-js";
+import { For, Show, createEffect, createResource, createSignal, on } from "solid-js";
 import { api } from "../api";
 import type { DraftSummary } from "../bindings/DraftSummary";
 import type { ImportMode } from "../bindings/ImportMode";
 import type { LineState } from "../bindings/LineState";
 import { ErrorState, Loading } from "../components/states";
 import { showError, showToast } from "../components/toasts";
+import { generationStatus } from "../generation";
 import { agentLabels, effortLabels } from "./settings/labels";
 
 const lineText: Record<LineState, string> = {
@@ -58,7 +59,8 @@ function WaitingList() {
                     </A>{" "}
                     <span class="muted">
                       ({number(draft.count)} questões
-                      {draft.disputed > 0 ? `, ${number(draft.disputed)} contestadas` : ""})
+                      {draft.disputed > 0 ? `, ${number(draft.disputed)} contestadas` : ""}
+                      {draft.checking ? ", conferindo…" : ""})
                     </span>
                   </li>
                 )}
@@ -76,6 +78,14 @@ function Package(props: { id: string }) {
     () => props.id,
     (id) => api.draftSummary(id),
   );
+  // A check that was running ends (or a retry finishes): show the new verdicts.
+  createEffect(
+    on(
+      () => generationStatus()?.running,
+      () => void refetch(),
+      { defer: true },
+    ),
+  );
   return (
     <Show when={!summary.error} fallback={<ErrorState error={summary.error as unknown} />}>
       <Show when={summary()} fallback={<Loading />}>
@@ -90,6 +100,7 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
   const [busy, setBusy] = createSignal(false);
   const s = () => props.summary;
   const waiting = () => s().status === "review";
+  const checking = () => s().checking;
   const confirmed = () => s().agreed + s().fixed;
 
   const run = async (action: () => Promise<void>) => {
@@ -150,6 +161,12 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
           Conferido por {agentLabels[s().checker.agent]} ({s().checker.model},{" "}
           {effortLabels[s().checker.effort].toLowerCase()}).
         </p>
+        <Show when={checking()}>
+          <p role="status">
+            A conferência às cegas ainda está em andamento. Os botões abaixo ficam disponíveis
+            quando ela terminar.
+          </p>
+        </Show>
         <Show when={s().checkFailed}>
           {(message) => (
             <p class="error" role="alert">
@@ -217,24 +234,24 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
           <button
             type="button"
             class="primary"
-            disabled={busy() || s().problems.length > 0}
+            disabled={busy() || checking() || s().problems.length > 0}
             onClick={() => void importAs("all")}
           >
             Importar tudo
           </button>
           <button
             type="button"
-            disabled={busy() || confirmed() === 0}
+            disabled={busy() || checking() || confirmed() === 0}
             onClick={() => void importAs("confirmed")}
           >
             Importar só as confirmadas
           </button>
-          <Show when={s().checkFailed !== null || s().unchecked > 0}>
+          <Show when={!checking() && (s().checkFailed !== null || s().unchecked > 0)}>
             <button type="button" disabled={busy()} onClick={() => void rerunCheck()}>
               Conferir de novo
             </button>
           </Show>
-          <button type="button" disabled={busy()} onClick={() => void discard()}>
+          <button type="button" disabled={busy() || checking()} onClick={() => void discard()}>
             Descartar
           </button>
         </div>

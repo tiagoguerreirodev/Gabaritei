@@ -34,9 +34,15 @@ impl OnDemand {
             }
             *current = Some(token.clone());
         }
-        let result = work(&token);
-        *lock(&self.current) = None;
-        result
+        // Frees the slot even if `work` panics.
+        struct Release<'a>(&'a Mutex<Option<CancelToken>>);
+        impl Drop for Release<'_> {
+            fn drop(&mut self) {
+                *lock(self.0) = None;
+            }
+        }
+        let _release = Release(&self.current);
+        work(&token)
     }
 
     /// Stops the running job. Returns whether there was one.
@@ -60,6 +66,16 @@ impl OnDemand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_panicking_job_frees_the_slot() {
+        let jobs = OnDemand::default();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = jobs.run::<()>(|_| panic!("boom"));
+        }));
+        assert!(result.is_err());
+        jobs.run(|_| Ok(())).unwrap();
+    }
 
     #[test]
     fn one_job_at_a_time_and_cancel_reaches_it() {

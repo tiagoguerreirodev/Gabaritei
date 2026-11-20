@@ -35,11 +35,17 @@ export default function RecheckPanel(props: {
   );
 
   const ask = async () => {
+    // The card stays mounted when the user moves to another question: a late answer for the
+    // question that was asked must not show up under the one on screen now.
+    const asked = props.question.position;
     setState({ step: "asking" });
     try {
-      setState({ step: "done", result: await props.onAsk() });
+      const result = await props.onAsk();
+      if (props.question.position === asked) setState({ step: "done", result });
     } catch (error) {
-      setState({ step: "error", message: errorMessage(error) });
+      if (props.question.position === asked) {
+        setState({ step: "error", message: errorMessage(error) });
+      }
     }
   };
 

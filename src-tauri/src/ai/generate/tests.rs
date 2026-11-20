@@ -217,6 +217,40 @@ mod pipeline {
     }
 
     #[test]
+    fn problems_never_repeat_text_the_ai_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        // Quotes inside the option text used to survive the old quote-stripping.
+        let mut repeated = multiple("q1", "Enunciado SEGREDO-ENUNCIADO?");
+        repeated["options"][1]["text"] = json!("Segundo o \"princípio\" SEGREDO-OPCAO");
+        repeated["options"][2]["text"] = json!("Segundo o \"princípio\" SEGREDO-OPCAO");
+        repeated["options"][3]["id"] = json!("SEGREDO-ID");
+        repeated["options"][4]["id"] = json!("SEGREDO-ID");
+        let cli = fake_codex(dir.path(), &package(vec![repeated]));
+        let (db, secrets) = setup(&cli);
+        let draft = run(&db, &secrets, request(1)).unwrap();
+        let check = db.with(|conn| check_draft(conn, &draft)).unwrap();
+        assert!(!check.problems.is_empty());
+        let shown = format!("{:?}", check.problems);
+        for secret in ["SEGREDO", "princípio"] {
+            assert!(!shown.contains(secret), "{secret} leaked: {shown}");
+        }
+        assert!(
+            check
+                .problems
+                .iter()
+                .any(|p| p.message == "Há alternativas com o mesmo texto.")
+        );
+    }
+
+    #[test]
+    fn unknown_validation_messages_become_a_generic_one() {
+        assert_eq!(
+            fixed_message("Algo novo com \"texto da questão\""),
+            "A questão não passou na validação."
+        );
+    }
+
+    #[test]
     fn the_requested_format_is_enforced() {
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_codex(
@@ -307,6 +341,19 @@ mod request_form {
         assert!(invalid(request(0)).contains("1 a 30"));
         assert!(invalid(request(31)).contains("1 a 30"));
         assert!(request(1).validate().is_ok() && request(30).validate().is_ok());
+    }
+
+    #[test]
+    fn role_overrides_are_checked_like_the_settings() {
+        for model in ["", "-x", "dois nomes"] {
+            let mut bad = request(1);
+            bad.generator = Some(RoleConfig {
+                agent: crate::ai::agent::Agent::Codex,
+                model: model.into(),
+                effort: crate::ai::agent::Effort::Low,
+            });
+            assert!(bad.validate().is_err(), "{model:?}");
+        }
     }
 
     #[test]

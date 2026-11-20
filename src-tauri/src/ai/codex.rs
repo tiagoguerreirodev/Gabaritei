@@ -33,8 +33,7 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         "--skip-git-repo-check".into(),
         "--ephemeral".into(),
         "--ignore-rules".into(),
-        "-m".into(),
-        spec.model.clone(),
+        format!("--model={}", spec.model),
         "-c".into(),
         format!("model_reasoning_effort={}", spec.effort.as_str()),
         // Fail on a config key this version doesn't know, instead of silently ignoring it.

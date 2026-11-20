@@ -317,6 +317,31 @@ mod request_form {
     }
 
     #[test]
+    fn the_web_is_never_combined_with_attachments_or_remnote() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("lei.md");
+        std::fs::write(&file, "x").unwrap();
+        let mut with_remnote = request(1);
+        with_remnote.sources = GenerateSources {
+            remnote: true,
+            web: true,
+            attachments: vec![],
+        };
+        assert!(invalid(with_remnote).contains("pesquisa na web não pode"));
+        let mut with_files = request(1);
+        with_files.sources = GenerateSources {
+            remnote: false,
+            web: true,
+            attachments: vec![file.to_string_lossy().into_owned()],
+        };
+        assert!(invalid(with_files).contains("pesquisa na web não pode"));
+        // Each source on its own is fine.
+        let mut web_only = request(1);
+        web_only.sources.web = true;
+        assert!(web_only.validate().is_ok());
+    }
+
+    #[test]
     fn attachments_must_be_small_existing_pdf_markdown_or_text_files() {
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("programa.exe");

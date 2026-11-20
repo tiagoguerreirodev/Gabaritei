@@ -91,6 +91,13 @@ codex exec - --output-schema schema.json -o saida.json --json
   (no writes), when it has. AGENTS.md rule 2 says "no shell"; this is the closest Codex allows.
 - **RemNote token:** passed in the child's environment (`GABARITEI_REMNOTE_TOKEN`), never as an argument.
 
+## Web search is never combined with private sources
+
+Web pages are the one untrusted input. A page carrying instructions could make an agent that can
+also read the user's attachments or RemNote notes send them out in a request. So a generation
+cannot turn on the web together with attachments or RemNote (`GenerateRequest::validate`), and
+Codex's web search is additionally forced off whenever its shell is on. Each source alone is fine.
+
 ## Failures
 
 - A login problem shows up as a non-zero exit with a message such as "Not logged in" or an

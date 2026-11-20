@@ -87,3 +87,11 @@ mod tests {
         assert_eq!(error, json!("Command does_not_exist not found"));
     }
 }
+
+#[cfg(test)]
+mod ci_failure_probe {
+    #[test]
+    fn deliberately_failing_test() {
+        assert_eq!(1 + 1, 3, "CI probe: this test must fail");
+    }
+}

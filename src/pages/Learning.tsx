@@ -51,7 +51,13 @@ export default function Learning() {
                 <li class="stat-card">
                   <span class="stat-name">Para revisar agora</span>
                   <strong class="stat-value">{formatNumber(data().due)}</strong>
-                  <span class="stat-hint muted">Revisões vencidas</span>
+                  <span class="stat-hint muted">
+                    Revisões vencidas
+                    <Show when={data().dueInOpenAttempt > 0}>
+                      {" "}
+                      · {formatNumber(data().dueInOpenAttempt)} em tentativa aberta
+                    </Show>
+                  </span>
                 </li>
                 <li class="stat-card">
                   <span class="stat-name">Próximas</span>

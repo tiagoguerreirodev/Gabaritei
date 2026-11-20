@@ -16,7 +16,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use ts_rs::TS;
 
@@ -136,6 +136,33 @@ fn parse_name(name: &str) -> Option<BackupKind> {
 /// The default backup folder.
 pub fn default_folder(paths: &AppPaths) -> PathBuf {
     paths.data_dir().join("backups")
+}
+
+/// A folder the user can open from Configurações → Dados. The frontend only picks one of
+/// these; it never sends a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum OpenableFolder {
+    /// The app data folder (database, images).
+    Data,
+    /// The backup folder.
+    Backups,
+}
+
+/// The folder to show the user for `which`. It is created if it doesn't exist yet (the backup
+/// folder has nothing in it until the first backup), so opening it never fails for that.
+pub fn folder_to_open(
+    db: &Database,
+    paths: &AppPaths,
+    which: OpenableFolder,
+) -> AppResult<PathBuf> {
+    let path = match which {
+        OpenableFolder::Data => paths.data_dir().to_path_buf(),
+        OpenableFolder::Backups => db.with(|conn| folder(conn, paths))?,
+    };
+    fs::create_dir_all(&path)?;
+    Ok(path)
 }
 
 /// The folder backups go to: the user's choice, or the default.
@@ -289,7 +316,7 @@ impl BackupService {
         })
     }
 
-    /// Makes a backup if the newest one is older than a day. Called at start and every hour.
+    /// Makes a backup if the newest one is older than a day. Called at start and every few minutes.
     pub fn backup_if_due(
         &self,
         db: &Database,
@@ -377,6 +404,24 @@ fn create(
     now: &str,
     prune: bool,
 ) -> AppResult<BackupInfo> {
+    create_with(
+        |building| snapshot::write(db, &paths.images_dir(), building, now),
+        folder,
+        kind,
+        now,
+        prune,
+    )
+}
+
+/// [`create`] with the snapshot written by `write_snapshot` into the folder it is given, so a
+/// caller that holds the database lock can write it from its own connection.
+fn create_with(
+    write_snapshot: impl FnOnce(&Path) -> AppResult<snapshot::Manifest>,
+    folder: &Path,
+    kind: BackupKind,
+    now: &str,
+    prune: bool,
+) -> AppResult<BackupInfo> {
     fs::create_dir_all(folder)?;
     let name = format!("{}-{}", kind.prefix(), stamp(now));
     let finished = folder.join(&name);
@@ -388,7 +433,7 @@ fn create(
     let building = folder.join(format!(".tmp-{name}"));
     let _ = fs::remove_dir_all(&building);
     fs::create_dir(&building)?;
-    let manifest = snapshot::write(db, &paths.images_dir(), &building, now)
+    let manifest = write_snapshot(&building)
         .and_then(|manifest| {
             fs::rename(&building, &finished)
                 .map(|()| manifest)
@@ -463,9 +508,24 @@ pub fn replace_data(
     now: &str,
 ) -> AppResult<()> {
     let staged = snapshot::stage(source)?;
-    // Pruned only afterwards, so a safety backup being restored is never deleted by this one.
-    create(db, paths, folder, BackupKind::Safety, now, false)?;
-    snapshot::commit(db, &paths.images_dir(), source, &staged, LOCAL_SETTINGS)?;
+    // A replacement that SQLite would refuse is stopped here, before any image is added or a
+    // safety backup is made. The lock is only held for this quick look.
+    db.with(|conn| snapshot::ensure_replaceable(conn, &staged))?;
+    // Adding images is harmless to the current data, so it stays out of the lock.
+    snapshot::copy_images(&paths.images_dir(), source, &staged)?;
+    // One lock around the safety backup and the replacement: a write in between would be in
+    // neither.
+    db.with(|conn| {
+        // Pruned only afterwards, so a safety backup being restored is never deleted by this one.
+        create_with(
+            |building| snapshot::write_locked(conn, &paths.images_dir(), building, now),
+            folder,
+            BackupKind::Safety,
+            now,
+            false,
+        )?;
+        snapshot::commit(conn, &staged, LOCAL_SETTINGS)
+    })?;
     prune(folder, BackupKind::Safety);
     Ok(())
 }
@@ -555,6 +615,84 @@ mod tests {
         .unwrap();
         // The database keeps working after the replacement.
         add_question(&f.db, "q-4");
+    }
+
+    /// Rewrites the backup's database with another page size and fixes the manifest hash, like a
+    /// file made by a build that uses a different page size.
+    fn change_page_size(folder: &Path, name: &str) {
+        let dir = folder.join(name);
+        let database = dir.join(snapshot::DATABASE_FILE);
+        let conn = Connection::open(&database).unwrap();
+        conn.pragma_update(None, "page_size", 8192).unwrap();
+        conn.execute_batch("VACUUM").unwrap();
+        conn.close().unwrap();
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join(snapshot::MANIFEST_FILE)).unwrap()).unwrap();
+        let (sha256, size) = snapshot::hash_file(&database).unwrap();
+        for file in manifest["files"].as_array_mut().unwrap() {
+            if file["path"] == snapshot::DATABASE_FILE {
+                file["sha256"] = sha256.clone().into();
+                file["size"] = size.into();
+            }
+        }
+        fs::write(
+            dir.join(snapshot::MANIFEST_FILE),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_page_size_mismatch_is_refused_before_the_safety_backup_so_nothing_changes() {
+        let f = fixture();
+        add_question(&f.db, "q-1");
+        let info = backup(&f, "2026-11-19T10:00:00.000Z");
+        let folder = default_folder(&f.paths);
+        change_page_size(&folder, &info.name);
+        add_question(&f.db, "q-2");
+
+        let error = restore(&f.db, &f.paths, &info.name, "2026-11-19T11:00:00.000Z").unwrap_err();
+
+        assert!(matches!(error, AppError::Invalid(_)), "{error:?}");
+        assert!(error.to_string().contains("Nada foi alterado"));
+        assert_eq!(question_ids(&f.db), ["q-1", "q-2"]);
+        assert!(
+            list(&folder)
+                .iter()
+                .all(|info| info.kind != BackupKind::Safety),
+            "no safety backup for a replacement that was refused"
+        );
+    }
+
+    #[test]
+    fn the_folders_to_open_are_the_data_folder_and_the_current_backup_folder() {
+        let f = fixture();
+
+        let data = folder_to_open(&f.db, &f.paths, OpenableFolder::Data).unwrap();
+        assert_eq!(data, f.paths.data_dir());
+
+        // The backup folder doesn't exist before the first backup: it is created, not an error.
+        let default = default_folder(&f.paths);
+        assert!(!default.exists());
+        let backups = folder_to_open(&f.db, &f.paths, OpenableFolder::Backups).unwrap();
+        assert_eq!(backups, default);
+        assert!(default.is_dir());
+
+        // After the user picks another folder, that is the one to open.
+        let chosen = f._dir.path().join("elsewhere");
+        f.db.with(|conn| set_folder(conn, &f.paths, Some(&chosen)))
+            .unwrap();
+        let backups = folder_to_open(&f.db, &f.paths, OpenableFolder::Backups).unwrap();
+        assert_eq!(backups, chosen);
+    }
+
+    #[test]
+    fn the_openable_folder_is_a_closed_choice_not_a_path() {
+        assert_eq!(
+            serde_json::from_str::<OpenableFolder>("\"backups\"").unwrap(),
+            OpenableFolder::Backups
+        );
+        assert!(serde_json::from_str::<OpenableFolder>("\"/etc\"").is_err());
     }
 
     #[test]

@@ -35,7 +35,15 @@ describe("api", () => {
     const sent: unknown[] = [];
     mockIPC((command, args) => {
       sent.push([command, args]);
-      return { due: 0, upcoming: 0, errors: 0, practice: 0, practiceErrors: 0, items: [] };
+      return {
+        due: 0,
+        dueInOpenAttempt: 0,
+        upcoming: 0,
+        errors: 0,
+        practice: 0,
+        practiceErrors: 0,
+        items: [],
+      };
     });
 
     await api.learningOverview(true);

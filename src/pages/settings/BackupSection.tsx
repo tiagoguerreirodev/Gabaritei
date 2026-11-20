@@ -7,6 +7,7 @@ import Modal from "../../components/Modal";
 import { ErrorState, Loading } from "../../components/states";
 import { showError, showToast } from "../../components/toasts";
 import type { Busy } from "./busy";
+import { openFolder } from "./openFolder";
 
 const dateTime = (iso: string) =>
   new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
@@ -175,7 +176,10 @@ function Content(props: {
         <Show when={props.status.isDefaultFolder}>
           {" "}
           <span class="muted">(padrão)</span>
-        </Show>
+        </Show>{" "}
+        <button type="button" onClick={() => void openFolder("backups")}>
+          Abrir pasta dos backups
+        </button>
       </p>
       <Show when={props.status.lastError}>
         {(message) => (

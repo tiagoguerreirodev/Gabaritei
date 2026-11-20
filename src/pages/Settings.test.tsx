@@ -1,7 +1,7 @@
 import { render, screen, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { AiSettingsInput } from "../bindings/AiSettingsInput";
 import { Toaster } from "../components/toasts";
@@ -15,7 +15,11 @@ const defaults: AiSettings = {
   hasRemnoteToken: false,
 };
 
-function backend(initial: AiSettings = defaults) {
+function backend(
+  initial: AiSettings = defaults,
+  importing?: Promise<boolean>,
+  backingUp?: Promise<unknown>,
+) {
   const calls: { command: string; args: unknown }[] = [];
   let stored = initial;
   mockIPC((command, args) => {
@@ -25,9 +29,20 @@ function backend(initial: AiSettings = defaults) {
         return {
           folder: "/dados/backups",
           isDefaultFolder: true,
-          backups: [],
+          backups: [
+            {
+              name: "backup-20261118-100000-000",
+              kind: "backup",
+              createdAt: "2026-11-18T10:00:00.000Z",
+              sizeBytes: 1024,
+            },
+          ],
           lastError: null,
         };
+      case "backup_now":
+        return backingUp;
+      case "import_data":
+        return importing ?? false;
       case "legacy_import_status":
         return { report: null, bankEmpty: false };
       case "ai_settings":
@@ -157,6 +172,56 @@ describe("Configurações", () => {
     const saves = calls.filter((c) => c.command === "save_ai_settings");
     const last = (saves.at(-1)?.args as { input: AiSettingsInput }).input;
     expect(last.remnote.tools).toEqual(["search"]);
+  });
+
+  it("blocks backup actions while an import runs, because Dados has one busy state", async () => {
+    let finish: (imported: boolean) => void = () => undefined;
+    backend(
+      defaults,
+      new Promise<boolean>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    render(() => <Settings />);
+    const backupNow = await screen.findByRole("button", { name: "Fazer backup agora" });
+    expect(backupNow).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Importar dados…" }));
+    await user.click(screen.getByRole("button", { name: "Escolher arquivo e importar" }));
+
+    expect(backupNow).toBeDisabled();
+    // The case the issue names: a restore can't be started behind a running import.
+    expect(screen.getByRole("button", { name: /^Restaurar o backup de/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Escolher pasta…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Exportar dados…" })).toBeDisabled();
+
+    // The import was cancelled in the file dialog: everything is available again.
+    finish(false);
+    await vi.waitFor(() => expect(backupNow).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Exportar dados…" })).toBeEnabled();
+  });
+
+  it("blocks the data file actions while a backup runs", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    backend(
+      defaults,
+      undefined,
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    render(() => <Settings />);
+
+    await user.click(await screen.findByRole("button", { name: "Fazer backup agora" }));
+
+    expect(screen.getByRole("button", { name: "Importar dados…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Exportar dados…" })).toBeDisabled();
+    finish(null);
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "Importar dados…" })).toBeEnabled(),
+    );
   });
 
   it("warns that the Codex config mode cannot limit RemNote tools", async () => {

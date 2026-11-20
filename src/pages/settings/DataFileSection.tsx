@@ -2,46 +2,44 @@ import { Show, createSignal } from "solid-js";
 import { api } from "../../api";
 import Modal from "../../components/Modal";
 import { showError, showToast } from "../../components/toasts";
+import type { Busy } from "./busy";
 
 /** Moves the study data between computers with one file. */
 export default function DataFileSection(props: {
+  /** Shared with the backup section, so only one action runs at a time. */
+  busy: Busy;
   /** Called after an import replaced the data, so the app shows the imported state. */
   onImported?: () => void;
 }) {
-  // Read once: the callback is a plain function, not something that changes.
+  // Read once: these are plain objects and functions, not something that changes.
   // eslint-disable-next-line solid/reactivity
-  const onImported = props.onImported;
-  const [busy, setBusy] = createSignal(false);
+  const { busy, onImported } = props;
   const [confirming, setConfirming] = createSignal(false);
 
-  const exportData = async () => {
-    setBusy(true);
-    try {
-      if (await api.exportData()) showToast("Arquivo de dados salvo.");
-    } catch (error) {
-      showError(error);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const importData = async () => {
-    setBusy(true);
-    try {
-      const imported = await api.importData();
-      setConfirming(false);
-      if (imported) {
-        showToast("Dados importados.");
-        if (onImported) onImported();
-        else window.location.reload();
+  const exportData = () =>
+    busy.run(async () => {
+      try {
+        if (await api.exportData()) showToast("Arquivo de dados salvo.");
+      } catch (error) {
+        showError(error);
       }
-    } catch (error) {
-      setConfirming(false);
-      showError(error);
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
+
+  const importData = () =>
+    busy.run(async () => {
+      try {
+        const imported = await api.importData();
+        setConfirming(false);
+        if (imported) {
+          showToast("Dados importados.");
+          if (onImported) onImported();
+          else window.location.reload();
+        }
+      } catch (error) {
+        setConfirming(false);
+        showError(error);
+      }
+    });
 
   return (
     <section class="card" aria-labelledby="data-file-title">
@@ -52,29 +50,34 @@ export default function DataFileSection(props: {
         importa fica exatamente com o que está no arquivo, e o que havia antes é substituído.
       </p>
       <p class="actions">
-        <button type="button" class="primary" disabled={busy()} onClick={() => void exportData()}>
+        <button
+          type="button"
+          class="primary"
+          disabled={busy.active()}
+          onClick={() => void exportData()}
+        >
           Exportar dados…
         </button>
-        <button type="button" disabled={busy()} onClick={() => setConfirming(true)}>
+        <button type="button" disabled={busy.active()} onClick={() => setConfirming(true)}>
           Importar dados…
         </button>
       </p>
       <Show when={confirming()}>
         <Modal
           title="Importar dados?"
-          onClose={() => !busy() && setConfirming(false)}
+          onClose={() => !busy.active() && setConfirming(false)}
           footer={
             <>
-              <button type="button" disabled={busy()} onClick={() => setConfirming(false)}>
+              <button type="button" disabled={busy.active()} onClick={() => setConfirming(false)}>
                 Cancelar
               </button>
               <button
                 type="button"
                 class="primary danger"
-                disabled={busy()}
+                disabled={busy.active()}
                 onClick={() => void importData()}
               >
-                {busy() ? "Importando…" : "Escolher arquivo e importar"}
+                {busy.active() ? "Importando…" : "Escolher arquivo e importar"}
               </button>
             </>
           }

@@ -2,7 +2,7 @@
 
 A personal desktop app that **generates exam questions with AI agents**, checks them blind with a second model, and **tracks your performance** by area › matter › topic. Built for studying for Brazilian public exams (*concursos*). The interface is in Portuguese.
 
-> **Status:** planning and scaffolding. Nothing runs yet. Work is tracked in [Issues](../../issues) and grouped in milestones `M0`–`M7`.
+> **Status:** early development. The app shell runs, but no features work yet. Work is tracked in [Issues](../../issues) and grouped in milestones `M0`–`M7`.
 
 ## How it works
 - **Generation:** you pick a topic and a count, plus optional board style, format and instructions. Your locally installed **Claude Code** or **Codex** CLI writes the questions using your own subscription. It can read your RemNote notes, attached files and the web.
@@ -19,9 +19,18 @@ A personal desktop app that **generates exam questions with AI agents**, checks 
 ## Stack
 Tauri 2 (Rust) · Solid.js + TypeScript + Vite · SQLite (rusqlite) · KaTeX. Targets Windows 11 x64 and macOS on Apple Silicon.
 
-## Development prerequisites
+## Development
+Prerequisites:
 - Rust (stable) and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS
-- Node.js 24 with npm
+- Node.js 26 with npm (see `.nvmrc`)
 - To use AI features: the `claude` and/or `codex` CLIs installed and logged in
 
-Build and run commands will be added once the scaffold lands (issue #1).
+```sh
+npm install          # once
+npm run tauri dev    # run the app
+
+npm test && npm run lint && npm run typecheck
+cargo test --manifest-path src-tauri/Cargo.toml
+```
+
+[`AGENTS.md`](AGENTS.md#commands) has the full command list.

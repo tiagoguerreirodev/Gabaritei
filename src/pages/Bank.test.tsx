@@ -1,7 +1,8 @@
-import { render, screen, within } from "@solidjs/testing-library";
+import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { describe, expect, it } from "vitest";
+import type { AttemptListItem } from "../bindings/AttemptListItem";
 import type { CollectionDetail } from "../bindings/CollectionDetail";
 import type { CollectionPage } from "../bindings/CollectionPage";
 import type { CollectionQuery } from "../bindings/CollectionQuery";
@@ -65,9 +66,16 @@ const fold = (text: string) =>
     .toLowerCase();
 
 /** A fake backend that filters and paginates like the real one, recording each query. */
-function backend(options: { tree?: TopicTree; failCollections?: string } = {}) {
+function backend(
+  options: { tree?: TopicTree; failCollections?: string; attempts?: AttemptListItem[] } = {},
+) {
   const queries: CollectionQuery[] = [];
+  const started: unknown[] = [];
   mockIPC((command, args) => {
+    if (command === "session_start") {
+      started.push((args as { request: unknown }).request);
+      return { id: "att-1" };
+    }
     if (command === "topics_tree") return options.tree ?? tree;
     if (command === "collections") {
       if (options.failCollections) {
@@ -104,13 +112,13 @@ function backend(options: { tree?: TopicTree; failCollections?: string } = {}) {
         board: found.board,
         questions: found.questions,
         createdAt: found.createdAt,
-        attempts: [],
+        attempts: options.attempts ?? [],
       };
       return detail;
     }
     throw new Error(`Unexpected command: ${command}`);
   });
-  return queries;
+  return Object.assign(queries, { started });
 }
 
 const listedTitles = () =>
@@ -151,6 +159,38 @@ describe("Banco", () => {
       render(() => <Bank />);
 
       expect(await screen.findByText("Nenhuma questão no banco ainda.")).toBeVisible();
+    });
+  });
+
+  describe("topic session", () => {
+    it("starts a topic session with the chosen count", async () => {
+      const calls = backend();
+      const user = userEvent.setup();
+      render(() => <Bank />);
+
+      await user.click(
+        await screen.findByRole("button", { name: "Resolver Controle de constitucionalidade" }),
+      );
+      const dialog = await screen.findByRole("dialog", {
+        name: "Direito › Constitucional › Controle de constitucionalidade",
+      });
+      const count = within(dialog).getByRole("spinbutton", { name: /Quantidade/ });
+      const begin = within(dialog).getByRole("button", { name: "Começar" });
+      for (const invalid of ["2.5", "0", "121"]) {
+        await user.clear(count);
+        await user.type(count, invalid);
+        expect(begin).toBeDisabled();
+      }
+      await user.clear(count);
+      await user.type(count, "25");
+      expect(begin).toBeEnabled();
+      await user.click(within(dialog).getByRole("button", { name: "Começar" }));
+
+      await waitFor(() => expect(calls.started).toHaveLength(1));
+      expect(calls.started[0]).toEqual({
+        source: { kind: "topic", topicId: 1, count: 25 },
+        feedbackMode: "study",
+      });
     });
   });
 
@@ -226,8 +266,8 @@ describe("Banco", () => {
       expect(queries.at(-1)).toMatchObject({ contest: "Perito Criminal", page: 0 });
     });
 
-    it("opens a collection's details, with no attempts yet and Iniciar disabled", async () => {
-      backend();
+    it("opens a collection's details and starts a session in the chosen mode", async () => {
+      const calls = backend();
       const user = await openCollections();
 
       await user.click(screen.getByRole("button", { name: /Informática › SQL/ }));
@@ -238,10 +278,48 @@ describe("Banco", () => {
       );
       expect(within(dialog).getByText("FGV")).toBeVisible();
       expect(within(dialog).getByText("Nenhuma tentativa ainda.")).toBeVisible();
-      expect(within(dialog).getByRole("button", { name: "Iniciar" })).toBeDisabled();
+      // Cancelling the mode choice goes back to the collection's details.
+      await user.click(within(dialog).getByRole("button", { name: "Iniciar" }));
+      let start = await screen.findByRole("dialog", { name: "Informática › SQL" });
+      await user.click(within(start).getByRole("button", { name: "Cancelar" }));
+      const details = await screen.findByRole("dialog", { name: "Informática › SQL" });
+      expect(within(details).getByText("Nenhuma tentativa ainda.")).toBeVisible();
+
+      await user.click(within(details).getByRole("button", { name: "Iniciar" }));
+      start = await screen.findByRole("dialog", { name: "Informática › SQL" });
+      await user.click(within(start).getByRole("radio", { name: /Simulado/ }));
+      await user.click(within(start).getByRole("button", { name: "Começar" }));
+
+      await waitFor(() => expect(window.location.hash).toBe("#/resolver?tentativa=att-1"));
+      expect(calls.started).toEqual([
+        { source: { kind: "collection", collectionId: "c-sql" }, feedbackMode: "exam" },
+      ]);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("offers to continue an unfinished attempt instead of starting another", async () => {
+      backend({
+        attempts: [
+          {
+            id: "att-open",
+            feedbackMode: "study",
+            startedAt: "2026-11-20T10:00:00.000Z",
+            finishedAt: null,
+            answered: 3,
+            total: 30,
+          },
+        ],
+      });
+      const user = await openCollections();
+      await user.click(screen.getByRole("button", { name: /Informática › SQL/ }));
+      const dialog = await screen.findByRole("dialog", { name: "Informática › SQL" });
+
+      expect(await within(dialog).findByText("Há uma tentativa em andamento.")).toBeVisible();
+      expect(within(dialog).queryByRole("button", { name: "Iniciar" })).not.toBeInTheDocument();
+      await user.click(within(dialog).getAllByRole("button", { name: "Continuar" })[0]!);
+      expect(window.location.hash).toBe("#/resolver?tentativa=att-open");
 
       await user.keyboard("{Escape}");
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
     it("shows the backend's error when the list can't load", async () => {

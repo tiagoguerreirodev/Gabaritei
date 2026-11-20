@@ -59,12 +59,12 @@ describe("Início", () => {
     expect(names).toEqual(["Português20%", "Direito70%"]);
 
     const waiting = screen.getByRole("heading", { name: "Aguardando você" }).parentElement!;
-    expect(within(waiting).getByRole("link", { name: "Revisões do dia" })).toHaveAttribute(
+    expect(within(waiting).getByRole("link", { name: "Revisões pendentes" })).toHaveAttribute(
       "href",
       "#/erros-e-revisoes",
     );
     expect(
-      within(waiting).getByRole("link", { name: "Revisões do dia" }).parentElement,
+      within(waiting).getByRole("link", { name: "Revisões pendentes" }).parentElement,
     ).toHaveTextContent("3");
     expect(
       within(waiting).getByRole("link", { name: "Pacotes para revisar" }).parentElement,
@@ -81,6 +81,36 @@ describe("Início", () => {
       screen.getByRole("button", { name: "Retomar Direito › Constitucional › Controle" }),
     );
     expect(window.location.hash).toBe("#/resolver?tentativa=att-7");
+  });
+
+  it("refreshes after the first-run legacy import", async () => {
+    let imported = false;
+    mockIPC((command) => {
+      if (command === "legacy_import_status") return { report: null, bankEmpty: !imported };
+      if (command === "import_legacy_bank") {
+        imported = true;
+        return {
+          report: {
+            importedAt: "2026-11-19T12:00:00.000Z",
+            questions: 9368,
+            collections: 1,
+            collectionItems: 1,
+            topics: 1,
+            images: 0,
+          },
+          alreadyImported: false,
+        };
+      }
+      if (command === "home") return imported ? summary : emptyHome;
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const user = userEvent.setup();
+    render(() => <Home />);
+
+    expect(await screen.findByText("0 questões no banco.")).toBeVisible();
+    await user.click(await screen.findByRole("button", { name: "Escolher pasta e importar" }));
+
+    expect(await screen.findByText("9.368 questões no banco.")).toBeVisible();
   });
 
   it("has pt-BR empty states for a fresh install", async () => {

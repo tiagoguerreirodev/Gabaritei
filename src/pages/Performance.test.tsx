@@ -1,9 +1,10 @@
-import { render, screen, within } from "@solidjs/testing-library";
+import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Performance as PerformanceData } from "../bindings/Performance";
 import type { PerformanceQuery } from "../bindings/PerformanceQuery";
+import { Toaster, dismissToast } from "../components/toasts";
 import { emptyPerformance, stats } from "../test/fixtures";
 import Performance from "./Performance";
 
@@ -47,15 +48,18 @@ const data: PerformanceData = {
 };
 
 function backend(result: PerformanceData | { error: string }, exported = true) {
+  const failures = { next: false };
   const queries: PerformanceQuery[] = [];
   const exports: PerformanceQuery[] = [];
   mockIPC((command, args) => {
     const query = (args as { query: PerformanceQuery }).query;
     if (command === "performance") {
       queries.push(query);
-      if ("error" in result) {
+      if (failures.next || "error" in result) {
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
-        return Promise.reject({ message: result.error });
+        return Promise.reject({
+          message: "error" in result ? result.error : "Falha ao calcular.",
+        });
       }
       return result;
     }
@@ -65,8 +69,13 @@ function backend(result: PerformanceData | { error: string }, exported = true) {
     }
     throw new Error(`Unexpected command: ${command}`);
   });
-  return { queries, exports };
+  return { queries, exports, failures };
 }
+
+/** Toasts live in module state; forget the ones earlier tests raised. */
+afterEach(() => {
+  for (let id = 0; id < 100; id++) dismissToast(id);
+});
 
 describe("Desempenho", () => {
   it("shows the summary cards, the weakest topics first, the trend and the table", async () => {
@@ -99,7 +108,7 @@ describe("Desempenho", () => {
     const user = userEvent.setup();
     render(() => <Performance />);
 
-    const table = await screen.findByRole("table");
+    const table = await screen.findByRole("table", { name: /Desempenho por área/ });
     const rowNames = () =>
       within(table)
         .getAllByRole("row")
@@ -135,7 +144,7 @@ describe("Desempenho", () => {
     await user.selectOptions(screen.getByLabelText("Banca"), "FGV");
     await user.selectOptions(screen.getByLabelText("Modo"), "Simulado");
 
-    await screen.findByRole("list", { name: "Resumo" });
+    await waitFor(() => expect(queries).toHaveLength(4));
     expect(queries.at(-1)).toMatchObject({
       contest: "TRT",
       board: "FGV",
@@ -143,18 +152,72 @@ describe("Desempenho", () => {
     });
   });
 
-  it("exports the CSV with the active filters", async () => {
-    const { exports } = backend(data);
+  it("exports the CSV with the active filters and confirms with a toast", async () => {
+    const { exports } = backend(data, true);
     const user = userEvent.setup();
-    render(() => <Performance />);
+    render(() => (
+      <>
+        <Performance />
+        <Toaster />
+      </>
+    ));
     await screen.findByRole("list", { name: "Resumo" });
 
     await user.selectOptions(screen.getByLabelText("Concurso"), "INSS");
     await user.click(screen.getByRole("button", { name: "Exportar CSV" }));
 
-    await screen.findByRole("list", { name: "Resumo" });
+    expect(await screen.findByText("Planilha salva.")).toBeVisible();
     expect(exports).toHaveLength(1);
     expect(exports[0]).toMatchObject({ contest: "INSS" });
+  });
+
+  it("says nothing when the save dialog is cancelled", async () => {
+    const { exports } = backend(data, false);
+    const user = userEvent.setup();
+    render(() => (
+      <>
+        <Performance />
+        <Toaster />
+      </>
+    ));
+    await screen.findByRole("list", { name: "Resumo" });
+
+    await user.click(screen.getByRole("button", { name: "Exportar CSV" }));
+
+    await waitFor(() => expect(exports).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Exportar CSV" })).toBeEnabled());
+    expect(screen.queryByText("Planilha salva.")).not.toBeInTheDocument();
+  });
+
+  it("keeps the tag options when a reload fails", async () => {
+    const { failures } = backend(data);
+    const user = userEvent.setup();
+    render(() => <Performance />);
+    await screen.findByRole("list", { name: "Resumo" });
+
+    failures.next = true;
+    await user.selectOptions(screen.getByLabelText("Concurso"), "TRT");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Falha ao calcular.");
+    expect(screen.getByLabelText("Concurso")).toHaveValue("TRT");
+    expect(within(screen.getByLabelText("Concurso")).getAllByRole("option")).toHaveLength(3);
+  });
+
+  it("breaks the trend line where a week has no answers", async () => {
+    backend(data);
+    render(() => <Performance />);
+    const chart = await screen.findByRole("img", { name: "Acerto semanal" });
+    // 9 and 23 November are two weeks apart: two single-point segments, not one line.
+    expect(chart.querySelectorAll("polyline")).toHaveLength(2);
+  });
+
+  it("offers the weekly numbers as a table for screen readers", async () => {
+    backend(data);
+    render(() => <Performance />);
+    const table = await screen.findByRole("table", { name: "Acerto semanal" });
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows[0]).toHaveTextContent("09/11");
+    expect(rows[1]).toHaveTextContent("75%");
   });
 
   it("explains an empty bank", async () => {

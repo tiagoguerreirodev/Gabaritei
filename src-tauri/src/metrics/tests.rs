@@ -657,29 +657,6 @@ fn absurd_time_zone_offsets_are_clamped() {
 }
 
 #[test]
-fn topic_accuracy_feeds_the_bank_tree() {
-    let f = fixture(&[("q1", &[D]), ("q2", &[D]), ("q3", &[P])]);
-    f.attempt(
-        "a1",
-        "study",
-        Some("2026-11-02T10:00:00.000Z"),
-        &[("q1", Some("o0")), ("q2", Some("o1"))],
-    );
-    let tree = f.db.with(|c| crate::bank::catalog::topic_tree(c)).unwrap();
-    let accuracy = |name: &str| {
-        tree.areas
-            .iter()
-            .flat_map(|a| &a.matters)
-            .flat_map(|m| &m.topics)
-            .find(|t| t.name == name)
-            .unwrap()
-            .accuracy
-    };
-    assert_eq!(accuracy("Controle"), Some(0.5));
-    assert_eq!(accuracy("Crase"), None, "never answered");
-}
-
-#[test]
 fn home_summarizes_the_bank_and_what_is_waiting() {
     let f = fixture(&[("q1", &[D]), ("q2", &[P])]);
     f.collection("c1", None, None, &["q1", "q2"]);

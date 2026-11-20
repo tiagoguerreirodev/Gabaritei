@@ -1,6 +1,7 @@
-import { For, Match, Show, Switch, createResource, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createResource, createSignal } from "solid-js";
 import { api } from "../api";
 import type { FeedbackMode } from "../bindings/FeedbackMode";
+import type { FilterOptions } from "../bindings/FilterOptions";
 import type { PerformanceQuery } from "../bindings/PerformanceQuery";
 import { EmptyState, ErrorState, Loading } from "../components/states";
 import { showError, showToast } from "../components/toasts";
@@ -28,6 +29,12 @@ export default function Performance() {
   const [result] = createResource(query, (q) => api.performance(q));
   /** The latest result, or nothing if loading failed (reading a failed resource throws). */
   const current = () => (result.error ? undefined : result.latest);
+  /** The tags to offer: kept from the last successful load, so an error doesn't empty them. */
+  const [options, setOptions] = createSignal<FilterOptions>({ contests: [], boards: [] });
+  createEffect(() => {
+    const loaded = current();
+    if (loaded) setOptions(loaded.filters);
+  });
   const filtering = () => contest() !== "" || board() !== "" || mode() !== "";
 
   const exportCsv = async () => {
@@ -54,18 +61,14 @@ export default function Performance() {
           <span>Concurso</span>
           <select value={contest()} onChange={(event) => setContest(event.currentTarget.value)}>
             <option value="">Todos os concursos</option>
-            <For each={current()?.filters.contests ?? []}>
-              {(name) => <option value={name}>{name}</option>}
-            </For>
+            <For each={options().contests}>{(name) => <option value={name}>{name}</option>}</For>
           </select>
         </label>
         <label>
           <span>Banca</span>
           <select value={board()} onChange={(event) => setBoard(event.currentTarget.value)}>
             <option value="">Todas as bancas</option>
-            <For each={current()?.filters.boards ?? []}>
-              {(name) => <option value={name}>{name}</option>}
-            </For>
+            <For each={options().boards}>{(name) => <option value={name}>{name}</option>}</For>
           </select>
         </label>
         <label>
@@ -89,6 +92,11 @@ export default function Performance() {
         </button>
       </div>
 
+      <Show when={result.loading && current()}>
+        <p class="muted" role="status">
+          Atualizando…
+        </p>
+      </Show>
       <Switch>
         <Match when={result.error as unknown}>{(error) => <ErrorState error={error()} />}</Match>
         <Match when={current()}>

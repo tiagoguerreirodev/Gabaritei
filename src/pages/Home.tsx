@@ -10,8 +10,8 @@ const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
 
 /** Início: summary cards, attempts to resume, due reviews and drafts waiting for review. */
 export default function Home() {
-  const [status] = createResource(() => api.legacyImportStatus());
-  const [home] = createResource(() => api.home());
+  const [status, { refetch: refetchStatus }] = createResource(() => api.legacyImportStatus());
+  const [home, { refetch: refetchHome }] = createResource(() => api.home());
 
   return (
     <section class="page">
@@ -19,7 +19,13 @@ export default function Home() {
 
       {/* First run: offer the legacy import while the bank is empty and it hasn't run. */}
       <Show when={status()?.bankEmpty && !status()?.report}>
-        <LegacyImport initialReport={null} />
+        <LegacyImport
+          initialReport={null}
+          onImported={() => {
+            void refetchStatus();
+            void refetchHome();
+          }}
+        />
       </Show>
 
       <Switch>
@@ -88,7 +94,7 @@ export default function Home() {
                 <h2 id="waiting-title">Aguardando você</h2>
                 <ul class="waiting-list">
                   <li>
-                    <a href="#/erros-e-revisoes">Revisões do dia</a>
+                    <a href="#/erros-e-revisoes">Revisões pendentes</a>
                     <strong>{formatNumber(summary().dueReviews)}</strong>
                   </li>
                   <li>

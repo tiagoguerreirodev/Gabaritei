@@ -626,3 +626,67 @@ fn an_answered_exam_question_cannot_be_annulled_before_finish() {
         Outcome::Annulled
     );
 }
+
+#[test]
+fn active_lists_unfinished_attempts_newest_first_with_counts_only() {
+    let (db, _) = bank();
+    let topic_id: i64 = db
+        .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
+        .unwrap();
+    let exam = start_collection(&db, FeedbackMode::Exam);
+    let choice = exam.questions[0].options[0].id.clone();
+    db.transaction(|tx| answer(tx, &exam.id, 0, Some(&choice), T1))
+        .unwrap();
+    let topic = db
+        .transaction(|tx| {
+            start(
+                tx,
+                &SessionStart {
+                    source: SessionSource::Topic { topic_id, count: 2 },
+                    feedback_mode: FeedbackMode::Study,
+                },
+                T2,
+            )
+        })
+        .unwrap();
+    // A finished attempt is history, not something to resume.
+    db.transaction(|tx| {
+            tx.execute(
+                "INSERT INTO attempts (id, source_kind, source_ref, feedback_mode, started_at, finished_at)
+                 VALUES ('old', 'collection', 'c1', 'study', ?1, ?1)",
+                params![T0],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+    let active = db.with(|c| active(c)).unwrap();
+    let summary: Vec<_> = active
+        .iter()
+        .map(|a| (a.id.as_str(), a.title.as_str(), a.answered, a.total))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (
+                topic.id.as_str(),
+                "Direito › Constitucional › Controle de constitucionalidade",
+                0,
+                2
+            ),
+            (exam.id.as_str(), "Caderno de teste", 1, 4),
+        ],
+        "newest first; the exam counts its answered question but reveals nothing"
+    );
+    let json = serde_json::to_string(&active).unwrap();
+    for secret in [
+        SECRET,
+        "REF-SECRETA",
+        "answerId",
+        "explanation",
+        "stem",
+        "options",
+    ] {
+        assert!(!json.contains(secret), "{secret} leaked: {json}");
+    }
+}

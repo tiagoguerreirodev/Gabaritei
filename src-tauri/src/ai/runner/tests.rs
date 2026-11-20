@@ -389,8 +389,11 @@ mod arguments {
             .collect();
         assert!(!args.iter().any(|a| a.contains("TOKEN-SECRETO")));
         assert!(plan.env.iter().all(|(_, v)| v != "TOKEN-SECRETO"));
-        let file = std::fs::read_to_string(work.mcp_config.as_ref().unwrap()).unwrap();
+        let config = work.mcp_config.as_ref().unwrap();
+        let file = std::fs::read_to_string(config).unwrap();
         assert!(file.contains("TOKEN-SECRETO"));
+        // Outside the working directory, so the agent's file tools (scoped to it) can't read it.
+        assert!(!config.starts_with(work.path()));
         // Only the exact tools the user approved, never the whole server.
         assert!(has_pair(
             &args,

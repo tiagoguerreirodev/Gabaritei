@@ -276,10 +276,13 @@ impl CancelToken {
 /// The run's temporary folder and the files the CLI is pointed at. Deleted on drop.
 pub(super) struct Workdir {
     dir: tempfile::TempDir,
+    /// Holds `mcp.json`, which contains the RemNote token. It is a separate folder, not under
+    /// the agent's working directory, so the agent's file tools can't read the token.
+    _config_dir: Option<tempfile::TempDir>,
     pub schema: PathBuf,
     /// Where Codex writes its last message (`-o`).
     pub output: PathBuf,
-    /// Claude's MCP config, if RemNote is on.
+    /// Claude's MCP config, if RemNote is on (outside the working directory).
     pub mcp_config: Option<PathBuf>,
     pub has_attachments: bool,
 }
@@ -317,22 +320,46 @@ impl Workdir {
             }
         }
 
-        let mcp_config = match (&spec.agent, &spec.remnote) {
+        let (config_dir, mcp_config) = match (&spec.agent, &spec.remnote) {
             (Agent::Claude, Some(RemNoteAccess::Server { url, token, .. })) => {
-                let path = dir.path().join("mcp.json");
-                std::fs::write(&path, claude::mcp_config(url, token)).map_err(workspace)?;
-                Some(path)
+                let folder = tempfile::Builder::new()
+                    .prefix("gabaritei-config-")
+                    .tempdir()
+                    .map_err(workspace)?;
+                let path = folder.path().join("mcp.json");
+                write_private(&path, &claude::mcp_config(url, token)).map_err(workspace)?;
+                (Some(folder), Some(path))
             }
-            _ => None,
+            _ => (None, None),
         };
 
         Ok(Self {
+            _config_dir: config_dir,
             output: dir.path().join("saida.json"),
             schema,
             mcp_config,
             has_attachments: !spec.attachments.is_empty(),
             dir,
         })
+    }
+}
+
+/// Writes a file only the current user can read (on Unix; Windows folders under the user's
+/// temp directory are already private to them).
+fn write_private(path: &Path, content: &str) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(content.as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, content)
     }
 }
 

@@ -236,9 +236,23 @@ pub fn is_write_like(tool: &str) -> bool {
         .any(|word| WRITE_WORDS.contains(&word.as_str()))
 }
 
-/// The approved tools that are safe to hand to an agent.
+/// Whether a tool name is plain: letters, digits, `_` and `-`, 1 to 100 characters. Anything
+/// else (a comma, parenthesis, `*` or `:`) could change what an allowlist entry means to a CLI.
+pub fn is_valid_tool_name(tool: &str) -> bool {
+    (1..=100).contains(&tool.chars().count())
+        && tool
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// The approved tools that are safe to hand to an agent: plain names that don't look like
+/// writes. Checked again here, whatever settings allowed, because the names end up inside
+/// comma-separated CLI arguments.
 pub(super) fn read_only_tools(tools: &[String]) -> Vec<&String> {
-    tools.iter().filter(|tool| !is_write_like(tool)).collect()
+    tools
+        .iter()
+        .filter(|tool| is_valid_tool_name(tool) && !is_write_like(tool))
+        .collect()
 }
 
 /// Stops a run from outside. Cloning shares the same flag.

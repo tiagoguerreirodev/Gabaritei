@@ -13,7 +13,7 @@ use ts_rs::TS;
 use super::agent::Agent;
 use super::discovery;
 use super::roles::{Role, RoleConfig, RoleSettings};
-use super::runner::{JobSpec, RemNoteAccess, is_write_like};
+use super::runner::{JobSpec, RemNoteAccess, is_valid_tool_name, is_write_like};
 use super::secrets::Secrets;
 use crate::db::{get_setting, set_setting};
 use crate::error::{AppError, AppResult};
@@ -25,7 +25,6 @@ const KEY_REMNOTE: &str = "ai.remnote";
 const MAX_MODEL: usize = 200;
 const MAX_PATH: usize = 1_000;
 const MAX_URL: usize = 2_000;
-const MAX_TOOL_NAME: usize = 100;
 
 /// Optional overrides for where the CLIs are. `None` means "detect automatically".
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -166,10 +165,7 @@ pub fn save(conn: &Connection, input: AiSettingsInput) -> AppResult<()> {
     let mut tools: Vec<String> = Vec::new();
     for tool in &input.remnote.tools {
         let tool = tool.trim();
-        if tool.is_empty()
-            || tool.chars().count() > MAX_TOOL_NAME
-            || tool.contains(char::is_whitespace)
-        {
+        if !is_valid_tool_name(tool) {
             return Err(invalid("Há um nome de ferramenta do RemNote inválido."));
         }
         if is_write_like(tool) {

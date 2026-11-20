@@ -519,6 +519,37 @@ mod arguments {
     }
 
     #[test]
+    fn tool_names_that_could_change_an_allowlist_entry_are_dropped() {
+        for bad in [
+            "search,Bash",
+            "Bash(*)",
+            "a*",
+            "x:y",
+            "",
+            "has space",
+            "../x",
+        ] {
+            assert!(!is_valid_tool_name(bad), "{bad:?}");
+        }
+        assert!(is_valid_tool_name("read_note") && is_valid_tool_name("get-rem"));
+
+        let mut claude_job = spec(Agent::Claude, "claude".into());
+        claude_job.remnote = Some(RemNoteAccess::Server {
+            url: "https://remnote.example/mcp".into(),
+            token: "t".into(),
+            tools: vec!["search,Bash".into(), "ok_tool".into()],
+        });
+        let (args, _) = plan_for(&claude_job);
+        let allowed = args
+            .windows(2)
+            .find(|w| w[0] == "--allowedTools")
+            .map(|w| w[1].clone())
+            .unwrap();
+        assert!(!allowed.contains("Bash"));
+        assert!(allowed.ends_with("mcp__remnote__ok_tool"));
+    }
+
+    #[test]
     fn write_like_tools_are_dropped_from_the_plan_for_both_agents() {
         let remnote = Some(RemNoteAccess::Server {
             url: "https://remnote.example/mcp".into(),

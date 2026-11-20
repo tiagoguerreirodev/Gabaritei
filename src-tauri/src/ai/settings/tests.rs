@@ -234,8 +234,10 @@ fn approved_tools_are_trimmed_deduplicated_and_validated() {
     let saved = db.with(|conn| load(conn, &secrets)).unwrap();
     assert_eq!(saved.remnote.tools, ["search", "read_note"]);
 
-    edited.remnote.tools = vec!["delete note".into()];
-    assert!(db.with(|conn| save(conn, input(&edited))).is_err());
+    for bad in ["delete note", "search,Bash", "Bash(*)", "a*b"] {
+        edited.remnote.tools = vec![bad.into()];
+        assert!(db.with(|conn| save(conn, input(&edited))).is_err(), "{bad}");
+    }
     // A tool that looks like a write is refused even though its name is well formed.
     edited.remnote.tools = vec!["search".into(), "create_note".into()];
     let error = db.with(|conn| save(conn, input(&edited))).unwrap_err();

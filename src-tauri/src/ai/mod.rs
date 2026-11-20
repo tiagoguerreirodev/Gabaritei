@@ -16,5 +16,5 @@ pub mod settings;
 pub use agent::{Agent, Effort};
 pub use runner::{
     CancelToken, JobOutput, JobSpec, Progress, ProgressKind, RemNoteAccess, RunError,
-    is_write_like, run_job,
+    is_valid_tool_name, is_write_like, run_job,
 };

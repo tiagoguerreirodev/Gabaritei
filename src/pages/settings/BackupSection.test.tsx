@@ -73,6 +73,12 @@ function backend(
         return null;
       case "backup_restore":
         return null;
+      case "backup_move_left_behind":
+        status = { ...status, leftBehind: null };
+        return {
+          report: { copied: 3, alreadyThere: 0, removed: 3, failed: 0, firstFailure: null },
+          status,
+        };
       default:
         throw new Error(`Unexpected command: ${command}`);
     }
@@ -174,6 +180,29 @@ describe("BackupSection", () => {
     expect(notice).toHaveTextContent("Nada foi movido nem apagado");
 
     await user.click(within(notice).getByRole("button", { name: "Entendi" }));
+    expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["Copiar para a pasta nova", false, "3 backups copiados para a pasta nova."],
+    ["Mover para a pasta nova", true, "3 backups movidos para a pasta nova."],
+  ])("%s by asking the backend, then drops the notice", async (label, remove, message) => {
+    const calls = backend({}, {}, { folder: "/dados/backups", backups: 3, safety: 1 });
+    const user = userEvent.setup();
+    render(() => (
+      <>
+        <BackupSection busy={createBusy()} />
+        <Toaster />
+      </>
+    ));
+    await user.click(await screen.findByRole("button", { name: "Escolher pasta…" }));
+    const notice = await screen.findByTestId("left-behind");
+
+    await user.click(within(notice).getByRole("button", { name: label }));
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    const call = calls.find((c) => c.command === "backup_move_left_behind");
+    expect(call?.args).toEqual({ removeOriginals: remove });
     expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument();
   });
 

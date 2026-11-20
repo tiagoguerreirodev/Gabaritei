@@ -66,6 +66,27 @@ export default function BackupSection(props: {
       showToast("Voltou para a pasta padrão.");
     });
 
+  const relocate = (removeOriginals: boolean) =>
+    run(async () => {
+      const { report, status: next } = await api.backupMoveLeftBehind(removeOriginals);
+      mutate(next);
+      setLeftBehind(next.leftBehind);
+      const done = report.copied + report.alreadyThere;
+      if (report.failed > 0) {
+        showToast(
+          `${report.failed === 1 ? "1 backup não foi" : `${report.failed} backups não foram`} ` +
+            `${removeOriginals ? "movido" : "copiado"}${report.failed === 1 ? "" : "s"}` +
+            `${report.firstFailure ? ` (${report.firstFailure})` : ""}. ` +
+            "Os originais continuam na pasta anterior.",
+        );
+      } else {
+        showToast(
+          `${done === 1 ? "1 backup" : `${done} backups`} ` +
+            `${removeOriginals ? "movido" : "copiado"}${done === 1 ? "" : "s"} para a pasta nova.`,
+        );
+      }
+    });
+
   const restore = (backup: BackupInfo) =>
     run(async () => {
       await api.backupRestore(backup.name);
@@ -104,8 +125,15 @@ export default function BackupSection(props: {
                     : `${left().safety} deles são cópias feitas antes de restaurar ou importar`}
                 ; para voltar atrás, volte para aquela pasta.
               </Show>{" "}
-              Nada foi movido nem apagado. Se quiser, copie os backups para a pasta nova.
+              Nada foi movido nem apagado. Se quiser, leve os backups para a pasta nova: cada cópia
+              é conferida antes de qualquer original ser apagado.
             </p>
+            <button type="button" disabled={busy.active()} onClick={() => void relocate(false)}>
+              Copiar para a pasta nova
+            </button>{" "}
+            <button type="button" disabled={busy.active()} onClick={() => void relocate(true)}>
+              Mover para a pasta nova
+            </button>{" "}
             <button type="button" onClick={() => setLeftBehind(null)}>
               Entendi
             </button>

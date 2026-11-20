@@ -20,7 +20,7 @@ use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportRes
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, RemNoteTest};
 use crate::attempts::{self, AttemptView, SessionStart};
-use crate::backup::{BackupInfo, BackupService, BackupStatus, OpenableFolder};
+use crate::backup::{BackupInfo, BackupService, BackupStatus, OpenableFolder, RelocateOutcome};
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
@@ -179,6 +179,18 @@ pub fn backup_use_default_folder(
     service: State<'_, BackupService>,
 ) -> AppResult<BackupStatus> {
     service.change_folder(&db, &paths, None)
+}
+
+/// Copies (or, with `remove_originals`, moves) the backups left in the old folder by the last
+/// folder change to the current one. Each original is deleted only after its copy is verified.
+#[tauri::command(async)]
+pub fn backup_move_left_behind(
+    db: State<'_, Database>,
+    paths: State<'_, AppPaths>,
+    service: State<'_, BackupService>,
+    remove_originals: bool,
+) -> AppResult<RelocateOutcome> {
+    service.relocate_left_behind(&db, &paths, remove_originals)
 }
 
 /// Replaces the current data with a backup, after a safety backup. Not while a generation runs.

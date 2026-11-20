@@ -8,6 +8,7 @@
 //! `safety-<UTC time>` backup of the current data is made; the newest 5 of those are kept.
 
 pub mod datafile;
+pub mod relocate;
 pub mod snapshot;
 
 use std::fs;
@@ -117,6 +118,17 @@ pub struct LeftBehind {
     pub backups: u32,
     /// How many of them are safety backups ("antes de restaurar").
     pub safety: u32,
+}
+
+/// What copying or moving the backups of the old folder did, and the status afterwards.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RelocateOutcome {
+    pub report: relocate::RelocateReport,
+    /// The new folder's status. `left_behind` is what a *move* could not take out of the old
+    /// folder; a copy leaves the originals on purpose and reports nothing.
+    pub status: BackupStatus,
 }
 
 /// `YYYYMMDD-HHMMSS-mmm` from a timestamp like `2026-11-19T21:00:00.123Z` (see [`crate::clock`]).
@@ -299,6 +311,18 @@ pub fn list(folder: &Path) -> Vec<BackupInfo> {
     found
 }
 
+/// The notice for backups `left` in `old`, if there are any.
+fn left_behind(old: &Path, left: &[BackupInfo]) -> Option<LeftBehind> {
+    (!left.is_empty()).then(|| LeftBehind {
+        folder: old.display().to_string(),
+        backups: left.len() as u32,
+        safety: left
+            .iter()
+            .filter(|info| info.kind == BackupKind::Safety)
+            .count() as u32,
+    })
+}
+
 /// Whether two paths are the same folder, even when one is spelled differently.
 fn same_folder(a: &Path, b: &Path) -> bool {
     a == b || matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
@@ -314,6 +338,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 pub struct BackupService {
     busy: Mutex<()>,
     last_error: Mutex<Option<String>>,
+    /// The old folder after the last folder change that left backups in it, so the copy or move
+    /// is done from there without the frontend ever sending a path.
+    left_behind: Mutex<Option<PathBuf>>,
 }
 
 impl BackupService {
@@ -369,15 +396,41 @@ impl BackupService {
             } else {
                 list(&old)
             };
-            status.left_behind = (!left.is_empty()).then(|| LeftBehind {
-                folder: old.display().to_string(),
-                backups: left.len() as u32,
-                safety: left
-                    .iter()
-                    .filter(|info| info.kind == BackupKind::Safety)
-                    .count() as u32,
-            });
+            status.left_behind = left_behind(&old, &left);
+            *lock(&self.left_behind) = status.left_behind.is_some().then_some(old);
             Ok(status)
+        })
+    }
+
+    /// Copies the backups left in the old folder (see [`Self::change_folder`]) to the current
+    /// one, or moves them when `remove_originals`: each original is deleted only after its copy
+    /// passed [`snapshot::verify`]. Backups already in the new folder with the same name and
+    /// content are not copied again.
+    pub fn relocate_left_behind(
+        &self,
+        db: &Database,
+        paths: &AppPaths,
+        remove_originals: bool,
+    ) -> AppResult<RelocateOutcome> {
+        self.exclusive(|| {
+            let nothing = || AppError::Invalid("Não há backups na pasta anterior.".into());
+            let old = lock(&self.left_behind).clone().ok_or_else(nothing)?;
+            let new = db.with(|conn| folder(conn, paths))?;
+            if same_folder(&old, &new) {
+                *lock(&self.left_behind) = None;
+                return Err(nothing());
+            }
+            let names: Vec<String> = list(&old).into_iter().map(|info| info.name).collect();
+            let report = relocate::relocate(&old, &new, &names, remove_originals)?;
+            let mut status = self.status(db, paths)?;
+            let remaining = if remove_originals {
+                list(&old)
+            } else {
+                Vec::new()
+            };
+            status.left_behind = left_behind(&old, &remaining);
+            *lock(&self.left_behind) = status.left_behind.is_some().then_some(old);
+            Ok(RelocateOutcome { report, status })
         })
     }
 
@@ -1434,5 +1487,156 @@ mod tests {
         // computer.
         restore(&f.db, &f.paths, &theirs.name, "2026-11-19T13:00:00.000Z").unwrap();
         assert!(folder.join("safety-20261119-130000-000-desktop").is_dir());
+    }
+
+    fn make_left_behind(f: &Fixture, service: &BackupService) -> (PathBuf, PathBuf) {
+        let old = default_folder(&f.paths);
+        for (kind, at) in [
+            (BackupKind::Backup, "2026-11-19T10:00:00.000Z"),
+            (BackupKind::Safety, "2026-11-19T11:00:00.000Z"),
+        ] {
+            create(&f.db, &f.paths, &old, kind, at, false).unwrap();
+        }
+        let new = f._dir.path().join("synced");
+        service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
+        (old, new)
+    }
+
+    #[test]
+    fn copying_the_left_behind_backups_keeps_the_originals() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, new) = make_left_behind(&f, &service);
+
+        let outcome = service
+            .relocate_left_behind(&f.db, &f.paths, false)
+            .unwrap();
+
+        assert_eq!(outcome.report.copied, 2);
+        assert_eq!(outcome.report.removed, 0);
+        assert_eq!(outcome.report.failed, 0);
+        assert_eq!(list(&old).len(), 2, "copying never deletes");
+        assert_eq!(list(&new).len(), 2);
+        assert_eq!(outcome.status.backups.len(), 2);
+        assert_eq!(outcome.status.left_behind, None);
+        // Verified copies, restorable from the new folder.
+        for info in list(&new) {
+            snapshot::verify(&new.join(&info.name)).unwrap();
+        }
+        // The notice is gone, so there is nothing more to move.
+        assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
+    }
+
+    #[test]
+    fn moving_deletes_each_original_only_after_its_copy_is_verified() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, new) = make_left_behind(&f, &service);
+
+        let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+
+        assert_eq!(outcome.report.copied, 2);
+        assert_eq!(outcome.report.removed, 2);
+        assert!(list(&old).is_empty());
+        assert_eq!(list(&new).len(), 2);
+        assert_eq!(outcome.status.left_behind, None);
+    }
+
+    #[test]
+    fn a_backup_that_does_not_verify_after_copying_keeps_its_original() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, new) = make_left_behind(&f, &service);
+        // Corrupt one original's database: its copy can't pass verification.
+        let bad = list(&old)
+            .into_iter()
+            .find(|b| b.kind == BackupKind::Safety)
+            .unwrap();
+        fs::write(
+            old.join(&bad.name).join("gabaritei.sqlite"),
+            b"not a database",
+        )
+        .unwrap();
+
+        let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+
+        assert_eq!(outcome.report.copied, 1);
+        assert_eq!(outcome.report.removed, 1);
+        assert_eq!(outcome.report.failed, 1);
+        assert!(old.join(&bad.name).is_dir(), "the original stays");
+        assert!(!new.join(&bad.name).exists(), "no partial copy is left");
+        assert!(
+            !new.read_dir().unwrap().any(|e| e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".tmp-")),
+            "no temporary folder is left"
+        );
+        // What is still in the old folder is reported, and can be tried again.
+        assert_eq!(
+            outcome.status.left_behind,
+            Some(LeftBehind {
+                folder: old.display().to_string(),
+                backups: 1,
+                safety: 1
+            })
+        );
+    }
+
+    #[test]
+    fn a_backup_already_in_the_new_folder_is_not_copied_again_but_can_be_removed() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, new) = make_left_behind(&f, &service);
+        service
+            .relocate_left_behind(&f.db, &f.paths, false)
+            .unwrap();
+        // The copy exists and the notice is gone: go to the default folder and back to get the
+        // notice for the originals again.
+        service.change_folder(&f.db, &f.paths, None).unwrap();
+        service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
+        let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+        assert_eq!(outcome.report.copied, 0);
+        assert_eq!(outcome.report.already_there, 2);
+        assert_eq!(outcome.report.removed, 2);
+        assert!(list(&old).is_empty());
+        assert_eq!(list(&new).len(), 2);
+    }
+
+    #[test]
+    fn a_different_backup_with_the_same_name_is_never_overwritten_or_removed() {
+        let f = fixture();
+        let service = BackupService::default();
+        let old = default_folder(&f.paths);
+        create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T10:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        let new = f._dir.path().join("synced");
+        // Same name, different content (another computer without a tag, say).
+        add_question(&f.db, "q-extra");
+        create(
+            &f.db,
+            &f.paths,
+            &new,
+            BackupKind::Backup,
+            "2026-11-19T10:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
+
+        let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+
+        assert_eq!(outcome.report.failed, 1);
+        assert_eq!(outcome.report.removed, 0);
+        assert_eq!(list(&old).len(), 1);
+        snapshot::verify(&new.join("backup-20261119-100000-000")).unwrap();
     }
 }

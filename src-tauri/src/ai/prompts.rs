@@ -63,6 +63,8 @@ escolha, por que as demais estão erradas).\n\
 - `refs` lista apenas fontes verificáveis (lei e artigo, página oficial, obra). NUNCA invente uma \
 referência: se não tiver certeza de uma fonte, deixe `refs` vazio.\n\
 - Não repita nem parafraseie de perto as questões já existentes listadas abaixo.\n\
+- Na `explanation`, NÃO cite as alternativas por letra nem por id (a ordem é embaralhada na prova): \
+cite o conteúdo da alternativa.\n\
 - Use `notes` para observações sobre as fontes consultadas ou limitações; deixe vazio se não \
 houver.\n\n{DATA_RULE}\n",
         count = request.count,

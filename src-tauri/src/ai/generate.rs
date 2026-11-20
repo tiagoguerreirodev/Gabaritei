@@ -111,6 +111,14 @@ impl GenerateRequest {
                 "As instruções têm mais de {MAX_INSTRUCTIONS} caracteres."
             )));
         }
+        for (config, label) in [
+            (self.generator.as_mut(), "Gerador"),
+            (self.checker.as_mut(), "Conferente"),
+        ] {
+            if let Some(config) = config {
+                super::settings::validate_role_config(config, label)?;
+            }
+        }
         self.validate_attachments()?;
         // Web pages are the one untrusted input. If one carried instructions, an agent that can
         // also read the user's files or RemNote notes could send them out in a web request, so

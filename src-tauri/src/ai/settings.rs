@@ -104,7 +104,8 @@ pub fn load(conn: &Connection, secrets: &Secrets) -> AppResult<AiSettings> {
         cli_paths: get_setting(conn, KEY_CLI_PATHS)?.unwrap_or_default(),
         roles,
         remnote: get_setting(conn, KEY_REMNOTE)?.unwrap_or_default(),
-        has_remnote_token: secrets.remnote_token()?.is_some(),
+        // Best effort: a locked or missing keychain must not break every AI feature.
+        has_remnote_token: secrets.remnote_token().ok().flatten().is_some(),
     })
 }
 
@@ -124,6 +125,31 @@ fn clean_path(value: &Option<String>, what: &str) -> AppResult<Option<String>> {
     Ok(Some(text.to_owned()))
 }
 
+/// Trims and checks a role's model name. A model starting with `-`, or holding whitespace or
+/// control characters, could be read as another CLI option, so it is refused.
+pub fn validate_role_config(config: &mut RoleConfig, label: &str) -> AppResult<()> {
+    config.model = config.model.trim().to_owned();
+    if config.model.is_empty() {
+        return Err(AppError::Invalid(format!("Informe o modelo de “{label}”.")));
+    }
+    if config.model.chars().count() > MAX_MODEL {
+        return Err(AppError::Invalid(format!(
+            "O nome do modelo de “{label}” é longo demais."
+        )));
+    }
+    if config.model.starts_with('-')
+        || config
+            .model
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err(AppError::Invalid(format!(
+            "O nome do modelo de “{label}” é inválido."
+        )));
+    }
+    Ok(())
+}
+
 /// Checks and saves the settings. Nothing is written if anything is invalid.
 pub fn save(conn: &Connection, input: AiSettingsInput) -> AppResult<()> {
     let mut roles = input.roles;
@@ -134,19 +160,7 @@ pub fn save(conn: &Connection, input: AiSettingsInput) -> AppResult<()> {
             Role::Recheck => &mut roles.recheck,
             Role::Explain => &mut roles.explain,
         };
-        config.model = config.model.trim().to_owned();
-        if config.model.is_empty() {
-            return Err(AppError::Invalid(format!(
-                "Informe o modelo da função “{}”.",
-                role.label()
-            )));
-        }
-        if config.model.chars().count() > MAX_MODEL {
-            return Err(AppError::Invalid(format!(
-                "O nome do modelo da função “{}” é longo demais.",
-                role.label()
-            )));
-        }
+        validate_role_config(config, role.label())?;
     }
     let cli_paths = CliPaths {
         claude: clean_path(&input.cli_paths.claude, "Claude Code")?,
@@ -159,7 +173,7 @@ pub fn save(conn: &Connection, input: AiSettingsInput) -> AppResult<()> {
             || url.contains(char::is_whitespace))
     {
         return Err(invalid(
-            "Informe o endereço do RemNote começando com https://.",
+            "Informe o endereço do RemNote começando com https:// (ou http://).",
         ));
     }
     let mut tools: Vec<String> = Vec::new();
@@ -214,6 +228,11 @@ pub fn remnote_access(
             let token = secrets.remnote_token()?.ok_or_else(|| {
                 invalid("O RemNote está ligado, mas falta o token. Informe-o em Configurações › RemNote.")
             })?;
+            if settings.remnote.tools.is_empty() {
+                return Err(invalid(
+                    "Aprove ao menos uma ferramenta de leitura do RemNote em Configurações (use “Testar conexão”).",
+                ));
+            }
             Ok(Some(RemNoteAccess::Server {
                 url: settings.remnote.url.clone(),
                 token,
@@ -348,14 +367,9 @@ pub fn remnote_test(settings: &AiSettings, secrets: &Secrets) -> AppResult<RemNo
             ) else {
                 return test_result(false, "O Codex não foi encontrado.", Vec::new());
             };
-            let output = std::process::Command::new(cli)
-                .args(["mcp", "list"])
-                .stdin(std::process::Stdio::null())
-                .output();
-            match output {
-                Ok(out) if out.status.success() => {
-                    let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
-                    if text.contains("remnote") {
+            match discovery::capture(&cli, &["mcp", "list"]) {
+                Some(out) if out.success => {
+                    if out.stdout.to_lowercase().contains("remnote") {
                         test_result(
                             true,
                             "O Codex tem um servidor RemNote configurado.",

@@ -1,4 +1,4 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createEffect, createSignal, on } from "solid-js";
 import type { Outcome } from "../../bindings/Outcome";
 import type { RecheckView } from "../../bindings/RecheckView";
 import type { ResponseView } from "../../bindings/ResponseView";
@@ -44,14 +44,23 @@ export default function QuestionCard(props: {
   onExplain: () => Promise<void>;
 }) {
   const [explaining, setExplaining] = createSignal(false);
+  // Moving to another question ends the "explaining" state of this card.
+  createEffect(
+    on(
+      () => props.question.position,
+      () => setExplaining(false),
+      { defer: true },
+    ),
+  );
   const explain = async () => {
+    const asked = props.question.position;
     setExplaining(true);
     try {
       await props.onExplain();
     } catch (error) {
       showError(error);
     } finally {
-      setExplaining(false);
+      if (props.question.position === asked) setExplaining(false);
     }
   };
   const letters = () => optionLetters(props.question);

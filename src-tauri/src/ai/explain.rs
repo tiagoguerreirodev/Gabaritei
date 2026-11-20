@@ -62,6 +62,7 @@ pub fn ask_explain(
                 },
                 instructions: prompts::explain_instructions(),
                 prompt: prompts::explain_prompt(&question),
+                attachments: Vec::new(),
             },
             cancel,
             &mut |_| {},

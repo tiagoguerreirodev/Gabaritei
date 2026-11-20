@@ -139,7 +139,11 @@ mod flow {
                 .unwrap();
         assert_eq!(stored, reveal.explanation);
         let sent = std::fs::read_to_string(w.dir.path().join("stdin.txt")).unwrap();
-        assert!(sent.contains(&format!("Gabarito: ({})", w.key)));
+        // The key is named by letter, never by the internal hex id, and the AI is told to cite
+        // the alternative's content because the order is shuffled in the exam.
+        assert!(sent.contains("Gabarito: (A)") || sent.contains("Gabarito: (B)"));
+        assert!(!sent.contains(&w.key));
+        assert!(sent.contains("cite o conteúdo das alternativas"));
         assert!(sent.contains("NUNCA invente"));
     }
 

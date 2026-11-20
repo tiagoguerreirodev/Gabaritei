@@ -326,10 +326,11 @@ pub fn explain_prompt(question: &crate::bank::Question) -> String {
         "EXPLICAÇÃO DE QUESTÃO\n\nEscreva o comentário desta questão: devolva `explanation` (por \
 que o gabarito está certo e, nas de múltipla escolha, por que cada uma das outras está errada, de \
 forma clara e objetiva) e `refs` (fontes verificáveis: lei e artigo, página oficial, obra; NUNCA \
-invente uma fonte, e deixe vazio se não tiver certeza). O gabarito é o informado abaixo; se você \
-achar que ele está errado, diga isso na explicação em vez de mudá-lo.\n\n--- Questão ---\n{}Gabarito: \
-({})\n",
+invente uma fonte, e deixe vazio se não tiver certeza). Na explicação, cite o conteúdo das \
+alternativas, nunca só a letra (a ordem é embaralhada na prova). O gabarito é o informado abaixo; \
+se você achar que ele está errado, diga isso na explicação em vez de mudá-lo.\n\n--- Questão \
+---\n{}Gabarito: ({})\n",
         render_question(question),
-        question.answer_id
+        current_key_label(question)
     )
 }

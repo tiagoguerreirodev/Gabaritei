@@ -101,7 +101,8 @@ pub struct DraftListItem {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum ImportMode {
-    /// Every question. Refused while the package has problems.
+    /// Every question. Refused while the package has problems or unchecked questions (the
+    /// Revisar page runs the blind check first).
     All,
     /// Only the ones the checker agreed with (directly or after a fix) and that have no problems.
     Confirmed,
@@ -238,6 +239,11 @@ pub fn import(conn: &Connection, id: &str, mode: ImportMode, now: &str) -> AppRe
     let total = draft.package.questions.len();
     let chosen: Vec<usize> = match mode {
         ImportMode::All => {
+            if states.contains(&LineState::Unchecked) {
+                return Err(AppError::Invalid(
+                    "Há questões sem conferência. Confira-as antes de importar tudo.".into(),
+                ));
+            }
             if !check.problems.is_empty() {
                 return Err(AppError::Invalid(
                     "O pacote tem problemas. Importe só as confirmadas ou descarte o pacote."
@@ -259,15 +265,13 @@ pub fn import(conn: &Connection, id: &str, mode: ImportMode, now: &str) -> AppRe
         ));
     }
 
-    // Questions the blind check did not confirm (contested, or never checked) get the badge.
-    let inputs: Vec<_> = draft_inputs(&draft, &|index| {
-        matches!(states[index], LineState::Disputed | LineState::Unchecked)
-    })
-    .into_iter()
-    .enumerate()
-    .filter(|(index, _)| chosen.contains(index))
-    .map(|(_, input)| input)
-    .collect();
+    // Questions the blind check still disagreed with get the badge.
+    let inputs: Vec<_> = draft_inputs(&draft, &|index| states[index] == LineState::Disputed)
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| chosen.contains(index))
+        .map(|(_, input)| input)
+        .collect();
     let local_ids: Vec<String> = inputs.iter().map(|i| i.local_id.clone()).collect();
     let outcome = import_questions(conn, inputs, now).map_err(|error| match error {
         // The detailed message quotes question text; the preview must not.

@@ -266,7 +266,7 @@ pub fn run(
                 schema: schema_of::<DisputeResolutions>(),
                 sources: Sources {
                     remnote: request.sources.remnote,
-                    web: request.sources.web && attachments.is_empty(),
+                    web: request.sources.web,
                 },
                 instructions: prompts::dispute_instructions(),
                 prompt: prompts::dispute_prompt(&items),

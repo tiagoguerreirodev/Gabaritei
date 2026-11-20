@@ -193,10 +193,85 @@ describe("Revisar pacote", () => {
     });
     renderAt("/revisar-pacote?id=d1");
     expect(await screen.findByText(/ainda está em andamento/)).toBeVisible();
-    for (const name of ["Importar tudo", "Importar só as confirmadas", "Descartar"]) {
+    for (const name of ["Conferir e importar tudo", "Importar só as confirmadas", "Descartar"]) {
       expect(screen.getByRole("button", { name })).toBeDisabled();
     }
     expect(screen.queryByRole("button", { name: "Conferir de novo" })).not.toBeInTheDocument();
+  });
+
+  it("checks the unchecked questions before importing everything", async () => {
+    const unchecked: DraftSummary = {
+      ...summary,
+      lines: summary.lines.map((line) => ({ ...line, state: "unchecked" as const })),
+      agreed: 0,
+      fixed: 0,
+      disputed: 0,
+      unchecked: 4,
+    };
+    let checked = false;
+    const calls: string[] = [];
+    mockIPC((command) => {
+      calls.push(command);
+      switch (command) {
+        case "draft_summary":
+          return checked ? summary : unchecked;
+        case "blind_check_start":
+          checked = true;
+          return null;
+        case "generation_status":
+          return { running: false, startedAt: null, progress: null, outcome: null };
+        case "generation_dismiss":
+          return null;
+        case "draft_import":
+          return { collectionId: "c9", title: "Coleção nova", imported: 4, merged: 0, skipped: 0 };
+        case "collections":
+          return { items: [], total: 0, page: 0, pageSize: 20, contests: [], boards: [] };
+        case "topics_tree":
+          return { areas: [], questions: 0 };
+        default:
+          throw new Error(`Unexpected command: ${command}`);
+      }
+    });
+    const user = userEvent.setup();
+    renderAt("/revisar-pacote?id=d1");
+    await user.click(await screen.findByRole("button", { name: "Conferir e importar tudo" }));
+
+    await screen.findByRole("heading", { name: "Banco" });
+    // The check runs first, then the import.
+    expect(calls.indexOf("blind_check_start")).toBeGreaterThan(-1);
+    expect(calls.indexOf("draft_import")).toBeGreaterThan(calls.indexOf("blind_check_start"));
+  });
+
+  it("imports nothing when the check of the unchecked questions fails again", async () => {
+    const failed: DraftSummary = {
+      ...summary,
+      lines: summary.lines.map((line) => ({ ...line, state: "unchecked" as const })),
+      agreed: 0,
+      fixed: 0,
+      disputed: 0,
+      unchecked: 4,
+      checkFailed: "A conferência não respondeu todas as questões.",
+    };
+    const calls: string[] = [];
+    mockIPC((command) => {
+      calls.push(command);
+      switch (command) {
+        case "draft_summary":
+          return failed;
+        case "blind_check_start":
+        case "generation_dismiss":
+          return null;
+        case "generation_status":
+          return { running: false, startedAt: null, progress: null, outcome: null };
+        default:
+          throw new Error(`Unexpected command: ${command}`);
+      }
+    });
+    const user = userEvent.setup();
+    renderAt("/revisar-pacote?id=d1");
+    await user.click(await screen.findByRole("button", { name: "Conferir e importar tudo" }));
+    expect(await screen.findByText(/Nada foi importado/)).toBeVisible();
+    expect(calls).not.toContain("draft_import");
   });
 
   it("lists the packages waiting when no package is chosen", async () => {

@@ -259,6 +259,38 @@ mod flow {
     }
 
     #[test]
+    fn applying_a_new_key_clears_the_disputed_flag_and_keeps_the_history() {
+        let w = world(wrong_answer);
+        w.db.with(|conn| {
+            conn.execute(
+                "UPDATE questions SET provenance = json_set(provenance, '$.disputed', json('true'), '$.source', 'generated', '$.draftId', 'd1') WHERE id = ?1",
+                params![w.question_id],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let attempt = start(&w, FeedbackMode::Study);
+        answer_with(&w, &attempt, &w.old_key);
+        ask_it(&w, &attempt).unwrap();
+        w.db.transaction(|tx| apply(tx, &w.jobs, &attempt, 0, "2026-11-20T11:00:00.000Z"))
+            .unwrap();
+        let (provenance, changes): (String, i64) =
+            w.db.with(|conn| {
+                Ok(conn.query_row(
+                    "SELECT provenance, (SELECT COUNT(*) FROM key_changes WHERE question_id = ?1)
+                     FROM questions WHERE id = ?1",
+                    params![w.question_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )?)
+            })
+            .unwrap();
+        let provenance: Value = serde_json::from_str(&provenance).unwrap();
+        assert!(provenance.get("disputed").is_none(), "{provenance}");
+        assert_eq!(provenance["source"], "generated", "other provenance stays");
+        assert_eq!(changes, 1, "the key change stays in the history");
+    }
+
+    #[test]
     fn dismissing_keeps_the_key_and_forgets_the_proposal() {
         let w = world(wrong_answer);
         let attempt = start(&w, FeedbackMode::Study);

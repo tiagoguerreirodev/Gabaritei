@@ -200,6 +200,11 @@ pub fn apply(
             now
         ],
     )?;
+    // A corrected key settles the dispute; `key_changes` keeps the history.
+    conn.execute(
+        "UPDATE questions SET provenance = json_remove(provenance, '$.disputed') WHERE id = ?1",
+        params![question_id],
+    )?;
     // Reviews are derived from the current key, so they follow the change.
     learning::refresh_question(conn, &question_id)?;
     Ok(())

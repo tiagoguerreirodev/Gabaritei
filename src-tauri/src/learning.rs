@@ -277,6 +277,9 @@ pub struct LearningOverview {
     /// How many questions "practice now" would take: due reviews, then recent errors (at most
     /// [`MAX_SESSION`]).
     pub practice: u32,
+    /// How many questions "practice errors" would take: the notebook without the questions in an
+    /// unfinished attempt (at most [`MAX_SESSION`]).
+    pub practice_errors: u32,
     /// Due reviews first (most overdue first), then upcoming ones, then errors with no review.
     pub items: Vec<LearningItem>,
 }
@@ -348,6 +351,7 @@ pub fn overview(conn: &Connection, now: &str, include_blanks: bool) -> AppResult
         upcoming: due_dates.len() as u32 - due,
         errors: items.iter().filter(|i| i.is_error).count() as u32,
         practice: review_session(conn, now, MAX_SESSION)?.len() as u32,
+        practice_errors: error_questions(conn, include_blanks, MAX_SESSION)?.len() as u32,
         items,
     })
 }

@@ -570,6 +570,21 @@ fn scoring_in_sql_agrees_with_attempts_outcome() {
 }
 
 impl Bank {
+    fn start_view(&self, source: SessionSource, at: &str) -> attempts::AttemptView {
+        self.db
+            .transaction(|tx| {
+                attempts::start(
+                    tx,
+                    &SessionStart {
+                        source,
+                        feedback_mode: FeedbackMode::Study,
+                    },
+                    at,
+                )
+            })
+            .unwrap()
+    }
+
     fn start(&self, source: SessionSource, at: &str) -> AppResult<Vec<String>> {
         let view = self.db.transaction(|tx| {
             attempts::start(
@@ -624,18 +639,30 @@ fn a_second_session_leaves_out_questions_in_an_open_attempt() {
 fn finishing_the_open_attempt_frees_its_questions() {
     let b = bank(&["q1"]);
     b.answer(D0, &[("q1", "o1")]);
-    b.start(SessionSource::Reviews, D1).unwrap();
+    let view = b.start_view(SessionSource::Reviews, D1);
     assert!(b.errors(true).is_empty());
-    b.db.transaction(|tx| {
-        tx.execute(
-            "UPDATE attempts SET finished_at = ?1 WHERE finished_at IS NULL",
-            params![D4],
-        )?;
-        Ok(())
-    })
-    .unwrap();
-    // The attempt was finished with the question blank: with blanks on, it is an error again.
+    b.db.transaction(|tx| attempts::finish(tx, &view.id, view.revision, D4).map(|_| ()))
+        .unwrap();
+    // Finished with the question blank: with blanks on, it is an error again, and the review
+    // was rescheduled by finishing.
     assert_eq!(b.errors(true), vec![b.id("q1")]);
+    assert_eq!(b.interval("q1"), Some(1));
+}
+
+#[test]
+fn abandoning_the_open_attempt_frees_its_questions() {
+    let b = bank(&["q1"]);
+    b.answer(D0, &[("q1", "o1")]);
+    let view = b.start_view(
+        SessionSource::Errors {
+            include_blanks: false,
+        },
+        D1,
+    );
+    assert!(b.errors(false).is_empty());
+    b.db.transaction(|tx| attempts::abandon(tx, &view.id))
+        .unwrap();
+    assert_eq!(b.errors(false), vec![b.id("q1")]);
 }
 
 #[test]
@@ -652,4 +679,6 @@ fn the_overview_still_lists_questions_in_an_open_attempt_but_practice_leaves_the
     let ov = b.db.with(|c| overview(c, D1, false)).unwrap();
     assert_eq!(ov.items.len(), 2);
     assert_eq!(ov.practice, 0);
+    assert_eq!(ov.errors, 2);
+    assert_eq!(ov.practice_errors, 0);
 }

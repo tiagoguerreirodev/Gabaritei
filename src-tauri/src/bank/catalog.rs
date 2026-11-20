@@ -27,13 +27,13 @@ pub fn fold(text: &str) -> String {
 }
 
 /// Portuguese-friendly order: accents and case only break ties.
-fn cmp_pt(a: &str, b: &str) -> Ordering {
+pub(crate) fn cmp_pt(a: &str, b: &str) -> Ordering {
     fold(a).cmp(&fold(b)).then_with(|| a.cmp(b))
 }
 
 // ---- Topic tree ------------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct TopicTree {
@@ -42,7 +42,7 @@ pub struct TopicTree {
     pub questions: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct AreaNode {
@@ -52,7 +52,7 @@ pub struct AreaNode {
     pub matters: Vec<MatterNode>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct MatterNode {
@@ -62,13 +62,15 @@ pub struct MatterNode {
     pub topics: Vec<TopicNode>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct TopicNode {
     pub id: i64,
     pub name: String,
     pub questions: u32,
+    /// *Acerto entre respondidas* over the latest answers; `None` until the topic is answered.
+    pub accuracy: Option<f64>,
 }
 
 /// Area › matter › topic with distinct question counts at every level. A question filed
@@ -104,6 +106,7 @@ pub fn topic_tree(conn: &Connection) -> AppResult<TopicTree> {
         matter_counts.insert((area, matter), count);
     }
 
+    let accuracy = crate::metrics::topic_accuracy(conn)?;
     let mut areas: BTreeMap<String, BTreeMap<String, Vec<TopicNode>>> = BTreeMap::new();
     for row in conn
         .prepare(
@@ -131,6 +134,7 @@ pub fn topic_tree(conn: &Connection) -> AppResult<TopicTree> {
                 id,
                 name: topic,
                 questions: count,
+                accuracy: accuracy.get(&id).copied(),
             });
     }
 

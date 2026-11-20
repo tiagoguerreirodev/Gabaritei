@@ -175,8 +175,15 @@ describe("Banco", () => {
         name: "Direito › Constitucional › Controle de constitucionalidade",
       });
       const count = within(dialog).getByRole("spinbutton", { name: /Quantidade/ });
+      const begin = within(dialog).getByRole("button", { name: "Começar" });
+      for (const invalid of ["2.5", "0", "121"]) {
+        await user.clear(count);
+        await user.type(count, invalid);
+        expect(begin).toBeDisabled();
+      }
       await user.clear(count);
       await user.type(count, "25");
+      expect(begin).toBeEnabled();
       await user.click(within(dialog).getByRole("button", { name: "Começar" }));
 
       await waitFor(() => expect(calls.started).toHaveLength(1));
@@ -271,9 +278,15 @@ describe("Banco", () => {
       );
       expect(within(dialog).getByText("FGV")).toBeVisible();
       expect(within(dialog).getByText("Nenhuma tentativa ainda.")).toBeVisible();
+      // Cancelling the mode choice goes back to the collection's details.
       await user.click(within(dialog).getByRole("button", { name: "Iniciar" }));
+      let start = await screen.findByRole("dialog", { name: "Informática › SQL" });
+      await user.click(within(start).getByRole("button", { name: "Cancelar" }));
+      const details = await screen.findByRole("dialog", { name: "Informática › SQL" });
+      expect(within(details).getByText("Nenhuma tentativa ainda.")).toBeVisible();
 
-      const start = await screen.findByRole("dialog", { name: "Informática › SQL" });
+      await user.click(within(details).getByRole("button", { name: "Iniciar" }));
+      start = await screen.findByRole("dialog", { name: "Informática › SQL" });
       await user.click(within(start).getByRole("radio", { name: /Simulado/ }));
       await user.click(within(start).getByRole("button", { name: "Começar" }));
 

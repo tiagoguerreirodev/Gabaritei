@@ -27,12 +27,16 @@ export default function StartSessionModal(props: {
   source: SessionSource;
   /** Questions available, for the topic count limit. */
   available?: number;
+  /** Cancel: closes this dialog. */
   onClose: () => void;
+  /** Called once the session started, before opening it. Defaults to `onClose`. */
+  onStarted?: () => void;
 }) {
   const [mode, setMode] = createSignal<FeedbackMode>("study");
   const max = () => Math.min(MAX_TOPIC_SESSION, props.available ?? MAX_TOPIC_SESSION);
   const [count, setCount] = createSignal(Math.min(10, max()));
   const [busy, setBusy] = createSignal(false);
+  const countValid = () => Number.isInteger(count()) && count() >= 1 && count() <= max();
 
   const start = async () => {
     const source: SessionSource =
@@ -40,7 +44,7 @@ export default function StartSessionModal(props: {
     setBusy(true);
     try {
       const view = await api.sessionStart({ source, feedbackMode: mode() });
-      props.onClose();
+      (props.onStarted ?? props.onClose)();
       openAttempt(view.id);
     } catch (error) {
       showError(error);
@@ -61,7 +65,7 @@ export default function StartSessionModal(props: {
           <button
             type="button"
             class="primary"
-            disabled={busy() || count() < 1 || count() > max()}
+            disabled={busy() || (props.source.kind === "topic" && !countValid())}
             onClick={() => void start()}
           >
             Começar
@@ -96,11 +100,14 @@ export default function StartSessionModal(props: {
             type="number"
             min="1"
             max={max()}
+            step="1"
             value={count()}
+            aria-invalid={!countValid()}
             onInput={(event) => setCount(Number(event.currentTarget.value))}
           />
           <span class="muted">
-            Até {max()}. Primeiro as inéditas, depois as respondidas há mais tempo.
+            Um número inteiro de 1 a {max()}. Primeiro as inéditas, depois as respondidas há mais
+            tempo.
           </span>
         </label>
       </Show>

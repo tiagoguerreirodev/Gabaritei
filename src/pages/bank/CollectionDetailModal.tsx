@@ -33,7 +33,8 @@ export default function CollectionDetailModal(props: {
         <StartSessionModal
           title={props.title}
           source={{ kind: "collection", collectionId: props.id }}
-          onClose={() => props.onClose()}
+          onClose={() => setStarting(false)}
+          onStarted={() => props.onClose()}
         />
       }
     >

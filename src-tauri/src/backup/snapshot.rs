@@ -229,24 +229,88 @@ fn check_database(path: &Path, expected_version: u32) -> AppResult<()> {
     Ok(())
 }
 
-/// Replaces the live database with the one in a verified snapshot, and adds its images.
+/// A snapshot's database, copied out of its folder and checked, ready to replace the live one.
+pub struct Staged {
+    dir: tempfile::TempDir,
+    manifest: Manifest,
+}
+
+impl Staged {
+    fn database(&self) -> PathBuf {
+        self.dir.path().join(DATABASE_FILE)
+    }
+}
+
+/// The tables, indexes, triggers and views of this build's schema, to compare a file's with.
+fn expected_schema() -> AppResult<Vec<(String, String, Option<String>)>> {
+    Database::open_in_memory()?.with(|conn| read_schema(conn))
+}
+
+fn read_schema(conn: &Connection) -> AppResult<Vec<(String, String, Option<String>)>> {
+    let mut stmt = conn.prepare(
+        "SELECT type, name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+    )?;
+    Ok(stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+/// Checks a snapshot and copies its database to a private temporary folder, where it is
+/// migrated to this build's schema and compared with it. Nothing local changes here, so any
+/// failure means "nothing was changed".
 ///
-/// SQLite copies the pages inside one write transaction of the live connection, so a failure
-/// leaves the old data untouched and a reader never sees a half-restored database. Images are
-/// copied first, so the restored database never points at a missing file. Existing images stay:
-/// their names are content hashes, and one the restored data doesn't use is harmless.
+/// The copy matters: a backup folder may be synced by a cloud client that rewrites files after
+/// they were verified, and a file built by someone else may have a schema this app never
+/// created (a missing table, a trigger). Only a database with exactly this app's schema gets
+/// past this point.
+pub fn stage(dir: &Path) -> AppResult<Staged> {
+    let manifest = verify(dir)?;
+    let staged = Staged {
+        dir: tempfile::tempdir()?,
+        manifest,
+    };
+    fs::copy(dir.join(DATABASE_FILE), staged.database())?;
+    let expected = staged
+        .manifest
+        .files
+        .iter()
+        .find(|file| file.path == DATABASE_FILE)
+        .ok_or_else(corrupt)?;
+    let (sha256, _) = hash_file(&staged.database())?;
+    if sha256 != expected.sha256 {
+        return Err(corrupt());
+    }
+    let mut conn = Connection::open(staged.database()).map_err(|_| corrupt())?;
+    db::prepare_restored(&mut conn).map_err(|error| match error {
+        AppError::Invalid(_) => error,
+        _ => corrupt(),
+    })?;
+    if read_schema(&conn).map_err(|_| corrupt())? != expected_schema()? {
+        return Err(corrupt());
+    }
+    Ok(staged)
+}
+
+/// Replaces the live database with a staged one, and adds the snapshot's images.
+///
+/// Images go first, each checked against its hash, so the restored database never points at a
+/// missing file; existing images stay (names are content hashes). Then, on the staged copy
+/// only, this computer's own settings are put back, what derives from the answers is rebuilt,
+/// and a blind check that was running in the replaced data is marked as interrupted. Last,
+/// SQLite copies the staged pages into the live connection inside one write transaction, so a
+/// failure leaves the old data and a reader never sees a half-restored database.
 ///
 /// `keep_local` lists settings that describe this computer (folders, CLI paths): their current
 /// values survive the replacement, and a key this computer never set is removed again.
-pub fn apply(
+pub fn commit(
     database: &Database,
     images_dir: &Path,
     dir: &Path,
+    staged: &Staged,
     keep_local: &[&str],
 ) -> AppResult<()> {
-    let manifest = verify(dir)?;
     fs::create_dir_all(images_dir)?;
-    for file in &manifest.files {
+    for file in &staged.manifest.files {
         let Some(name) = file.path.strip_prefix("images/") else {
             continue;
         };
@@ -256,24 +320,32 @@ pub fn apply(
         }
         let partial = images_dir.join(format!("{name}.partial"));
         fs::copy(snapshot_path(dir, &file.path), &partial)?;
+        let (sha256, _) = hash_file(&partial)?;
+        if sha256 != file.sha256 {
+            let _ = fs::remove_file(&partial);
+            return Err(corrupt());
+        }
         fs::rename(&partial, &target)?;
     }
     database.with(|conn| {
-        let local = keep_local
-            .iter()
-            .map(|key| Ok((*key, db::get_raw_setting(conn, key)?)))
-            .collect::<AppResult<Vec<_>>>()?;
+        let mut target = Connection::open(staged.database())?;
+        for key in keep_local {
+            let local = db::get_raw_setting(conn, key)?;
+            db::put_raw_setting(&target, key, local.as_deref())?;
+        }
         {
-            let source = Connection::open_with_flags(
-                dir.join(DATABASE_FILE),
-                OpenFlags::SQLITE_OPEN_READ_ONLY,
-            )?;
-            Backup::new(&source, conn)?.run_to_completion(256, Duration::ZERO, None)?;
+            let tx = target.transaction()?;
+            crate::ai::blind_check::recover_interrupted(&tx)?;
+            crate::learning::refresh_all(&tx)?;
+            tx.commit()?;
         }
-        db::prepare_restored(conn)?;
-        for (key, value) in local {
-            db::put_raw_setting(conn, key, value.as_deref())?;
+        let integrity: String =
+            target.pragma_query_value(None, "integrity_check", |row| row.get(0))?;
+        if integrity != "ok" {
+            return Err(corrupt());
         }
-        Ok(())
+        Backup::new(&target, conn)?.run_to_completion(256, Duration::ZERO, None)?;
+        // The pages came from a file with its own journal mode.
+        db::prepare_restored(conn)
     })
 }

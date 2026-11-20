@@ -20,18 +20,16 @@ use serde::Serialize;
 use time::OffsetDateTime;
 use ts_rs::TS;
 
-use crate::ai::blind_check;
-use crate::ai::settings::KEY_CLI_PATHS;
+use crate::ai::settings::{KEY_CLI_PATHS, KEY_REMNOTE};
 use crate::db::{Database, get_setting, set_setting};
 use crate::error::{AppError, AppResult};
-use crate::learning;
 use crate::paths::AppPaths;
 
 /// Setting that holds the backup folder chosen by the user.
 const KEY_FOLDER: &str = "backup.folder";
 /// Settings that describe this computer. Restoring or importing data from another computer
 /// must not overwrite them.
-pub const LOCAL_SETTINGS: &[&str] = &[KEY_FOLDER, KEY_CLI_PATHS];
+pub const LOCAL_SETTINGS: &[&str] = &[KEY_FOLDER, KEY_CLI_PATHS, KEY_REMNOTE];
 
 /// Automatic backups kept (also counts the ones made by hand).
 const KEEP_BACKUPS: usize = 7;
@@ -201,6 +199,13 @@ impl BackupService {
         *lock(&self.last_error) = result.as_ref().err().map(ToString::to_string);
     }
 
+    /// Whether a backup, restore or import is running now.
+    pub fn is_busy(&self) -> bool {
+        self.busy
+            .try_lock()
+            .is_err_and(|error| matches!(error, std::sync::TryLockError::WouldBlock))
+    }
+
     /// The *Dados* section's data.
     pub fn status(&self, db: &Database, paths: &AppPaths) -> AppResult<BackupStatus> {
         let (folder, is_default_folder) = db.with(|conn| {
@@ -259,26 +264,49 @@ impl BackupService {
         self.exclusive(|| datafile::export(db, paths, dest, now))
     }
 
-    /// Replaces the local data with a data file's. See [`datafile::import`].
-    pub fn import(&self, db: &Database, paths: &AppPaths, file: &Path, now: &str) -> AppResult<()> {
+    /// Replaces the local data with a data file's. See [`datafile::import`]. `ready` runs first,
+    /// like in [`Self::restore`].
+    pub fn import(
+        &self,
+        db: &Database,
+        paths: &AppPaths,
+        file: &Path,
+        now: &str,
+        ready: impl FnOnce() -> AppResult<()>,
+    ) -> AppResult<()> {
         self.exclusive(|| {
+            ready()?;
             let folder = db.with(|conn| folder(conn, paths))?;
             datafile::import(db, paths, &folder, file, now)
         })
     }
 
-    /// Restores the backup (or safety backup) called `name`. See [`restore`].
-    pub fn restore(&self, db: &Database, paths: &AppPaths, name: &str, now: &str) -> AppResult<()> {
-        self.exclusive(|| restore(db, paths, name, now))
+    /// Restores the backup (or safety backup) called `name`. See [`restore`]. `ready` runs
+    /// first, once nothing else is backing up, and can refuse (for example while an AI job
+    /// that writes to the database is running).
+    pub fn restore(
+        &self,
+        db: &Database,
+        paths: &AppPaths,
+        name: &str,
+        now: &str,
+        ready: impl FnOnce() -> AppResult<()>,
+    ) -> AppResult<()> {
+        self.exclusive(|| {
+            ready()?;
+            restore(db, paths, name, now)
+        })
     }
 }
 
 /// Whether the newest backup is older than a day (or there is none).
 fn is_due(folder: &Path, now: OffsetDateTime) -> bool {
     let cutoff = crate::clock::format(now - INTERVAL);
+    let present = crate::clock::format(now);
     list(folder)
         .iter()
-        .find(|info| info.kind == BackupKind::Backup)
+        // A backup dated in the future (the clock was wrong once) must not stop new ones.
+        .find(|info| info.kind == BackupKind::Backup && info.created_at <= present)
         .is_none_or(|newest| newest.created_at < cutoff)
 }
 
@@ -363,12 +391,12 @@ pub fn restore(db: &Database, paths: &AppPaths, name: &str, now: &str) -> AppRes
     if !source.is_dir() {
         return Err(AppError::Invalid("Backup não encontrado.".into()));
     }
-    snapshot::verify(&source)?;
     replace_data(db, paths, &folder, &source, now)
 }
 
-/// Safety backup, then replace the data with the verified snapshot in `source`. Shared with
-/// the import of a data file.
+/// Replaces the data with the snapshot in `source`: checks and stages it (a bad snapshot stops
+/// here and nothing changes, not even a safety backup), makes a safety backup of the current
+/// data, then replaces it. Shared with the import of a data file.
 pub fn replace_data(
     db: &Database,
     paths: &AppPaths,
@@ -376,16 +404,12 @@ pub fn replace_data(
     source: &Path,
     now: &str,
 ) -> AppResult<()> {
+    let staged = snapshot::stage(source)?;
     // Pruned only afterwards, so a safety backup being restored is never deleted by this one.
     create(db, paths, folder, BackupKind::Safety, now, false)?;
-    snapshot::apply(db, &paths.images_dir(), source, LOCAL_SETTINGS)?;
+    snapshot::commit(db, &paths.images_dir(), source, &staged, LOCAL_SETTINGS)?;
     prune(folder, BackupKind::Safety);
-    // What derives from the answers is rebuilt, and a check that was running in the replaced
-    // data can never finish.
-    db.transaction(|tx| {
-        blind_check::recover_interrupted(tx)?;
-        learning::refresh_all(tx)
-    })
+    Ok(())
 }
 
 #[cfg(test)]
@@ -562,6 +586,62 @@ mod tests {
         assert_eq!(question_ids(&f.db), ["q-1"]);
     }
 
+    /// Runs `sql` on a backup's database and fixes the manifest hash, as someone building a
+    /// hostile file would.
+    fn doctor(f: &Fixture, info: &BackupInfo, sql: &str) {
+        let dir = default_folder(&f.paths).join(&info.name);
+        let database = dir.join(snapshot::DATABASE_FILE);
+        Connection::open(&database)
+            .unwrap()
+            .execute_batch(sql)
+            .unwrap();
+        let mut manifest = snapshot::read_manifest(&dir).unwrap();
+        let (sha256, size) = snapshot::hash_file(&database).unwrap();
+        manifest.files[0].sha256 = sha256;
+        manifest.files[0].size = size;
+        fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_database_with_another_schema_is_rejected_before_anything_changes() {
+        for sql in [
+            "DROP TABLE settings",
+            "CREATE TRIGGER evil AFTER INSERT ON responses BEGIN DELETE FROM settings; END",
+            "CREATE VIEW sneaky AS SELECT 1",
+            "CREATE TABLE extra (x TEXT) STRICT",
+        ] {
+            let f = fixture();
+            add_question(&f.db, "q-1");
+            let info = backup(&f, "2026-11-19T10:00:00.000Z");
+            doctor(&f, &info, sql);
+            add_question(&f.db, "q-2");
+            let folder = default_folder(&f.paths);
+
+            let error =
+                restore(&f.db, &f.paths, &info.name, "2026-11-19T11:00:00.000Z").unwrap_err();
+
+            assert!(
+                error.to_string().contains("Nada foi alterado"),
+                "{sql}: {error}"
+            );
+            assert_eq!(question_ids(&f.db), ["q-1", "q-2"], "{sql}");
+            assert!(
+                list(&folder).iter().all(|b| b.kind == BackupKind::Backup),
+                "{sql}: no safety backup"
+            );
+            // The app still works: its settings and its backup folder are intact.
+            f.db.with(|conn| folder_of(conn, &f.paths)).unwrap();
+        }
+    }
+
+    fn folder_of(conn: &Connection, paths: &AppPaths) -> AppResult<PathBuf> {
+        folder(conn, paths)
+    }
+
     #[test]
     fn a_backup_from_a_newer_schema_is_rejected() {
         let f = fixture();
@@ -624,12 +704,14 @@ mod tests {
         let f = fixture();
         f.db.with(|conn| {
             set_setting(conn, KEY_CLI_PATHS, &"windows-path")?;
+            set_setting(conn, KEY_REMNOTE, &"http://remote.example/mcp")?;
             set_setting(conn, "other", &"from the backup")
         })
         .unwrap();
         let info = backup(&f, "2026-11-19T10:00:00.000Z");
         f.db.with(|conn| {
             set_setting(conn, KEY_CLI_PATHS, &"mac-path")?;
+            set_setting(conn, KEY_REMNOTE, &"http://localhost/mcp")?;
             set_setting(conn, "other", &"changed")?;
             set_setting(conn, KEY_FOLDER, &"/elsewhere")
         })
@@ -654,6 +736,10 @@ mod tests {
             assert_eq!(
                 get_setting::<String>(conn, KEY_CLI_PATHS)?.as_deref(),
                 Some("mac-path")
+            );
+            assert_eq!(
+                get_setting::<String>(conn, KEY_REMNOTE)?.as_deref(),
+                Some("http://localhost/mcp")
             );
             assert_eq!(
                 get_setting::<String>(conn, KEY_FOLDER)?.as_deref(),
@@ -738,6 +824,18 @@ mod tests {
         assert_eq!(list(&folder).len(), 2);
         assert!(at(datetime!(2026-11-22 10:00:00 UTC)).is_some());
         assert!(!folder.join(".tmp-backup-20261201-000000-000").exists());
+    }
+
+    #[test]
+    fn a_backup_dated_in_the_future_does_not_stop_new_ones() {
+        let f = fixture();
+        let service = BackupService::default();
+        // The clock was wrong once and made a backup dated far ahead.
+        backup(&f, "2030-01-01T10:00:00.000Z");
+        let made = service
+            .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 10:00:00 UTC))
+            .unwrap();
+        assert!(made.is_some());
     }
 
     #[test]

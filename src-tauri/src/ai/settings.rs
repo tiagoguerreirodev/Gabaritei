@@ -21,7 +21,9 @@ use crate::error::{AppError, AppResult};
 const KEY_ROLES: &str = "ai.roles";
 /// Where the CLIs are on this computer. Kept when data from another computer is restored.
 pub const KEY_CLI_PATHS: &str = "ai.cliPaths";
-const KEY_REMNOTE: &str = "ai.remnote";
+/// The RemNote connection. Kept when data from another computer is restored: the keychain token
+/// is per computer, and must never be paired with a URL that came from a file.
+pub const KEY_REMNOTE: &str = "ai.remnote";
 
 const MAX_MODEL: usize = 200;
 const MAX_PATH: usize = 1_000;

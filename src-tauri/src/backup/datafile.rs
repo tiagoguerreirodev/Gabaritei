@@ -21,9 +21,20 @@ use crate::paths::AppPaths;
 /// File extension of the data file.
 pub const EXTENSION: &str = "gabaritei";
 
-/// Largest database or image accepted from a file, so a crafted file can't fill the disk.
-const MAX_DATABASE: u64 = 4 * 1024 * 1024 * 1024;
-const MAX_IMAGE: u64 = 100 * 1024 * 1024;
+/// How much a file may unpack to, so a crafted file can't fill the disk: each database or
+/// image, and everything together.
+#[derive(Debug, Clone, Copy)]
+struct Limits {
+    database: u64,
+    image: u64,
+    total: u64,
+}
+
+const LIMITS: Limits = Limits {
+    database: 4 * 1024 * 1024 * 1024,
+    image: 100 * 1024 * 1024,
+    total: 8 * 1024 * 1024 * 1024,
+};
 /// A snapshot has the manifest, the database and the images.
 const MAX_ENTRIES: usize = 200_000;
 
@@ -41,6 +52,17 @@ fn not_a_data_file() -> AppError {
 
 /// Writes a data file at `dest`: into a partial file first, then renamed over `dest`.
 pub fn export(database: &Database, paths: &AppPaths, dest: &Path, now: &str) -> AppResult<()> {
+    // Some save dialogs don't add the extension, and the import dialog only lists this one.
+    let with_extension;
+    let dest = if dest
+        .extension()
+        .is_some_and(|extension| extension == EXTENSION)
+    {
+        dest
+    } else {
+        with_extension = dest.with_added_extension(EXTENSION);
+        &with_extension
+    };
     let staging = tempfile::tempdir()?;
     let manifest = snapshot::write(database, &paths.images_dir(), staging.path(), now)?;
 
@@ -81,6 +103,11 @@ fn write_zip(dir: &Path, manifest: &snapshot::Manifest, target: &Path) -> AppRes
 
 /// Unpacks a data file into the empty folder `into`, accepting only what a snapshot contains.
 pub fn unpack(file: &Path, into: &Path) -> AppResult<()> {
+    unpack_within(file, into, LIMITS)
+}
+
+fn unpack_within(file: &Path, into: &Path, limits: Limits) -> AppResult<()> {
+    let mut remaining = limits.total;
     let mut archive = ZipArchive::new(File::open(file)?).map_err(|_| not_a_data_file())?;
     if archive.len() > MAX_ENTRIES {
         return Err(not_a_data_file());
@@ -97,12 +124,12 @@ pub fn unpack(file: &Path, into: &Path) -> AppResult<()> {
             // The manifest lists every file, so it grows with the images.
             64 * 1024 * 1024
         } else if name == DATABASE_FILE {
-            MAX_DATABASE
+            limits.database
         } else if name
             .strip_prefix("images/")
             .is_some_and(is_valid_image_name)
         {
-            MAX_IMAGE
+            limits.image
         } else {
             return Err(not_a_data_file());
         };
@@ -114,11 +141,13 @@ pub fn unpack(file: &Path, into: &Path) -> AppResult<()> {
             .fold(into.to_path_buf(), |path, part| path.join(part));
         let mut out = File::create(&target)?;
         // One byte more than allowed tells "exactly at the limit" from "over it".
+        let limit = limit.min(remaining);
         let copied = io::copy(&mut (&mut entry).take(limit + 1), &mut out)?;
         out.flush()?;
         if copied > limit {
             return Err(not_a_data_file());
         }
+        remaining -= copied;
     }
     if !seen.contains(MANIFEST_FILE) {
         return Err(not_a_data_file());
@@ -126,7 +155,8 @@ pub fn unpack(file: &Path, into: &Path) -> AppResult<()> {
     Ok(())
 }
 
-/// Replaces the local data with a data file's: unpack, verify, safety backup, replace. Any
+/// Replaces the local data with a data file's: unpack, then the same check, safety backup and
+/// replacement as a restore. Any
 /// problem before the replacement leaves everything as it was.
 pub fn import(
     database: &Database,
@@ -137,7 +167,6 @@ pub fn import(
 ) -> AppResult<()> {
     let staging = tempfile::tempdir()?;
     unpack(file, staging.path())?;
-    snapshot::verify(staging.path())?;
     super::replace_data(database, paths, backup_folder, staging.path(), now)
 }
 
@@ -407,6 +436,62 @@ mod tests {
             "no safety backup for a file that was rejected"
         );
         assert!(!target.paths.images_dir().join(IMAGE).exists());
+    }
+
+    #[test]
+    fn size_limits_apply_per_file_and_in_total() {
+        let source = profile();
+        fs::write(source.paths.images_dir().join(IMAGE), vec![7u8; 1_000]).unwrap();
+        fs::write(
+            source
+                .paths
+                .images_dir()
+                .join("0123456789abcdef01234568.png"),
+            vec![8u8; 1_000],
+        )
+        .unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let file = out.path().join("data.gabaritei");
+        export(&source.db, &source.paths, &file, NOW).unwrap();
+        // The size of the database copy inside the file (the live file may still be in the WAL).
+        let probe = tempfile::tempdir().unwrap();
+        unpack(&file, probe.path()).unwrap();
+        let database_size = fs::metadata(probe.path().join(DATABASE_FILE))
+            .unwrap()
+            .len();
+        let roomy = Limits {
+            database: database_size * 4,
+            image: 1_000,
+            total: database_size * 4 + 10_000,
+        };
+        let unpack_with = |limits| {
+            let into = tempfile::tempdir().unwrap();
+            unpack_within(&file, into.path(), limits)
+        };
+        // An image exactly at its limit is fine; one byte over is not.
+        assert!(unpack_with(roomy).is_ok());
+        assert!(
+            unpack_with(Limits {
+                image: 999,
+                ..roomy
+            })
+            .is_err()
+        );
+        assert!(
+            unpack_with(Limits {
+                database: 10,
+                ..roomy
+            })
+            .is_err()
+        );
+        // Each file is within its own limit, but together they are too much.
+        assert!(
+            unpack_with(Limits {
+                total: database_size + 1_500,
+                ..roomy
+            })
+            .is_err()
+        );
     }
 
     #[test]

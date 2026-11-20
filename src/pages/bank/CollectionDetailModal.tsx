@@ -1,0 +1,79 @@
+import { For, Match, Show, Switch, createResource } from "solid-js";
+import { api } from "../../api";
+import Modal from "../../components/Modal";
+import { EmptyState, ErrorState, Loading } from "../../components/states";
+import { formatDate, questionCount } from "./format";
+
+const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
+
+/** A collection's details and its attempts. Starting a session arrives with #9. */
+export default function CollectionDetailModal(props: {
+  id: string;
+  title: string;
+  onClose: () => void;
+}) {
+  const [detail] = createResource(
+    () => props.id,
+    (id) => api.collection(id),
+  );
+
+  return (
+    <Modal
+      title={props.title}
+      onClose={() => props.onClose()}
+      footer={
+        <>
+          <span class="muted">A resolução de cadernos chega em breve.</span>
+          <button type="button" class="primary" disabled>
+            Iniciar
+          </button>
+        </>
+      }
+    >
+      <Switch>
+        <Match when={detail.error as unknown}>{(error) => <ErrorState error={error()} />}</Match>
+        <Match when={detail.loading}>
+          <Loading />
+        </Match>
+        <Match when={detail()}>
+          {(loaded) => (
+            <>
+              <dl class="facts">
+                <dt>Questões</dt>
+                <dd data-testid="collection-questions">{questionCount(loaded().questions)}</dd>
+                <Show when={loaded().contest}>
+                  <dt>Concurso</dt>
+                  <dd>{loaded().contest}</dd>
+                </Show>
+                <Show when={loaded().board}>
+                  <dt>Banca</dt>
+                  <dd>{loaded().board}</dd>
+                </Show>
+                <dt>Criado em</dt>
+                <dd>{formatDate(loaded().createdAt)}</dd>
+              </dl>
+              <h3>Tentativas</h3>
+              <Show
+                when={loaded().attempts.length > 0}
+                fallback={<EmptyState title="Nenhuma tentativa ainda." />}
+              >
+                <ul class="attempts">
+                  <For each={loaded().attempts}>
+                    {(attempt) => (
+                      <li>
+                        {formatDate(attempt.startedAt)} · {modeLabel[attempt.feedbackMode]} ·{" "}
+                        {attempt.finishedAt
+                          ? `concluída, ${attempt.answered} de ${attempt.total} respondidas`
+                          : `em andamento, ${attempt.answered} de ${attempt.total} respondidas`}
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
+            </>
+          )}
+        </Match>
+      </Switch>
+    </Modal>
+  );
+}

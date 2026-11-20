@@ -7,6 +7,7 @@ use tauri::{AppHandle, Manager, Runtime, State};
 use tauri_plugin_dialog::DialogExt;
 use ts_rs::TS;
 
+use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use crate::migrate::{self, LegacyImportOutcome, LegacyImportStatus};
@@ -32,6 +33,24 @@ pub fn current_app_info() -> AppInfo {
 #[tauri::command]
 pub fn app_info() -> AppResult<AppInfo> {
     Ok(current_app_info())
+}
+
+/// Area › matter › topic with question counts.
+#[tauri::command]
+pub fn topics_tree(db: State<'_, Database>) -> AppResult<TopicTree> {
+    db.with(|conn| catalog::topic_tree(conn))
+}
+
+/// One page of collections matching the search and filters.
+#[tauri::command]
+pub fn collections(db: State<'_, Database>, query: CollectionQuery) -> AppResult<CollectionPage> {
+    db.with(|conn| catalog::collections(conn, &query))
+}
+
+/// One collection with its attempts.
+#[tauri::command]
+pub fn collection(db: State<'_, Database>, id: String) -> AppResult<CollectionDetail> {
+    db.with(|conn| catalog::collection(conn, &id))
 }
 
 /// Whether the legacy bank was imported, and whether the bank is still empty.
@@ -76,9 +95,15 @@ mod tests {
 
     /// Sends `cmd` through Tauri's IPC layer on a mock runtime and returns the JSON result.
     fn invoke(cmd: &str) -> Result<Value, Value> {
+        invoke_with(cmd, json!({}), Database::open_in_memory().unwrap())
+    }
+
+    /// Like [`invoke`], with JSON arguments and the given database as managed state.
+    fn invoke_with(cmd: &str, args: Value, db: Database) -> Result<Value, Value> {
         let app = crate::register(mock_builder())
             .build(mock_context(noop_assets()))
             .expect("mock app builds");
+        app.manage(db);
         let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
             .build()
             .expect("mock webview builds");
@@ -94,12 +119,54 @@ mod tests {
                 callback: CallbackFn(0),
                 error: CallbackFn(1),
                 url: url.parse().unwrap(),
-                body: InvokeBody::default(),
+                body: InvokeBody::Json(args),
                 headers: Default::default(),
                 invoke_key: INVOKE_KEY.to_string(),
             },
         )
         .map(|body| body.deserialize::<Value>().unwrap())
+    }
+
+    #[test]
+    fn browsing_commands_decode_camel_case_arguments() {
+        let db = Database::open_in_memory().unwrap();
+        db.with(|c| {
+            c.execute_batch(
+                "INSERT INTO collections (id, title, kind, contest, created_at) VALUES
+                   ('c1', 'Direito › Crase', 'imported', 'ALEPA', '2026-11-19T00:00:00.000Z'),
+                   ('c2', 'Informática › SQL', 'imported', 'Perito', '2026-11-19T00:00:00.000Z');",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let page = invoke_with(
+            "collections",
+            json!({ "query": { "search": "CRASE", "pageSize": 5 } }),
+            db,
+        )
+        .expect("collections succeeds");
+        assert_eq!(page["total"], json!(1));
+        assert_eq!(page["pageSize"], json!(5));
+        assert_eq!(page["items"][0]["id"], json!("c1"));
+        assert_eq!(page["contests"], json!(["ALEPA", "Perito"]));
+
+        let missing = invoke_with(
+            "collection",
+            json!({ "id": "nope" }),
+            Database::open_in_memory().unwrap(),
+        );
+        assert_eq!(
+            missing,
+            Err(json!({ "message": "Caderno não encontrado." }))
+        );
+
+        let tree = invoke_with(
+            "topics_tree",
+            json!({}),
+            Database::open_in_memory().unwrap(),
+        );
+        assert_eq!(tree, Ok(json!({ "areas": [], "questions": 0 })));
     }
 
     #[test]

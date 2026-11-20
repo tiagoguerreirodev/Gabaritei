@@ -2,6 +2,7 @@ import { A } from "@solidjs/router";
 import { For, Show, createResource, type ParentProps } from "solid-js";
 import { api } from "../api";
 import { routes, type AppRoute } from "../routes";
+import { Toaster } from "./toasts";
 
 function MenuLink(props: { route: AppRoute }) {
   return (
@@ -39,6 +40,7 @@ export default function Layout(props: ParentProps) {
         </div>
       </aside>
       <main class="content">{props.children}</main>
+      <Toaster />
     </div>
   );
 }

@@ -47,6 +47,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src-tauri/` | Rust backend (Tauri 2). All business logic: database, scoring, metrics, learning, AI runner, backups. |
 | `src-tauri/src/commands.rs` | Tauri commands (thin wrappers). Register each one in `register()` in `lib.rs`. |
 | `src-tauri/src/error.rs` | `AppError`: every command returns `AppResult<T>`; the frontend receives `{ message }` in pt-BR. |
+| `src-tauri/src/bank/catalog.rs` | Read-only browsing views (topic tree, collections, collection detail) with accent- and case-insensitive search and Portuguese ordering (`fold`). |
 | `src-tauri/src/db.rs` | `Database` (managed Tauri state, opened at startup at `<app data dir>/gabaritei.sqlite`), `with`/`transaction` helpers, JSON settings helpers, migration runner. |
 | `src-tauri/src/paths.rs` | `AppPaths` (managed state): the app data folder, database file and `images/` folder. |
 | `src-tauri/src/images.rs` | The `image` URI scheme serving `<app data>/images/<hash>.<ext>` only. Frontend URLs come from `imageUrl()` / `QuestionImage` in `src/components/QuestionImage.tsx`; CSP `img-src` allows only that scheme. |
@@ -55,6 +56,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src/api.ts` | The only place that calls `invoke`. One function per command. |
 | `src/bindings/` | TypeScript types **generated** from Rust by `cargo test` (ts-rs). Committed; never edit by hand. |
 | `src/routes.ts`, `src/pages/` | Route table (pt-BR labels, menu placement) and one component per page. |
+| `src/components/` | Shared UI: `Modal`, toasts (`showToast`, `showError`; `Toaster` lives in the layout), `Loading` / `EmptyState` / `ErrorState`, and `errorMessage()` for anything thrown. Reuse these instead of writing new ones. |
 | `docs/` | Spec, legacy analysis, and notes such as `docs/ai-cli.md` (verified CLI flags). |
 
 Rust modules (spec §5): `db`, `bank`, `attempts`, `metrics`, `learning`, `ai` (runner, `claude`, `codex`, prompts, schemas, roles), `backup`, `migrate`.

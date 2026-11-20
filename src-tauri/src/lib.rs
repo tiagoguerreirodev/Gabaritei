@@ -41,6 +41,9 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
+            commands::topics_tree,
+            commands::collections,
+            commands::collection,
             commands::legacy_import_status,
             commands::import_legacy_bank,
         ])

@@ -1,5 +1,5 @@
 use super::*;
-use crate::ai::blind_check::{BlindCheck, Confidence, Verdict};
+use crate::ai::blind_check::{BlindCheck, Confidence, Verdict, pending_record};
 use crate::ai::draft::{DraftRequest, GenerationInfo};
 use crate::ai::generate::{GenerateRequest, GenerateSources};
 use crate::ai::roles::RoleSettings;
@@ -69,6 +69,7 @@ fn draft_of(id: &str, questions: Vec<Value>, verdicts: Option<Vec<Verdict>>) -> 
                 verdicts,
                 failed: None,
                 info: None,
+                pending: false,
             })
             .unwrap()
         }),
@@ -104,6 +105,10 @@ fn summary_of(db: &Database, id: &str) -> DraftSummary {
 
 fn import_with(db: &Database, id: &str, mode: ImportMode) -> AppResult<ImportResult> {
     db.transaction(|tx| import(tx, id, mode, NOW))
+}
+
+fn waiting_items(conn: &Connection) -> AppResult<Vec<DraftListItem>> {
+    waiting(conn)
 }
 
 fn count(db: &Database, sql: &str) -> i64 {
@@ -365,6 +370,61 @@ fn a_key_that_conflicts_with_the_bank_is_a_problem_without_quoting_the_question(
     );
     let error = import_with(&db, "d2", ImportMode::All).unwrap_err();
     assert!(!error.to_string().contains("ENUNCIADO"));
+}
+
+#[test]
+fn a_package_whose_check_is_running_cannot_be_imported_or_discarded() {
+    let db = Database::open_in_memory().unwrap();
+    let mut draft = draft_of("d1", vec![question("q1", "a")], None);
+    draft.blind_check = Some(pending_record());
+    insert(&db, &draft);
+    let summary = summary_of(&db, "d1");
+    assert!(summary.checking);
+    assert_eq!(summary.lines[0].state, LineState::Unchecked);
+    assert!(db.with(|conn| waiting_items(conn)).unwrap()[0].checking);
+    for mode in [ImportMode::All, ImportMode::Confirmed] {
+        let error = import_with(&db, "d1", mode).unwrap_err();
+        assert!(error.to_string().contains("ainda está em andamento"));
+    }
+    assert!(db.with(|conn| discard(conn, "d1")).is_err());
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM questions"), 0);
+    assert_eq!(summary_of(&db, "d1").status, DraftStatus::Review);
+}
+
+#[test]
+fn questions_imported_without_a_check_get_the_badge_like_disputed_ones() {
+    let db = Database::open_in_memory().unwrap();
+    insert(&db, &draft_of("d1", vec![question("q1", "a")], None));
+    import_with(&db, "d1", ImportMode::All).unwrap();
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM questions WHERE json_extract(provenance, '$.disputed') = 1"
+        ),
+        1
+    );
+}
+
+#[test]
+fn a_package_with_quotes_in_its_options_leaks_nothing_in_the_preview() {
+    let db = Database::open_in_memory().unwrap();
+    let mut repeated = question("q1", "a");
+    repeated["options"][1]["text"] = json!("O \"princípio\" OPCAO-SEGREDO");
+    repeated["options"][2]["text"] = json!("O \"princípio\" OPCAO-SEGREDO");
+    insert(
+        &db,
+        &draft_of(
+            "d1",
+            vec![repeated],
+            Some(vec![verdict("q1", VerdictState::Agreed)]),
+        ),
+    );
+    let shown = serde_json::to_string(&summary_of(&db, "d1")).unwrap();
+    assert!(shown.contains("mesmo texto"));
+    assert!(
+        !shown.contains("OPCAO-SEGREDO") && !shown.contains("princípio"),
+        "{shown}"
+    );
 }
 
 #[test]

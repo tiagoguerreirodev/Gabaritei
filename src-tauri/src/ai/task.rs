@@ -12,6 +12,8 @@ pub(super) struct Task {
     pub sources: Sources,
     pub instructions: String,
     pub prompt: String,
+    /// Files copied into the run folder for the agent to read.
+    pub attachments: Vec<std::path::PathBuf>,
 }
 
 /// Runs one structured job for `config`.
@@ -26,6 +28,7 @@ pub(super) fn ask<T: serde::de::DeserializeOwned>(
     let mut spec = settings::job_spec(settings, secrets, config, task.schema, task.sources)?;
     spec.instructions = task.instructions;
     spec.prompt = task.prompt;
+    spec.attachments = task.attachments;
     let output = run_job(&spec, cancel, progress)?;
     Ok((output.parse()?, output))
 }

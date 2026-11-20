@@ -112,6 +112,7 @@ pub fn ask_recheck(
                 },
                 instructions: prompts::recheck_instructions(),
                 prompt: prompts::recheck_prompt(&question),
+                attachments: Vec::new(),
             },
             cancel,
             &mut |_| {},

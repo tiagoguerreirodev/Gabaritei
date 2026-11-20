@@ -68,6 +68,7 @@ n=$(cat "$dir/counter" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$dir/count
 out=""
 while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift;; esac; shift; done
 cat > "$dir/stdin-$n.txt"
+ls -A > "$dir/files-$n.txt"
 cp "$dir/answer-$n.json" "$out""#,
             dir.display()
         ),
@@ -78,6 +79,14 @@ fn calls(dir: &Path) -> usize {
     std::fs::read_to_string(dir.join("counter"))
         .map(|text| text.trim().parse().unwrap())
         .unwrap_or(0)
+}
+
+fn files(dir: &Path, n: usize) -> Vec<String> {
+    std::fs::read_to_string(dir.join(format!("files-{n}.txt")))
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect()
 }
 
 fn prompt(dir: &Path, n: usize) -> String {
@@ -155,6 +164,7 @@ fn run_check(setup: &Setup) -> AppResult<BlindCheck> {
         &setup.db,
         &setup.secrets,
         &setup.draft_id,
+        &[],
         &CancelToken::new(),
         &mut |_| {},
     )
@@ -290,6 +300,99 @@ mod flow {
             );
         }
         assert!(!sent.contains("Seu gabarito"));
+        // No input file either: the run folder holds only the schema.
+        assert_eq!(files(s.dir.path(), 1), ["schema.json"]);
+    }
+
+    #[test]
+    fn the_dispute_round_gets_the_attachments_the_generator_wrote_from() {
+        let s = setup(
+            package(vec![question("q1", "c")]),
+            &[
+                answers(vec![answer("q1", "a")]),
+                resolutions(vec![resolution("q1", None)]),
+            ],
+        );
+        let file = s.dir.path().join("Lei.md");
+        std::fs::write(&file, "texto").unwrap();
+        run(
+            &s.db,
+            &s.secrets,
+            &s.draft_id,
+            std::slice::from_ref(&file),
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+        // The blind checker never gets attachments; the generator answering the objection does.
+        assert_eq!(files(s.dir.path(), 1), ["schema.json"]);
+        assert!(files(s.dir.path(), 2).contains(&"anexos".to_owned()));
+    }
+
+    #[test]
+    fn late_writes_never_touch_a_draft_that_was_imported_or_discarded() {
+        let s = setup(package(vec![question("q1", "c")]), &[]);
+        s.db.with(|conn| draft::set_status(conn, &s.draft_id, DraftStatus::Imported))
+            .unwrap();
+        let verdicts = pending_record();
+        s.db.with(|conn| draft::set_blind_check(conn, &s.draft_id, &verdicts))
+            .unwrap();
+        s.db.with(|conn| {
+            draft::set_package(conn, &s.draft_id, &package(vec![question("q2", "a")]))
+        })
+        .unwrap();
+        let stored = s.db.with(|conn| draft::load(conn, &s.draft_id)).unwrap();
+        assert_eq!(stored.status, DraftStatus::Imported);
+        assert!(
+            stored.blind_check.is_none(),
+            "the verdicts were not written"
+        );
+        assert_eq!(stored.package.questions[0].id, "q1");
+        // A second move out of review is refused instead of silently overwriting.
+        assert!(
+            s.db.with(|conn| draft::set_status(conn, &s.draft_id, DraftStatus::Discarded))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_retry_is_refused_while_a_check_is_running_and_after_a_restart_it_recovers() {
+        let s = setup(
+            package(vec![question("q1", "c")]),
+            &[answers(vec![answer("q1", "c")])],
+        );
+        s.db.with(|conn| draft::set_blind_check(conn, &s.draft_id, &pending_record()))
+            .unwrap();
+        let error = recheck_draft(
+            &s.db,
+            &s.secrets,
+            &s.draft_id,
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("já está em andamento"));
+        assert_eq!(calls(s.dir.path()), 0);
+
+        // After a restart nothing can still be running: the check is marked interrupted.
+        s.db.with(|conn| recover_interrupted(conn)).unwrap();
+        let stored = s.db.with(|conn| draft::load(conn, &s.draft_id)).unwrap();
+        let check = super::stored(&stored).unwrap().unwrap();
+        assert!(!check.pending);
+        assert!(check.failed.unwrap().contains("interrompida"));
+        recheck_draft(
+            &s.db,
+            &s.secrets,
+            &s.draft_id,
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+        let stored = s.db.with(|conn| draft::load(conn, &s.draft_id)).unwrap();
+        assert_eq!(
+            states(&super::stored(&stored).unwrap().unwrap()),
+            [("q1", VerdictState::Agreed)]
+        );
     }
 
     #[test]
@@ -376,6 +479,22 @@ mod pipeline {
         assert_eq!(states(&check), [("q1", VerdictState::Agreed)]);
         assert!(labels.iter().any(|l| l.contains("Gerando")));
         assert!(labels.iter().any(|l| l.contains("Conferindo")));
+    }
+
+    #[test]
+    fn a_new_draft_is_marked_as_checking_until_the_check_ends() {
+        // Only the generator answers; the check then fails, which also ends "pending".
+        let s = setup_pipeline(&[generated(vec![question("q1", "c")])]);
+        let draft = crate::ai::generate::generate_draft(
+            &s.db,
+            &s.secrets,
+            request(1),
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+        let stored = s.db.with(|conn| draft::load(conn, &draft.id)).unwrap();
+        assert!(super::stored(&stored).unwrap().unwrap().pending);
     }
 
     #[test]

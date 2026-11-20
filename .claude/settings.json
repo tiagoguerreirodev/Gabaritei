@@ -15,6 +15,35 @@
       "Bash(gh pr list *)",
       "Bash(gh pr checks *)"
     ],
-    "deny": ["Read(./.env)", "Read(./.env.*)"]
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(~/.claude/.credentials.json)",
+      "Read(~/.codex/auth.json)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.mjs\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/format.mjs\""
+          }
+        ]
+      }
+    ]
   }
 }

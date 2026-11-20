@@ -148,6 +148,8 @@ pub struct Reveal {
     pub refs: Vec<String>,
     pub annulled: bool,
     pub outcome: Outcome,
+    /// The blind check still disagreed with the key when this generated question was imported.
+    pub disputed: bool,
 }
 
 /// One question of an attempt, as the card shows it. `reveal` is `None` until revealed.
@@ -442,7 +444,8 @@ pub fn load(conn: &Connection, id: &str) -> AppResult<AttemptView> {
     let header = load_header(conn, id)?;
     let mut stmt = conn.prepare(
         "SELECT r.position, r.question_id, r.snapshot, r.choice, r.eliminated, r.flagged,
-                r.revealed_at IS NOT NULL, q.answer_id, q.explanation, q.refs, q.annulled
+                r.revealed_at IS NOT NULL, q.answer_id, q.explanation, q.refs, q.annulled,
+                COALESCE(json_extract(q.provenance, '$.disputed'), 0)
          FROM responses r JOIN questions q ON q.id = r.question_id
          WHERE r.attempt_id = ?1 ORDER BY r.position",
     )?;
@@ -459,6 +462,7 @@ pub fn load(conn: &Connection, id: &str) -> AppResult<AttemptView> {
             r.get::<_, String>(8)?,
             r.get::<_, String>(9)?,
             r.get::<_, bool>(10)?,
+            r.get::<_, bool>(11)?,
         ))
     })?;
     let mut questions = Vec::new();
@@ -476,6 +480,7 @@ pub fn load(conn: &Connection, id: &str) -> AppResult<AttemptView> {
             expl,
             refs,
             annulled,
+            disputed,
         ) = row?;
         let snap: Snapshot = serde_json::from_str(&snap)?;
         let result = outcome(choice.as_deref(), &key, annulled);
@@ -488,6 +493,7 @@ pub fn load(conn: &Connection, id: &str) -> AppResult<AttemptView> {
                 refs: serde_json::from_str(&refs)?,
                 annulled,
                 outcome: result,
+                disputed,
             })
         } else {
             None

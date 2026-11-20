@@ -143,6 +143,7 @@ mod tests {
         let package = Package::parse(&sample().to_string()).unwrap();
         let provenance = Provenance::Generated {
             draft_id: "d1".into(),
+            disputed: false,
         };
         let inputs = package.into_inputs(&topic(), &provenance);
         assert_eq!(inputs[0].topics, vec![topic()]);

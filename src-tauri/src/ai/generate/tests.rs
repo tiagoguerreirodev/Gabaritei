@@ -123,7 +123,7 @@ mod pipeline {
         let stored = db.with(|conn| draft::load(conn, &draft.id)).unwrap();
         assert_eq!(stored, draft);
         let check = db.with(|conn| check_draft(conn, &stored)).unwrap();
-        assert_eq!(check.problems, Vec::<String>::new());
+        assert_eq!(check.problems, Vec::new());
         assert_eq!((check.multiple, check.boolean, check.duplicates), (1, 1, 0));
     }
 
@@ -207,7 +207,10 @@ mod pipeline {
         let draft = run(&db, &secrets, request(1)).unwrap();
         let check = db.with(|conn| check_draft(conn, &draft)).unwrap();
         assert!(
-            check.problems.iter().any(|p| p.contains("5 alternativas")),
+            check
+                .problems
+                .iter()
+                .any(|p| p.message.contains("5 alternativas")),
             "{:?}",
             check.problems
         );
@@ -225,7 +228,13 @@ mod pipeline {
         only_boolean.format = Some(QuestionType::Boolean);
         let draft = run(&db, &secrets, only_boolean).unwrap();
         let check = db.with(|conn| check_draft(conn, &draft)).unwrap();
-        assert!(check.problems.iter().any(|p| p.contains("só Certo/Errado")));
+        assert!(
+            check
+                .problems
+                .iter()
+                .any(|p| p.position == Some(1) && p.message.contains("só Certo/Errado"))
+        );
+        assert!(check.is_blocked(0) && !check.is_blocked(1));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! The generate role: a request becomes a validated draft package (spec §3.2 steps 1–2).
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
@@ -13,8 +14,8 @@ use super::runner::{CancelToken, Progress, run_job};
 use super::secrets::Secrets;
 use super::settings::{self, RemNoteMode, Sources};
 use crate::bank::question::{MAX_AREA, MAX_MATTER, MAX_TOPIC, Provenance};
-use crate::bank::store::{plan_import, topic_stems};
-use crate::bank::{Package, QuestionType, TopicPath, package_json_schema};
+use crate::bank::store::{load_question, topic_stems};
+use crate::bank::{Package, QuestionType, TopicPath, canonicalize, package_json_schema};
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
 
@@ -177,47 +178,143 @@ RemNote na mesma geração. Escolha uma das fontes."
     }
 }
 
+/// One problem found in a draft. The message never quotes question text, so it is safe to show
+/// in the spoiler-free preview.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DraftProblem {
+    /// 1-based position of the question, or `None` for a problem with the whole package.
+    pub position: Option<u32>,
+    /// pt-BR.
+    pub message: String,
+}
+
 /// Problems with a draft's package, recomputed against the current bank each time.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DraftCheck {
-    /// pt-BR problems. Any problem blocks the import.
-    pub problems: Vec<String>,
-    /// How many questions are already in the bank (they merge instead of duplicating).
+    pub problems: Vec<DraftProblem>,
+    /// How many questions are already in the bank, or repeat another question of the package
+    /// (they merge instead of duplicating).
     pub duplicates: usize,
     pub multiple: usize,
     pub boolean: usize,
 }
 
-fn provenance(draft_id: &str) -> Provenance {
+impl DraftCheck {
+    /// Whether the question at 0-based `index` has a problem of its own.
+    pub fn is_blocked(&self, index: usize) -> bool {
+        self.problems
+            .iter()
+            .any(|p| p.position == u32::try_from(index + 1).ok())
+    }
+}
+
+/// Replaces text between double quotes with `(…)`: validation messages quote option texts and
+/// stems, which the preview must not show.
+pub fn redact_quotes(message: &str) -> String {
+    let mut out = String::new();
+    let mut quoted = false;
+    for ch in message.chars() {
+        match (ch, quoted) {
+            ('"', false) => {
+                quoted = true;
+                out.push_str("(…)");
+            }
+            ('"', true) => quoted = false,
+            (_, false) => out.push(ch),
+            (_, true) => {}
+        }
+    }
+    out
+}
+
+fn provenance(draft_id: &str, disputed: bool) -> Provenance {
     Provenance::Generated {
         draft_id: draft_id.to_owned(),
+        disputed,
     }
+}
+
+/// The package as question inputs for the draft's topic, in package order.
+pub fn draft_inputs(
+    draft: &Draft,
+    disputed: &dyn Fn(usize) -> bool,
+) -> Vec<crate::bank::QuestionInput> {
+    draft
+        .package
+        .clone()
+        .into_inputs(&draft.request.request.topic, &provenance(&draft.id, false))
+        .into_iter()
+        .enumerate()
+        .map(|(index, mut input)| {
+            input.provenance = provenance(&draft.id, disputed(index));
+            input
+        })
+        .collect()
 }
 
 /// Validates a draft's package: structure, option rules, duplicates and the requested format.
 pub fn check_draft(conn: &Connection, draft: &Draft) -> AppResult<DraftCheck> {
-    let package = draft.package.clone();
-    let inputs = package.into_inputs(&draft.request.request.topic, &provenance(&draft.id));
-    let plan = plan_import(conn, inputs)?;
-    let mut check = DraftCheck {
-        problems: plan.problems.clone(),
-        duplicates: plan.existing_count(),
-        ..DraftCheck::default()
-    };
-    for question in &draft.package.questions {
+    let mut check = DraftCheck::default();
+    let mut seen: HashMap<String, (usize, String)> = HashMap::new();
+    let mut local_ids: HashSet<&str> = HashSet::new();
+    let format = draft.request.request.format;
+    let inputs = draft_inputs(draft, &|_| false);
+
+    for (index, (input, question)) in inputs.into_iter().zip(&draft.package.questions).enumerate() {
+        let position = u32::try_from(index + 1).unwrap_or(u32::MAX);
+        let mut problem = |message: String| {
+            check.problems.push(DraftProblem {
+                position: Some(position),
+                message,
+            });
+        };
         match question.kind {
             QuestionType::Multiple => check.multiple += 1,
             QuestionType::Boolean => check.boolean += 1,
         }
-    }
-    match draft.request.request.format {
-        Some(QuestionType::Multiple) if check.boolean > 0 => check
-            .problems
-            .push("Você pediu só múltipla escolha, mas há questões Certo/Errado no pacote.".into()),
-        Some(QuestionType::Boolean) if check.multiple > 0 => check.problems.push(
-            "Você pediu só Certo/Errado, mas há questões de múltipla escolha no pacote.".into(),
-        ),
-        _ => {}
+        match (format, question.kind) {
+            (Some(QuestionType::Multiple), QuestionType::Boolean) => {
+                problem("Você pediu só múltipla escolha, mas esta é Certo/Errado.".into());
+            }
+            (Some(QuestionType::Boolean), QuestionType::Multiple) => {
+                problem("Você pediu só Certo/Errado, mas esta é de múltipla escolha.".into());
+            }
+            _ => {}
+        }
+        if !local_ids.insert(question.id.as_str()) {
+            problem("O identificador desta questão repete o de outra do pacote.".into());
+            continue;
+        }
+        match canonicalize(input) {
+            Err(problems) => {
+                for message in problems {
+                    problem(redact_quotes(&message));
+                }
+            }
+            Ok(canonical) => {
+                match seen.get(&canonical.id) {
+                    Some((first, answer)) if *answer != canonical.answer_id => {
+                        problem(format!("Repete a Q{first}, mas com outro gabarito."));
+                    }
+                    Some(_) => check.duplicates += 1,
+                    None => {
+                        seen.insert(
+                            canonical.id.clone(),
+                            (index + 1, canonical.answer_id.clone()),
+                        );
+                    }
+                }
+                if let Some(stored) = load_question(conn, &canonical.id)? {
+                    if stored.answer_id == canonical.answer_id {
+                        check.duplicates += 1;
+                    } else {
+                        problem("Já existe no banco com outro gabarito.".into());
+                    }
+                }
+            }
+        }
     }
     Ok(check)
 }

@@ -5,6 +5,7 @@
  * (ts-rs). Add one function per Tauri command here; never call `invoke` elsewhere.
  */
 import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { Agent } from "./bindings/Agent";
 import type { AiSettings } from "./bindings/AiSettings";
 import type { AiSettingsInput } from "./bindings/AiSettingsInput";
@@ -17,7 +18,11 @@ import type { CollectionQuery } from "./bindings/CollectionQuery";
 import type { ErrorPayload } from "./bindings/ErrorPayload";
 import type { GenerateRequest } from "./bindings/GenerateRequest";
 import type { GenerationStatus } from "./bindings/GenerationStatus";
+import type { DraftListItem } from "./bindings/DraftListItem";
+import type { DraftSummary } from "./bindings/DraftSummary";
 import type { HomeSummary } from "./bindings/HomeSummary";
+import type { ImportMode } from "./bindings/ImportMode";
+import type { ImportResult } from "./bindings/ImportResult";
 import type { LegacyImportOutcome } from "./bindings/LegacyImportOutcome";
 import type { LegacyImportStatus } from "./bindings/LegacyImportStatus";
 import type { Performance } from "./bindings/Performance";
@@ -106,6 +111,24 @@ export const api = {
   remnoteTest: () => call<RemNoteTest>("remnote_test"),
   /** Starts a generation in the background; progress arrives as `generation-status` events. */
   generationStart: (request: GenerateRequest) => call<null>("generation_start", { request }),
+  /** Drafts waiting for review, newest first (counts and topics only). */
+  draftsWaiting: () => call<DraftListItem[]>("drafts_waiting"),
+  /** The spoiler-free summary of a draft: counts, problems and one state per question. */
+  draftSummary: (id: string) => call<DraftSummary>("draft_summary", { id }),
+  /** Imports a draft as a new generated collection: every question, or only the confirmed ones. */
+  draftImport: (id: string, mode: ImportMode) => call<ImportResult>("draft_import", { id, mode }),
+  /** Discards a draft that is waiting for review. */
+  draftDiscard: (id: string) => call<null>("draft_discard", { id }),
+  /** Asks which PDF, Markdown or text files to attach. Empty if the user cancels. */
+  pickAttachments: () => call<string[]>("pick_attachments"),
+  /** Calls `handler` on every generation status change. Returns a function that stops listening. */
+  onGenerationStatus: async (handler: (status: GenerationStatus) => void) => {
+    try {
+      return await listen<GenerationStatus>("generation-status", (event) => handler(event.payload));
+    } catch {
+      return () => undefined;
+    }
+  },
   /** Runs the blind check again on a draft whose check failed (same background slot). */
   blindCheckStart: (draftId: string) => call<null>("blind_check_start", { draftId }),
   /** Stops the running generation. `false` if none was running. */

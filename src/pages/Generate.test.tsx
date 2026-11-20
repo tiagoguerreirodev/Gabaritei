@@ -1,0 +1,245 @@
+import { HashRouter, Route } from "@solidjs/router";
+import { render, screen, waitFor, within } from "@solidjs/testing-library";
+import userEvent from "@testing-library/user-event";
+import { mockIPC } from "@tauri-apps/api/mocks";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { AiSettings } from "../bindings/AiSettings";
+import type { GenerateRequest } from "../bindings/GenerateRequest";
+import type { GenerationStatus } from "../bindings/GenerationStatus";
+import GenerationBanner from "../components/GenerationBanner";
+import { Toaster } from "../components/toasts";
+import { resetGenerationWatch, watchGeneration } from "../generation";
+import Generate from "./Generate";
+
+const role = { agent: "codex", model: "gpt-6.2-sol", effort: "xhigh" } as const;
+const settings: AiSettings = {
+  cliPaths: { claude: null, codex: null },
+  roles: {
+    generate: role,
+    blindCheck: { ...role, effort: "high" },
+    recheck: role,
+    explain: role,
+  },
+  remnote: { mode: "server", url: "https://r.example/mcp", tools: ["search"] },
+  hasRemnoteToken: true,
+};
+const idle: GenerationStatus = { running: false, startedAt: null, progress: null, outcome: null };
+const tree = {
+  areas: [
+    {
+      name: "Direito",
+      questions: 5,
+      matters: [
+        {
+          name: "Constitucional",
+          questions: 5,
+          topics: [
+            { id: 1, name: "Controle de constitucionalidade", questions: 5, accuracy: null },
+          ],
+        },
+      ],
+    },
+  ],
+  questions: 5,
+};
+
+function backend(status: GenerationStatus = idle, aiSettings: AiSettings = settings) {
+  const calls: { command: string; args: Record<string, unknown> }[] = [];
+  mockIPC((command, raw) => {
+    const args = (raw ?? {}) as Record<string, unknown>;
+    calls.push({ command, args });
+    switch (command) {
+      case "topics_tree":
+        return tree;
+      case "ai_settings":
+        return aiSettings;
+      case "generation_status":
+        return status;
+      case "generation_start":
+      case "generation_dismiss":
+        return null;
+      case "generation_cancel":
+        return true;
+      case "pick_attachments":
+        return ["/tmp/Lei 8.112.md"];
+      default:
+        throw new Error(`Unexpected command: ${command}`);
+    }
+  });
+  return calls;
+}
+
+function renderPage() {
+  window.location.hash = "#/gerar";
+  resetGenerationWatch();
+  render(() => (
+    <>
+      <HashRouter
+        root={(props) => (
+          <>
+            <GenerationBanner />
+            {props.children}
+          </>
+        )}
+      >
+        <Route path="/gerar" component={Generate} />
+      </HashRouter>
+      <Toaster />
+    </>
+  ));
+  watchGeneration();
+}
+
+async function fillTopic(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(await screen.findByLabelText("Área"), "Direito");
+  await user.type(screen.getByLabelText("Matéria"), "Constitucional");
+  await user.type(screen.getByLabelText("Assunto"), "Controle de constitucionalidade");
+}
+
+beforeEach(() => {
+  window.location.hash = "";
+});
+
+describe("Gerar", () => {
+  it("prefills generator and checker from the role defaults", async () => {
+    backend();
+    renderPage();
+    const generator = within(await screen.findByRole("group", { name: "Gerador" }));
+    expect(generator.getByLabelText("Modelo: Gerador")).toHaveValue("gpt-6.2-sol");
+    expect(generator.getByLabelText("Esforço: Gerador")).toHaveValue("xhigh");
+    const checker = within(screen.getByRole("group", { name: "Conferente" }));
+    expect(checker.getByLabelText("Esforço: Conferente")).toHaveValue("high");
+  });
+
+  it("starts a generation with what the form says", async () => {
+    const calls = backend();
+    const user = userEvent.setup();
+    renderPage();
+    await fillTopic(user);
+    await user.clear(screen.getByLabelText("Quantidade"));
+    await user.type(screen.getByLabelText("Quantidade"), "7");
+    await user.type(screen.getByLabelText("Estilo da banca"), "Cebraspe");
+    await user.selectOptions(screen.getByLabelText("Formato"), "boolean");
+    await user.type(screen.getByLabelText("Instruções"), "Foque em jurisprudência");
+    await user.type(screen.getByLabelText("Modelo: Conferente"), "-x");
+    await user.click(screen.getByRole("button", { name: "Gerar" }));
+
+    const start = await waitFor(() => {
+      const call = calls.find((c) => c.command === "generation_start");
+      expect(call).toBeDefined();
+      return call!;
+    });
+    const request = start.args.request as GenerateRequest;
+    expect(request).toMatchObject({
+      topic: {
+        area: "Direito",
+        matter: "Constitucional",
+        topic: "Controle de constitucionalidade",
+      },
+      count: 7,
+      board: "Cebraspe",
+      format: "boolean",
+      instructions: "Foque em jurisprudência",
+      sources: { remnote: false, web: false, attachments: [] },
+      generator: { agent: "codex", model: "gpt-6.2-sol", effort: "xhigh" },
+      checker: { agent: "codex", model: "gpt-6.2-sol-x", effort: "high" },
+    });
+  });
+
+  it("notes whether the topic is new or already has questions", async () => {
+    backend();
+    const user = userEvent.setup();
+    renderPage();
+    await fillTopic(user);
+    expect(await screen.findByText(/Já existem 5 questões neste assunto/)).toBeVisible();
+    await user.type(screen.getByLabelText("Assunto"), " novo");
+    expect(await screen.findByText(/Assunto novo: será criado/)).toBeVisible();
+  });
+
+  it("never combines the web with attachments or RemNote", async () => {
+    const calls = backend();
+    const user = userEvent.setup();
+    renderPage();
+    await fillTopic(user);
+
+    await user.click(screen.getByRole("checkbox", { name: "Pesquisar na web" }));
+    expect(screen.getByRole("checkbox", { name: "RemNote" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Anexar arquivos" })).toBeDisabled();
+
+    await user.click(screen.getByRole("checkbox", { name: "Pesquisar na web" }));
+    await user.click(screen.getByRole("button", { name: "Anexar arquivos" }));
+    expect(await screen.findByText("Lei 8.112.md")).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: "Pesquisar na web" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Gerar" }));
+    await waitFor(() => expect(calls.some((c) => c.command === "generation_start")).toBe(true));
+    const request = calls.find((c) => c.command === "generation_start")!.args
+      .request as GenerateRequest;
+    expect(request.sources.attachments).toEqual(["/tmp/Lei 8.112.md"]);
+  });
+
+  it("explains that RemNote is off in Configurações", async () => {
+    backend(idle, { ...settings, remnote: { mode: "off", url: "", tools: [] } });
+    renderPage();
+    expect(await screen.findByRole("checkbox", { name: "RemNote" })).toBeDisabled();
+    expect(screen.getByText(/ligue em Configurações/)).toBeVisible();
+  });
+
+  it("shows progress and a cancel button while a generation runs", async () => {
+    const calls = backend({
+      running: true,
+      startedAt: "2026-11-20T10:00:00.000Z",
+      progress: { kind: "reading", label: "Lendo as fontes…" },
+      outcome: null,
+    });
+    const user = userEvent.setup();
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Gerando o pacote…" })).toBeVisible();
+    expect(screen.getAllByText(/Lendo as fontes…/).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("form", { name: "Nova geração" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(calls.some((c) => c.command === "generation_cancel")).toBe(true);
+  });
+
+  it("links to the finished package and lets the user dismiss the result", async () => {
+    const calls = backend({
+      running: false,
+      startedAt: null,
+      progress: null,
+      outcome: { kind: "draft", draftId: "d7" },
+    });
+    renderPage();
+    const link = await screen.findByRole("link", { name: "Revisar pacote" });
+    expect(link.getAttribute("href")).toContain("/revisar-pacote?id=d7");
+    expect(calls.length).toBeGreaterThan(0);
+  });
+
+  it("shows why a generation failed", async () => {
+    backend({
+      running: false,
+      startedAt: null,
+      progress: null,
+      outcome: { kind: "failed", message: "A IA devolveu 2 questões, mas você pediu 3." },
+    });
+    renderPage();
+    expect(await screen.findByText(/devolveu 2 questões, mas você pediu 3/)).toBeVisible();
+  });
+});
+
+describe("Aviso de geração", () => {
+  it("shows on every page that a package is being generated", async () => {
+    backend({
+      running: true,
+      startedAt: "2026-11-20T10:00:00.000Z",
+      progress: { kind: "thinking", label: "Conferindo às cegas…" },
+      outcome: null,
+    });
+    renderPage();
+    const banner = await screen.findByText(/Gerando um pacote…/);
+    expect(banner).toBeVisible();
+    expect(
+      screen.getAllByRole("status").some((el) => /Conferindo às cegas/.test(el.textContent ?? "")),
+    ).toBe(true);
+    expect(screen.getByRole("link", { name: "Acompanhar" })).toBeVisible();
+  });
+});

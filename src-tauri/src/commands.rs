@@ -12,6 +12,7 @@ use crate::ai::blind_check;
 use crate::ai::discovery::{self, CliStatus};
 use crate::ai::generate::GenerateRequest;
 use crate::ai::jobs::{GenerationManager, GenerationStatus};
+use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportResult};
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, RemNoteTest};
 use crate::attempts::{self, AttemptView, SessionStart};
@@ -320,6 +321,58 @@ pub fn blind_check_start<R: Runtime>(
             let _ = app.emit(GENERATION_EVENT, status);
         },
     )
+}
+
+/// Drafts waiting for review, newest first. Counts and topics only.
+#[tauri::command]
+pub fn drafts_waiting(db: State<'_, Database>) -> AppResult<Vec<DraftListItem>> {
+    db.with(|conn| review::waiting(conn))
+}
+
+/// The spoiler-free summary of a draft: counts, problems and one state per question.
+#[tauri::command]
+pub fn draft_summary(db: State<'_, Database>, id: String) -> AppResult<DraftSummary> {
+    db.with(|conn| review::summary(conn, &id))
+}
+
+/// Imports a draft as a new `generated` collection: every question, or only the confirmed ones.
+#[tauri::command]
+pub fn draft_import(
+    db: State<'_, Database>,
+    id: String,
+    mode: ImportMode,
+) -> AppResult<ImportResult> {
+    db.transaction(|tx| review::import(tx, &id, mode, &crate::clock::now()))
+}
+
+/// Discards a draft that is waiting for review.
+#[tauri::command]
+pub fn draft_discard(db: State<'_, Database>, id: String) -> AppResult<()> {
+    db.with(|conn| review::discard(conn, &id))
+}
+
+/// Asks which PDF, Markdown or text files to attach to a generation. Empty if cancelled.
+#[tauri::command]
+pub async fn pick_attachments<R: Runtime>(app: AppHandle<R>) -> AppResult<Vec<String>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let files = app
+            .dialog()
+            .file()
+            .set_title("Anexar arquivos")
+            .add_filter("PDF, Markdown ou texto", &["pdf", "md", "txt"])
+            .blocking_pick_files()
+            .unwrap_or_default();
+        files
+            .into_iter()
+            .map(|file| {
+                file.into_path()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .map_err(|_| AppError::Invalid("Escolha arquivos deste computador.".into()))
+            })
+            .collect()
+    })
+    .await
+    .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
 /// Stops the running generation. Returns whether one was running.
@@ -775,6 +828,51 @@ mod tests {
         );
         // The status carries labels and an ID, never question content.
         assert!(!status.to_string().contains("crase"));
+
+        // The preview shows counts and states only: no stem, option, key or explanation.
+        let id = status["outcome"]["draftId"].as_str().unwrap().to_owned();
+        let summary = app
+            .call("draft_summary", json!({ "id": id }))
+            .expect("summary");
+        assert_eq!(summary["count"], json!(1));
+        assert_eq!(
+            summary["lines"],
+            json!([{ "position": 1, "state": "agreed" }])
+        );
+        let shown = summary.to_string();
+        for secret in [
+            "crase",
+            "verbo",
+            "Certo",
+            "Errado",
+            "answerId",
+            "explanation",
+        ] {
+            assert!(!shown.contains(secret), "{secret} leaked: {shown}");
+        }
+        let waiting = app.call("drafts_waiting", json!({})).unwrap();
+        assert_eq!(waiting[0]["id"], json!(id));
+        assert!(!waiting.to_string().contains("crase"));
+
+        // Importing makes a generated collection and closes the draft.
+        let imported = app
+            .call("draft_import", json!({ "id": id, "mode": "all" }))
+            .expect("imports");
+        assert_eq!(imported["imported"], json!(1));
+        let collections = app
+            .call(
+                "collections",
+                json!({ "query": { "search": "", "contest": "", "board": "", "page": 0, "pageSize": 20 } }),
+            )
+            .expect("collections load");
+        assert_eq!(collections["items"][0]["kind"], json!("generated"));
+        assert_eq!(collections["items"][0]["questions"], json!(1));
+        assert!(
+            app.call("draft_import", json!({ "id": id, "mode": "all" }))
+                .is_err()
+        );
+        assert_eq!(app.call("drafts_waiting", json!({})).unwrap(), json!([]));
+
         app.call("generation_dismiss", json!({})).unwrap();
         assert_eq!(
             app.call("generation_status", json!({})).unwrap()["outcome"],

@@ -106,7 +106,13 @@ pub enum Provenance {
     /// Imported from the legacy Caderno Local bank.
     Legacy,
     /// Written by the AI generator and approved from a draft.
-    Generated { draft_id: String },
+    Generated {
+        draft_id: String,
+        /// The blind check still disagreed with the key when the package was imported. The
+        /// Resolver shows a badge after the user answers.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        disputed: bool,
+    },
 }
 
 /// A question as received, before canonicalization.
@@ -604,10 +610,30 @@ pub(crate) mod tests {
         );
         assert_eq!(
             serde_json::to_value(Provenance::Generated {
-                draft_id: "d1".into()
+                draft_id: "d1".into(),
+                disputed: false,
             })
             .unwrap(),
             serde_json::json!({ "source": "generated", "draftId": "d1" })
+        );
+        assert_eq!(
+            serde_json::to_value(Provenance::Generated {
+                draft_id: "d1".into(),
+                disputed: true,
+            })
+            .unwrap(),
+            serde_json::json!({ "source": "generated", "draftId": "d1", "disputed": true })
+        );
+        // Older rows have no `disputed` key.
+        let old: Provenance =
+            serde_json::from_value(serde_json::json!({ "source": "generated", "draftId": "d1" }))
+                .unwrap();
+        assert_eq!(
+            old,
+            Provenance::Generated {
+                draft_id: "d1".into(),
+                disputed: false
+            }
         );
     }
 }

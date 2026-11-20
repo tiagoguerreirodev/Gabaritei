@@ -758,6 +758,9 @@ fn the_overview_says_how_many_due_reviews_are_held_by_an_open_attempt() {
     // Not yet due at D0: nothing counts.
     let early = b.db.with(|c| overview(c, D0, false)).unwrap();
     assert_eq!(early.due_in_open_attempt, 0);
+}
+
+#[test]
 fn overlapping_attempts_rank_by_when_the_answer_was_given() {
     let b = bank(&["q1"]);
     // a1 was answered first (wrong) but finished last; a2 was answered later (right).

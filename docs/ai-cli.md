@@ -89,6 +89,36 @@ codex exec - --output-schema schema.json -o saida.json --json
   --disable unified_exec` leaves it unable to read attachments (verified: it answered "can't read").
   So the shell is disabled when a run has no attachments, and kept, inside `--sandbox read-only`
   (no writes), when it has. Codex has no other way to read attachments.
+- **What the read-only sandbox can read (investigated for #53, codex-cli 0.171.0, Linux):**
+  `--sandbox read-only` lets the shell read **any** file the user can read. Verified: with the
+  run folder as cwd, `cat <absolute path outside the run folder>` returned the contents of a canary
+  file. So a prompt-injected page or attachment could make Codex read, say, `~/.ssh`, and the
+  content would reach the model provider's context, and from there web-search queries. Both
+  CLIs' own credential files are readable too (a worse case than `~/.ssh`, and it would break
+  AGENTS.md rule 2).
+- **Narrowing it works with a permissions profile (verified on Linux):** replacing `--sandbox` with
+  `-c default_permissions="gab" -c 'permissions.gab.filesystem={":minimal"="read", "<codex install dir>"="read", ":workspace_roots"={"."="read"}}'`
+  (run folder as cwd) let `cat anexos/a.md` work and made the same canary file outside the run
+  folder invisible ("No such file"). Caveats:
+  - `:minimal` alone is not enough: the sandbox re-executes the `codex` binary, so its install
+    folder (`~/.codex/packages/...` for the standalone install) must also be readable, or every
+    command fails with `bwrap: execvp ...: No such file`. The app would have to work that folder
+    out from the resolved CLI path, and the layout differs per install method and OS.
+  - **Never grant `~/.codex` itself:** it holds `auth.json`. Only the install subfolder
+    (`packages/...`).
+  - `:minimal` is "platform defaults" (system folders needed to run commands); the exact list was
+    not inspected, and only one outside canary path was tested, so "hides everything else" is
+    not proven.
+  - Not checked: whether writes and network stay blocked under the profile, and whether it works
+    together with `--strict-config` (the verification run did not pass `--strict-config`).
+  - The `":workspace_roots"` key only parses inside one inline table (`-c 'a.b.":x"=...'` keeps
+    the quotes and is rejected).
+  - Not verified on macOS (Seatbelt) or on Windows, where the sandbox has its own backends. Codex's
+    docs say unsupported split policies fail closed on Windows (not tested here).
+- **Other options, not implemented:** inlining MD/TXT attachments into the prompt would let those
+  runs keep the shell disabled (only PDFs would need it), but large files need a size cap and the
+  prompt-injection surface of the attachment text stays. Codex has no domain allowlist for web
+  search (the app only uses `web_search=live` or `disabled`; other modes were not checked).
 - **RemNote token:** passed in the child's environment (`GABARITEI_REMNOTE_TOKEN`), never as an argument.
 
 ## Windows (not verified)

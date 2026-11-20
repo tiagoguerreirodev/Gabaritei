@@ -132,8 +132,9 @@ pub fn load(conn: &Connection, id: &str) -> AppResult<Draft> {
 }
 
 pub fn set_blind_check(conn: &Connection, id: &str, verdicts: &serde_json::Value) -> AppResult<()> {
+    // Only a draft still waiting for review: one that was imported or discarded stays as it is.
     conn.execute(
-        "UPDATE drafts SET blind_check = ?2 WHERE id = ?1",
+        "UPDATE drafts SET blind_check = ?2 WHERE id = ?1 AND status = 'review'",
         params![id, serde_json::to_string(verdicts)?],
     )?;
     Ok(())
@@ -141,16 +142,23 @@ pub fn set_blind_check(conn: &Connection, id: &str, verdicts: &serde_json::Value
 
 pub fn set_package(conn: &Connection, id: &str, package: &Package) -> AppResult<()> {
     conn.execute(
-        "UPDATE drafts SET package = ?2 WHERE id = ?1",
+        "UPDATE drafts SET package = ?2 WHERE id = ?1 AND status = 'review'",
         params![id, serde_json::to_string(package)?],
     )?;
     Ok(())
 }
 
+/// Moves a draft out of `review`. Fails if it already left it, so an import or a discard
+/// can never be overwritten by a late write.
 pub fn set_status(conn: &Connection, id: &str, status: DraftStatus) -> AppResult<()> {
-    conn.execute(
-        "UPDATE drafts SET status = ?2 WHERE id = ?1",
+    let changed = conn.execute(
+        "UPDATE drafts SET status = ?2 WHERE id = ?1 AND status = 'review'",
         params![id, status.as_str()],
     )?;
+    if changed == 0 {
+        return Err(AppError::Invalid(
+            "Este pacote já foi importado ou descartado.".into(),
+        ));
+    }
     Ok(())
 }

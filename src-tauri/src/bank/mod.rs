@@ -4,6 +4,7 @@
 //! Contest and board tags live on collections, not on questions: a question's contests are
 //! those of the collections that contain it (owner decision, 2026-11-19).
 
+pub mod catalog;
 pub mod identity;
 pub mod package;
 pub mod question;

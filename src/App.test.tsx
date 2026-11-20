@@ -17,6 +17,9 @@ describe("App shell", () => {
     mockIPC((command) => {
       if (command === "app_info") return { name: "Gabaritei", version: "9.9.9" };
       if (command === "legacy_import_status") return { report: null, bankEmpty: false };
+      if (command === "topics_tree") return { areas: [], questions: 0 };
+      if (command === "collections")
+        return { items: [], total: 0, page: 0, pageSize: 20, contests: [], boards: [] };
       throw new Error(`Unexpected command: ${command}`);
     });
   });
@@ -45,16 +48,16 @@ describe("App shell", () => {
     }
   });
 
-  it("reaches the contextual pages from the page that opens them", async () => {
+  it("reaches the contextual pages by their routes", async () => {
     const user = userEvent.setup();
     render(() => <App />);
 
+    // Revisar pacote opens from Gerar; Resolver will open from "Iniciar" (#9).
     await user.click(screen.getByRole("link", { name: "Gerar" }));
     await user.click(screen.getByRole("link", { name: "Abrir a tela de revisão de pacote" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Revisar pacote" })).toBeVisible();
 
-    await user.click(screen.getByRole("link", { name: "Banco" }));
-    await user.click(screen.getByRole("link", { name: "Abrir a tela de resolução" }));
+    window.location.hash = "#/resolver";
     expect(await screen.findByRole("heading", { level: 1, name: "Resolver" })).toBeVisible();
   });
 

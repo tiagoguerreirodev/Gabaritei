@@ -1,6 +1,7 @@
 import { Match, Show, Switch, createSignal } from "solid-js";
 import { api } from "../api";
 import type { LegacyImportReport } from "../bindings/LegacyImportReport";
+import { showToast } from "./toasts";
 
 const number = (n: number) => n.toLocaleString("pt-BR");
 const date = (iso: string) => new Date(iso).toLocaleDateString("pt-BR");
@@ -32,6 +33,7 @@ export default function LegacyImport(props: {
       const outcome = await api.importLegacyBank();
       if (outcome) {
         setReport(outcome.report);
+        showToast("Banco do Caderno Local importado.");
         props.onImported?.(outcome.report);
       }
     } catch (e) {

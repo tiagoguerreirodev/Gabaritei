@@ -112,6 +112,14 @@ impl GenerateRequest {
                 "As instruções têm mais de {MAX_INSTRUCTIONS} caracteres."
             )));
         }
+        for (config, label) in [
+            (self.generator.as_mut(), "Gerador"),
+            (self.checker.as_mut(), "Conferente"),
+        ] {
+            if let Some(config) = config {
+                super::settings::validate_role_config(config, label)?;
+            }
+        }
         self.validate_attachments()?;
         // Web pages are the one untrusted input. If one carried instructions, an agent that can
         // also read the user's files or RemNote notes could send them out in a web request, so
@@ -398,7 +406,8 @@ pub fn generate_draft(
             checker,
         },
         package,
-        blind_check: None,
+        // The blind check starts right after; until it ends the draft cannot be imported.
+        blind_check: Some(super::blind_check::pending_record()),
     };
     db.with(|conn| draft::insert(conn, &draft))?;
     Ok(draft)

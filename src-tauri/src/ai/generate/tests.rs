@@ -310,6 +310,19 @@ mod request_form {
     }
 
     #[test]
+    fn role_overrides_are_checked_like_the_settings() {
+        for model in ["", "-x", "dois nomes"] {
+            let mut bad = request(1);
+            bad.generator = Some(RoleConfig {
+                agent: crate::ai::agent::Agent::Codex,
+                model: model.into(),
+                effort: crate::ai::agent::Effort::Low,
+            });
+            assert!(bad.validate().is_err(), "{model:?}");
+        }
+    }
+
+    #[test]
     fn the_topic_names_are_required_and_trimmed() {
         let mut blank = request(1);
         blank.topic.matter = "   ".into();

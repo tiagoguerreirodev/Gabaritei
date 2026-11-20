@@ -108,6 +108,20 @@ pub struct BlindCheck {
     /// Set when the check couldn't be completed; there are no verdicts then.
     pub failed: Option<String>,
     pub info: Option<GenerationInfo>,
+    /// The check is running now. The draft cannot be imported or discarded until it ends.
+    #[serde(default)]
+    pub pending: bool,
+}
+
+/// The record a draft carries while its blind check runs.
+pub fn pending_record() -> serde_json::Value {
+    serde_json::to_value(BlindCheck {
+        verdicts: Vec::new(),
+        failed: None,
+        info: None,
+        pending: true,
+    })
+    .expect("a blind check serializes")
 }
 
 fn invalid(message: &str) -> AppError {
@@ -120,6 +134,8 @@ struct Task {
     sources: Sources,
     instructions: String,
     prompt: String,
+    /// Files copied into the run folder for the agent to read.
+    attachments: Vec<std::path::PathBuf>,
 }
 
 /// Runs one structured job for `config`.
@@ -134,6 +150,7 @@ fn ask<T: serde::de::DeserializeOwned>(
     let mut spec = settings::job_spec(settings, secrets, config, task.schema, task.sources)?;
     spec.instructions = task.instructions;
     spec.prompt = task.prompt;
+    spec.attachments = task.attachments;
     let output = run_job(&spec, cancel, progress)?;
     Ok((output.parse()?, output))
 }
@@ -158,6 +175,7 @@ fn check_questions(
             sources: Sources::default(),
             instructions: prompts::blind_check_instructions(),
             prompt: prompts::blind_check_prompt(&views),
+            attachments: Vec::new(),
         },
         cancel,
         progress,
@@ -224,6 +242,7 @@ pub fn run(
     db: &Database,
     secrets: &Secrets,
     draft_id: &str,
+    attachments: &[std::path::PathBuf],
     cancel: &CancelToken,
     progress: &mut dyn FnMut(Progress),
 ) -> AppResult<BlindCheck> {
@@ -273,10 +292,12 @@ pub fn run(
                 schema: schema_of::<DisputeResolutions>(),
                 sources: Sources {
                     remnote: request.sources.remnote,
-                    web: request.sources.web,
+                    web: request.sources.web && attachments.is_empty(),
                 },
                 instructions: prompts::dispute_instructions(),
                 prompt: prompts::dispute_prompt(&items),
+                // The generator answers the objections with the files it wrote from.
+                attachments: attachments.to_vec(),
             },
             cancel,
             progress,
@@ -338,6 +359,7 @@ pub fn run(
     let result = BlindCheck {
         verdicts,
         failed: None,
+        pending: false,
         info: Some(GenerationInfo {
             agent: checker.agent,
             model: checker.model.clone(),
@@ -360,6 +382,7 @@ pub fn record_failure(db: &Database, draft_id: &str, message: &str) -> AppResult
         verdicts: Vec::new(),
         failed: Some(message.to_owned()),
         info: None,
+        pending: false,
     };
     db.with(|conn| draft::set_blind_check(conn, draft_id, &serde_json::to_value(failed)?))
 }
@@ -384,8 +407,14 @@ pub fn generate_and_check(
     progress: &mut dyn FnMut(Progress),
 ) -> AppResult<String> {
     progress(Progress::new(ProgressKind::Started, "Gerando as questões…"));
+    let attachments: Vec<std::path::PathBuf> = request
+        .sources
+        .attachments
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect();
     let draft = super::generate::generate_draft(db, secrets, request, cancel, progress)?;
-    match run(db, secrets, &draft.id, cancel, progress) {
+    match run(db, secrets, &draft.id, &attachments, cancel, progress) {
         Ok(_) => Ok(draft.id),
         Err(_) if cancel.is_cancelled() => {
             db.with(|conn| draft::set_status(conn, &draft.id, DraftStatus::Discarded))?;
@@ -398,7 +427,8 @@ pub fn generate_and_check(
     }
 }
 
-/// Re-runs the blind check of a draft that has none or whose check failed.
+/// Re-runs the blind check of a draft that has none or whose check failed. The original
+/// attachments are not kept (only their names), so the dispute round runs without them.
 pub fn recheck_draft(
     db: &Database,
     secrets: &Secrets,
@@ -406,18 +436,44 @@ pub fn recheck_draft(
     cancel: &CancelToken,
     progress: &mut dyn FnMut(Progress),
 ) -> AppResult<String> {
-    let draft = db.with(|conn| draft::load(conn, draft_id))?;
-    if draft.status != DraftStatus::Review {
-        return Err(invalid("Este pacote já foi importado ou descartado."));
-    }
-    match run(db, secrets, draft_id, cancel, progress) {
+    db.transaction(|tx| {
+        let draft = draft::load(tx, draft_id)?;
+        if draft.status != DraftStatus::Review {
+            return Err(invalid("Este pacote já foi importado ou descartado."));
+        }
+        if stored(&draft)?.is_some_and(|check| check.pending) {
+            return Err(invalid("A conferência deste pacote já está em andamento."));
+        }
+        draft::set_blind_check(tx, draft_id, &pending_record())
+    })?;
+    match run(db, secrets, draft_id, &[], cancel, progress) {
         Ok(_) => Ok(draft_id.to_owned()),
-        Err(_) if cancel.is_cancelled() => Err(invalid("A execução foi cancelada.")),
+        Err(_) if cancel.is_cancelled() => {
+            record_failure(db, draft_id, "A conferência foi cancelada.")?;
+            Err(invalid("A execução foi cancelada."))
+        }
         Err(error) => {
             record_failure(db, draft_id, &error.to_string())?;
             Ok(draft_id.to_owned())
         }
     }
+}
+
+/// After a restart, a check that was running can never finish: mark it as interrupted so the
+/// draft can be imported, discarded or checked again.
+pub fn recover_interrupted(conn: &rusqlite::Connection) -> AppResult<()> {
+    let failed = serde_json::to_string(&BlindCheck {
+        verdicts: Vec::new(),
+        failed: Some("A conferência foi interrompida antes de terminar.".into()),
+        info: None,
+        pending: false,
+    })?;
+    conn.execute(
+        "UPDATE drafts SET blind_check = ?1
+         WHERE status = 'review' AND json_extract(blind_check, '$.pending') = 1",
+        rusqlite::params![failed],
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

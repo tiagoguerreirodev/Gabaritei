@@ -21,7 +21,9 @@ use rusqlite::{Connection, named_params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::attempts::{self, ActiveAttempt, FeedbackMode, Outcome, Score, outcome};
+use crate::attempts::{
+    self, ActiveAttempt, FeedbackMode, Outcome, RESPONSE_TIME_SQL, Score, outcome,
+};
 use crate::bank::catalog::cmp_pt;
 use crate::error::AppResult;
 
@@ -242,7 +244,7 @@ fn strength(conn: &Connection, query: &PerformanceQuery) -> AppResult<Strength> 
              SELECT r.question_id, r.choice,
                     ROW_NUMBER() OVER (
                         PARTITION BY r.question_id
-                        ORDER BY r.choice IS NULL, a.finished_at DESC, a.id DESC,
+                        ORDER BY r.choice IS NULL, {RESPONSE_TIME_SQL} DESC, a.id DESC,
                                  r.position DESC) AS rn
              FROM responses r JOIN attempts a ON a.id = r.attempt_id
              WHERE a.finished_at IS NOT NULL

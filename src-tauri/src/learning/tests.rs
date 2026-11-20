@@ -742,3 +742,20 @@ fn the_overview_still_lists_questions_in_an_open_attempt_but_practice_leaves_the
     assert_eq!(ov.errors, 2);
     assert_eq!(ov.practice_errors, 0);
 }
+
+#[test]
+fn overlapping_attempts_rank_by_when_the_answer_was_given() {
+    let b = bank(&["q1"]);
+    // a1 was answered first (wrong) but finished last; a2 was answered later (right).
+    let a1 = b.finished_attempt(D0, &[("q1", "o1")]);
+    b.answer(D1, &[("q1", "o0")]);
+    b.db.transaction(|tx| {
+        tx.execute(
+            "UPDATE attempts SET finished_at = ?1 WHERE id = ?2",
+            params![D5, a1],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(b.errors(false).is_empty());
+}

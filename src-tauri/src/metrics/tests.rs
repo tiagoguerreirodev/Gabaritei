@@ -190,6 +190,27 @@ fn latest_answer_per_question_wins() {
 }
 
 #[test]
+fn the_latest_answer_is_the_one_given_last_even_when_attempts_overlap() {
+    let f = fixture(&[("q1", &[D])]);
+    // a1 finishes last but its answer was given first; a2 finishes first with the later answer.
+    f.attempt_at(
+        "a1",
+        "study",
+        Some("2026-11-05T10:00:00.000Z"),
+        &[("q1", Some("o1"), "2026-11-02T10:00:00.000Z")],
+    );
+    f.attempt_at(
+        "a2",
+        "study",
+        Some("2026-11-03T10:00:00.000Z"),
+        &[("q1", Some("o0"), "2026-11-03T09:00:00.000Z")],
+    );
+    let p = f.all();
+    assert_eq!(p.overall.score.correct, 1);
+    assert_eq!(p.overall.score.wrong, 0);
+}
+
+#[test]
 fn unfinished_attempts_are_ignored() {
     let f = fixture(&[("q1", &[D])]);
     f.attempt("a1", "study", None, &[("q1", Some("o0"))]);

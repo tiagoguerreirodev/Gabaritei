@@ -447,12 +447,12 @@ mod arguments {
         let (args, _) = plan_for(&job);
         assert!(!args.contains(&"shell_tool".to_owned()));
         assert!(has_pair(&args, "--sandbox", "read-only"));
-        // A shell that can read local files never runs together with web access.
-        assert!(has_pair(&args, "-c", "web_search=disabled"));
+        // Web search is independent of the attachments (the owner decided so).
+        assert!(has_pair(&args, "-c", "web_search=live"));
     }
 
     #[test]
-    fn codex_gets_web_search_only_without_attachments() {
+    fn codex_gets_web_search_only_when_asked() {
         let mut job = spec(Agent::Codex, "codex".into());
         job.web = true;
         let (args, _) = plan_for(&job);

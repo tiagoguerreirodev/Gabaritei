@@ -15,9 +15,6 @@ fn toml_string(value: &str) -> String {
 }
 
 pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
-    // Web search and a file-reading shell are never on together: a prompt-injected attachment
-    // could otherwise read local files and send them out through a web request.
-    let web = spec.web && !work.has_attachments;
     let mut args: Vec<String> = vec![
         "exec".into(),
         // The prompt is on stdin.
@@ -38,7 +35,7 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         // Fail on a config key this version doesn't know, instead of silently ignoring it.
         "--strict-config".into(),
         "-c".into(),
-        format!("web_search={}", if web { "live" } else { "disabled" }),
+        format!("web_search={}", if spec.web { "live" } else { "disabled" }),
     ];
     // The user's own Codex config (hooks, MCP servers, instructions) is ignored, except when the
     // user chose to reuse it for RemNote.

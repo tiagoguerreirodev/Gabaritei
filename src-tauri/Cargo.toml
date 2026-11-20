@@ -29,11 +29,14 @@ flate2 = "1"
 tauri-plugin-dialog = "2"
 unicode-normalization = "0.1"
 rand = "0.9"
+tempfile = "3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 # Enables `tauri::test` (mock runtime) so commands can be exercised through the IPC layer.
 tauri = { version = "2", features = ["test"] }
-tempfile = "3"
 
 # See https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

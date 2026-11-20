@@ -973,6 +973,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "hex",
+ "libc",
  "rand",
  "rusqlite",
  "schemars 1.2.3",

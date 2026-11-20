@@ -759,11 +759,9 @@ echo {"type":"turn.completed","usage":{}}"#,
         let started = Instant::now();
         assert_eq!(run(&job).0, Err(RunError::TimedOut));
         assert!(started.elapsed() < Duration::from_secs(15));
-        std::thread::sleep(Duration::from_millis(500));
-        assert_eq!(
-            processes_with(marker),
-            0,
-            "a child process outlived the run"
+        assert!(
+            gone_within_5s(&["-n 4242", "-n 4243"]),
+            "a process of the tree outlived the run"
         );
     }
 

@@ -3,9 +3,14 @@
 //! Every command must also be added to [`crate::register`] and wrapped in `src/api.ts`.
 
 use serde::Serialize;
+use tauri::{AppHandle, Manager, Runtime, State};
+use tauri_plugin_dialog::DialogExt;
 use ts_rs::TS;
 
-use crate::error::AppResult;
+use crate::db::Database;
+use crate::error::{AppError, AppResult};
+use crate::migrate::{self, LegacyImportOutcome, LegacyImportStatus};
+use crate::paths::AppPaths;
 
 /// Basic information about the running app.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -27,6 +32,38 @@ pub fn current_app_info() -> AppInfo {
 #[tauri::command]
 pub fn app_info() -> AppResult<AppInfo> {
     Ok(current_app_info())
+}
+
+/// Whether the legacy bank was imported, and whether the bank is still empty.
+#[tauri::command]
+pub fn legacy_import_status(db: State<'_, Database>) -> AppResult<LegacyImportStatus> {
+    migrate::status(&db)
+}
+
+/// Asks for the legacy repository folder and imports its bank. `None` if the user cancels.
+#[tauri::command]
+pub async fn import_legacy_bank<R: Runtime>(
+    app: AppHandle<R>,
+) -> AppResult<Option<LegacyImportOutcome>> {
+    let Some(folder) = app
+        .dialog()
+        .file()
+        .set_title("Escolha a pasta do Caderno Local (repositório Simulados-Concursos)")
+        .blocking_pick_folder()
+    else {
+        return Ok(None);
+    };
+    let source = folder
+        .into_path()
+        .map_err(|_| AppError::Invalid("Escolha uma pasta deste computador.".into()))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let paths = app.state::<AppPaths>();
+        migrate::import_legacy_bank(&db, &paths.images_dir(), &source, &crate::clock::now())
+            .map(Some)
+    })
+    .await
+    .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
 #[cfg(test)]

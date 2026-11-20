@@ -48,6 +48,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src-tauri/src/commands.rs` | Tauri commands (thin wrappers). Register each one in `register()` in `lib.rs`. |
 | `src-tauri/src/error.rs` | `AppError`: every command returns `AppResult<T>`; the frontend receives `{ message }` in pt-BR. |
 | `src-tauri/src/db.rs` | `Database` (managed Tauri state, opened at startup at `<app data dir>/gabaritei.sqlite`), `with`/`transaction` helpers, JSON settings helpers, migration runner. |
+| `src-tauri/src/paths.rs` | `AppPaths` (managed state): the app data folder, database file and `images/` folder. |
 | `src-tauri/migrations/` | SQL migrations, numbered `NNNN_name.sql`. Each one is listed in `MIGRATIONS` in `db.rs`; `PRAGMA user_version` records how many have run. |
 | `src/` | Solid.js + TypeScript + Vite frontend. Renders state and sends commands; holds no business rules. |
 | `src/api.ts` | The only place that calls `invoke`. One function per command. |
@@ -102,6 +103,7 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
 - Every domain rule gets unit tests. The legacy test names in `docs/legacy-analysis.md` and the legacy repo make a good checklist of behaviors to port.
 - Before opening a PR, run Rust tests, clippy and fmt, plus frontend lint, typecheck and tests. Don't open a PR with failing checks.
+- The legacy migration has a test against the real bank, skipped by default because it needs a clone of the legacy repo: `LEGACY_CLONE=../Simulados-Concursos cargo test --manifest-path src-tauri/Cargo.toml real_legacy_bank -- --ignored --nocapture`. Run it when you touch `bank` identity or `migrate`.
 - CI (`.github/workflows/ci.yml`) runs the same checks on every PR and on pushes to `main`. It also fails if `src/bindings/` is out of date, so commit what `cargo test` regenerates.
 - UI changes: add a component test where behavior matters. No-spoiler rendering always needs one.
 

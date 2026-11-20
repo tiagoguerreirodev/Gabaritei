@@ -164,3 +164,11 @@ button {
   color: var(--danger);
   white-space: pre-line;
 }
+
+.question-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1rem 0;
+  border-radius: var(--radius);
+}

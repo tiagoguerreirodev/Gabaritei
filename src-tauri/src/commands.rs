@@ -3,12 +3,14 @@
 //! Every command must also be added to [`crate::register`] and wrapped in `src/api.ts`.
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, Runtime, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_dialog::DialogExt;
 use ts_rs::TS;
 
 use crate::ai::agent::Agent;
 use crate::ai::discovery::{self, CliStatus};
+use crate::ai::generate::{self, GenerateRequest};
+use crate::ai::jobs::{GenerationManager, GenerationStatus};
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, RemNoteTest};
 use crate::attempts::{self, AttemptView, SessionStart};
@@ -273,6 +275,50 @@ pub fn remnote_test(
     settings::remnote_test(&settings, &secrets)
 }
 
+/// Name of the window event that carries every [`GenerationStatus`] change.
+pub const GENERATION_EVENT: &str = "generation-status";
+
+/// Starts a generation in the background. Fails at once if the form is invalid or another
+/// generation is running. Progress and the result arrive as [`GENERATION_EVENT`] events.
+#[tauri::command]
+pub fn generation_start<R: Runtime>(
+    app: AppHandle<R>,
+    manager: State<'_, GenerationManager>,
+    mut request: GenerateRequest,
+) -> AppResult<()> {
+    request.validate()?;
+    let worker = app.clone();
+    manager.start(
+        move |cancel, progress| {
+            let db = worker.state::<Database>();
+            let secrets = worker.state::<Secrets>();
+            let draft = generate::generate_draft(&db, &secrets, request, cancel, progress)?;
+            Ok(draft.id)
+        },
+        move |status| {
+            let _ = app.emit(GENERATION_EVENT, status);
+        },
+    )
+}
+
+/// Stops the running generation. Returns whether one was running.
+#[tauri::command]
+pub fn generation_cancel(manager: State<'_, GenerationManager>) -> bool {
+    manager.cancel()
+}
+
+/// What the generation is doing now, or how the last one ended.
+#[tauri::command]
+pub fn generation_status(manager: State<'_, GenerationManager>) -> GenerationStatus {
+    manager.status()
+}
+
+/// Forgets how the last generation ended.
+#[tauri::command]
+pub fn generation_dismiss(manager: State<'_, GenerationManager>) {
+    manager.dismiss();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,6 +350,7 @@ mod tests {
                 .expect("mock app builds");
             app.manage(db);
             app.manage(Secrets::memory());
+            app.manage(GenerationManager::default());
             let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
                 .build()
                 .expect("mock webview builds");
@@ -645,6 +692,83 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("Informe o modelo")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_generation_runs_in_the_background_and_ends_with_a_draft() {
+        let dir = tempfile::tempdir().unwrap();
+        let answer = json!({"questions": [{
+            "id": "q1", "type": "boolean", "stem": "A crase é obrigatória antes de verbos.",
+            "options": [{"id": "c", "text": "Certo"}, {"id": "e", "text": "Errado"}],
+            "answerId": "e", "explanation": "Não se usa crase antes de verbo.", "refs": []
+        }], "notes": []});
+        std::fs::write(dir.path().join("answer.json"), answer.to_string()).unwrap();
+        let cli = crate::ai::runner::tests::write_script(
+            dir.path(),
+            "codex",
+            &format!(
+                "out=\"\"\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) out=\"$2\"; shift;; esac; shift; done\ncat >/dev/null\ncp '{}' \"$out\"",
+                dir.path().join("answer.json").display()
+            ),
+        );
+        let app = MockApp::new(Database::open_in_memory().unwrap());
+        let mut settings = app.call("ai_settings", json!({})).unwrap();
+        settings["cliPaths"]["codex"] = json!(cli.to_string_lossy());
+        let input = json!({
+            "cliPaths": settings["cliPaths"], "roles": settings["roles"], "remnote": settings["remnote"],
+        });
+        app.call("save_ai_settings", json!({ "input": input }))
+            .unwrap();
+
+        let request = json!({
+            "topic": { "area": "Português", "matter": "Gramática", "topic": "Crase" },
+            "count": 1, "board": null, "format": "boolean", "instructions": null,
+            "sources": { "remnote": false, "web": false, "attachments": [] },
+            "generator": null, "checker": null,
+        });
+        app.call("generation_start", json!({ "request": request }))
+            .expect("starts");
+
+        let mut status = json!(null);
+        for _ in 0..200 {
+            status = app.call("generation_status", json!({})).unwrap();
+            if status["running"] == json!(false) && !status["outcome"].is_null() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert_eq!(status["outcome"]["kind"], json!("draft"), "{status}");
+        assert!(status["outcome"]["draftId"].as_str().unwrap().len() > 8);
+        // The status carries labels and an ID, never question content.
+        assert!(!status.to_string().contains("crase"));
+        app.call("generation_dismiss", json!({})).unwrap();
+        assert_eq!(
+            app.call("generation_status", json!({})).unwrap()["outcome"],
+            json!(null)
+        );
+    }
+
+    #[test]
+    fn an_invalid_generation_form_is_refused_before_anything_starts() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
+        let request = json!({
+            "topic": { "area": "Direito", "matter": "", "topic": "Atos" },
+            "count": 5, "board": null, "format": null, "instructions": null,
+            "sources": { "remnote": false, "web": false, "attachments": [] },
+            "generator": null, "checker": null,
+        });
+        let error = app
+            .call("generation_start", json!({ "request": request }))
+            .expect_err("a blank matter is refused");
+        assert!(error["message"].as_str().unwrap().contains("matéria"));
+        let status = app.call("generation_status", json!({})).unwrap();
+        assert_eq!(status["running"], json!(false));
+        assert_eq!(status["outcome"], json!(null));
+        assert_eq!(
+            app.call("generation_cancel", json!({})).unwrap(),
+            json!(false)
         );
     }
 

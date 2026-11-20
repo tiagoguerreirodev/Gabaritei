@@ -11,6 +11,7 @@ use std::collections::HashSet;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use super::identity::{fingerprint, js_trim, option_id};
 
@@ -33,8 +34,9 @@ pub const MAX_MATTER: usize = 250;
 pub const MAX_TOPIC: usize = 500;
 pub const MAX_IMAGE_ALT: usize = 1_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(export)]
 /// `multiple`: five options, one correct. `boolean`: Certo/Errado.
 pub enum QuestionType {
     Multiple,
@@ -66,7 +68,8 @@ pub struct QuestionOption {
 }
 
 /// Area › matter › topic.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct TopicPath {
     pub area: String,
     pub matter: String,

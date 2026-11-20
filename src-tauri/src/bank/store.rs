@@ -206,6 +206,24 @@ pub fn import_questions(
     apply_import(conn, &plan, now)
 }
 
+/// The stems of every question under exactly this topic, oldest first. The generator gets them
+/// so it avoids near-duplicates (spec §2 decision 9).
+pub fn topic_stems(conn: &Connection, path: &TopicPath) -> AppResult<Vec<String>> {
+    let mut statement = conn.prepare(
+        "SELECT q.stem FROM questions q
+         JOIN question_topics qt ON qt.question_id = q.id
+         JOIN topics t ON t.id = qt.topic_id
+         WHERE t.area = ?1 AND t.matter = ?2 AND t.topic = ?3
+         ORDER BY q.created_at, q.id",
+    )?;
+    let stems = statement
+        .query_map(params![path.area, path.matter, path.topic], |row| {
+            row.get(0)
+        })?
+        .collect::<Result<Vec<String>, _>>()?;
+    Ok(stems)
+}
+
 /// Returns the topic's ID, creating it if needed.
 pub fn upsert_topic(conn: &Connection, path: &TopicPath) -> AppResult<i64> {
     conn.execute(

@@ -4,6 +4,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Toaster, dismissToast } from "../../components/toasts";
 import DataFileSection from "./DataFileSection";
+import { createBusy } from "./busy";
 
 function backend(results: { export?: boolean; import?: boolean | { message: string } } = {}) {
   const calls: string[] = [];
@@ -24,7 +25,7 @@ function backend(results: { export?: boolean; import?: boolean | { message: stri
 const view = (onImported?: () => void) =>
   render(() => (
     <>
-      <DataFileSection onImported={onImported} />
+      <DataFileSection busy={createBusy()} onImported={onImported} />
       <Toaster />
     </>
   ));

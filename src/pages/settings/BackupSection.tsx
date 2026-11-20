@@ -6,6 +6,7 @@ import type { LeftBehind } from "../../bindings/LeftBehind";
 import Modal from "../../components/Modal";
 import { ErrorState, Loading } from "../../components/states";
 import { showError, showToast } from "../../components/toasts";
+import type { Busy } from "./busy";
 
 const dateTime = (iso: string) =>
   new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
@@ -15,30 +16,29 @@ const megabytes = (bytes: number) =>
 
 /** Backups of the study data: the folder, a backup now, and restore. */
 export default function BackupSection(props: {
+  /** Shared with the data-file section, so only one action runs at a time. */
+  busy: Busy;
   /** Called after a restore replaced the data, so the app shows the restored state. */
   onRestored?: () => void;
 }) {
-  // Read once: the callback is a plain function, not something that changes.
+  // Read once: these are plain objects and functions, not something that changes.
   // eslint-disable-next-line solid/reactivity
-  const onRestored = props.onRestored;
+  const { busy, onRestored } = props;
   const [status, { mutate, refetch }] = createResource(() => api.backupStatus());
-  const [busy, setBusy] = createSignal(false);
   const [restoring, setRestoring] = createSignal<BackupInfo | null>(null);
   // What the last folder change left in the old folder; kept until dismissed or changed again.
   const [leftBehind, setLeftBehind] = createSignal<LeftBehind | null>(null);
 
-  const run = async (work: () => Promise<void>) => {
-    setBusy(true);
-    try {
-      await work();
-    } catch (error) {
-      showError(error);
-      // The failure may have been recorded (a backup that failed), so show it.
-      void refetch();
-    } finally {
-      setBusy(false);
-    }
-  };
+  const run = (work: () => Promise<void>) =>
+    busy.run(async () => {
+      try {
+        await work();
+      } catch (error) {
+        showError(error);
+        // The failure may have been recorded (a backup that failed), so show it.
+        void refetch();
+      }
+    });
 
   const backupNow = () =>
     run(async () => {
@@ -116,7 +116,7 @@ export default function BackupSection(props: {
           {(current) => (
             <Content
               status={current()}
-              busy={busy()}
+              busy={busy.active()}
               onBackupNow={() => void backupNow()}
               onChooseFolder={() => void chooseFolder()}
               onUseDefaultFolder={() => void useDefaultFolder()}
@@ -129,19 +129,19 @@ export default function BackupSection(props: {
         {(backup) => (
           <Modal
             title="Restaurar este backup?"
-            onClose={() => setRestoring(null)}
+            onClose={() => !busy.active() && setRestoring(null)}
             footer={
               <>
-                <button type="button" onClick={() => setRestoring(null)}>
+                <button type="button" disabled={busy.active()} onClick={() => setRestoring(null)}>
                   Cancelar
                 </button>
                 <button
                   type="button"
                   class="primary danger"
-                  disabled={busy()}
+                  disabled={busy.active()}
                   onClick={() => void restore(backup())}
                 >
-                  {busy() ? "Restaurando…" : "Restaurar"}
+                  {busy.active() ? "Restaurando…" : "Restaurar"}
                 </button>
               </>
             }

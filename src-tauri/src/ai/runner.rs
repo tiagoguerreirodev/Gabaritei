@@ -307,14 +307,6 @@ impl Workdir {
         )
         .map_err(workspace)?;
 
-        let instructions = if spec.agent == Agent::Claude && !spec.instructions.is_empty() {
-            let path = dir.path().join("instrucoes.md");
-            std::fs::write(&path, &spec.instructions).map_err(workspace)?;
-            Some(path)
-        } else {
-            None
-        };
-
         if !spec.attachments.is_empty() {
             let folder = dir.path().join("anexos");
             std::fs::create_dir(&folder).map_err(workspace)?;
@@ -330,18 +322,38 @@ impl Workdir {
             }
         }
 
-        let (config_dir, mcp_config) = match (&spec.agent, &spec.remnote) {
-            (Agent::Claude, Some(RemNoteAccess::Server { url, token, .. })) => {
-                let folder = tempfile::Builder::new()
+        // Files for the CLI itself live outside the run folder, so the agent's file tools
+        // (scoped to it) can't list or cite them. Holds the RemNote token and Claude's
+        // role instructions.
+        let claude_files = spec.agent == Agent::Claude
+            && (!spec.instructions.is_empty()
+                || matches!(spec.remnote, Some(RemNoteAccess::Server { .. })));
+        let config_dir = if claude_files {
+            Some(
+                tempfile::Builder::new()
                     .prefix("gabaritei-config-")
                     .tempdir()
-                    .map_err(workspace)?;
+                    .map_err(workspace)?,
+            )
+        } else {
+            None
+        };
+        let mut mcp_config = None;
+        let mut instructions = None;
+        if let Some(folder) = &config_dir {
+            if let (Agent::Claude, Some(RemNoteAccess::Server { url, token, .. })) =
+                (&spec.agent, &spec.remnote)
+            {
                 let path = folder.path().join("mcp.json");
                 write_private(&path, &claude::mcp_config(url, token)).map_err(workspace)?;
-                (Some(folder), Some(path))
+                mcp_config = Some(path);
             }
-            _ => (None, None),
-        };
+            if !spec.instructions.is_empty() {
+                let path = folder.path().join("instrucoes.md");
+                std::fs::write(&path, &spec.instructions).map_err(workspace)?;
+                instructions = Some(path);
+            }
+        }
 
         Ok(Self {
             _config_dir: config_dir,

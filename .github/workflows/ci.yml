@@ -114,6 +114,9 @@ jobs:
           GABARITEI_TEST_MANIFEST: "1"
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
+      - name: cargo clippy (lints the cfg(windows) code)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib --tests -- -D warnings
+
   frontend:
     name: Frontend (lint, typecheck, test)
     runs-on: ubuntu-latest

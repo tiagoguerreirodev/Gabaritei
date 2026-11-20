@@ -635,6 +635,8 @@ mod arguments {
             &file.to_string_lossy()
         ));
         assert_eq!(std::fs::read_to_string(file).unwrap(), job.instructions);
+        // Outside the run folder, so the agent's file tools can't list or cite it.
+        assert!(!file.starts_with(work.path()));
         assert!(!args.iter().any(|a| a.contains("linha um")));
         assert!(!args.iter().any(|a| a.contains(['\n', '\r'])));
         assert!(args.iter().map(String::len).sum::<usize>() < 4_000);
@@ -680,13 +682,39 @@ mod windows_cmd {
             .unwrap()
     }
 
+    /// Polls (a slow runner may need a moment) until no `ping.exe` matches any marker.
+    fn gone_within_5s(markers: &[&str]) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if markers.iter().all(|m| processes_with(m) == 0) {
+                return true;
+            }
+            if Instant::now() > deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
     #[test]
     fn a_claude_cmd_shim_accepts_the_schema_and_multi_line_instructions() {
         let dir = tempfile::tempdir().unwrap();
         let cli = write_cmd(
             dir.path(),
             "claude",
+            // Fails unless the schema arrives intact and the instructions file exists.
             r#"more >nul
+set "schema="
+set "file="
+:next
+if "%~1"=="" goto done
+if "%~1"=="--json-schema" set "schema=%~2"
+if "%~1"=="--append-system-prompt-file" set "file=%~2"
+shift
+goto next
+:done
+if not exist "%file%" exit /b 7
+if not "%schema:~0,1%"=="{" exit /b 8
 echo {"type":"result","subtype":"success","is_error":false,"structured_output":{"answer":"pong"}}"#,
         );
         let mut job = spec(Agent::Claude, cli);
@@ -721,7 +749,6 @@ echo {"type":"turn.completed","usage":{}}"#,
     #[test]
     fn timeout_ends_the_whole_process_tree() {
         let dir = tempfile::tempdir().unwrap();
-        let marker = "-n 4242";
         let cli = write_cmd(
             dir.path(),
             "codex",
@@ -758,7 +785,6 @@ echo {"type":"turn.completed","usage":{}}"#,
         let started = Instant::now();
         assert_eq!(run_job(&job, &token, &mut |_| {}), Err(RunError::Cancelled));
         assert!(started.elapsed() < Duration::from_secs(15));
-        std::thread::sleep(Duration::from_millis(500));
-        assert_eq!(processes_with("-n 4244"), 0);
+        assert!(gone_within_5s(&["-n 4244"]), "the process outlived the run");
     }
 }

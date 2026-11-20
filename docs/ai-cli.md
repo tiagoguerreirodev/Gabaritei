@@ -34,7 +34,7 @@ claude -p --output-format stream-json --verbose --json-schema '<schema>'
   --allowedTools "Read(./**),Grep(./**),Glob(./**)[,WebSearch,WebFetch][,mcp__remnote__<tool>...]"
   --permission-mode dontAsk --no-session-persistence --disable-slash-commands
   [--mcp-config mcp.json]
-  [--append-system-prompt-file <run folder>/instrucoes.md]  # role instructions; prompt on stdin
+  [--append-system-prompt-file <config folder>/instrucoes.md]  # role instructions; prompt on stdin
 ```
 
 - **Structured output:** the last `{"type":"result"}` event has `structured_output` (the answer),
@@ -120,7 +120,7 @@ Checked by the `rust-test-windows` CI job (`windows-latest`) with batch-file fak
 - **Long, multi-line text never travels as an argument.** Rust refuses newlines in the arguments of
   batch files and `cmd.exe` caps a command line at 8191 characters. The role instructions went in
   a long `--append-system-prompt` argument, so they now go through
-  `--append-system-prompt-file <run folder>/instrucoes.md` (verified with the real `claude`).
+  `--append-system-prompt-file <config folder>/instrucoes.md` (a temp folder outside the run folder, so the agent's file tools can't list it) (verified with the real `claude` 2.1.329: the file is honored in `-p` mode).
   The prompt is on stdin; the schema is the only large argument left (compact JSON, no newlines;
   a test keeps all arguments under 4,000 characters in total).
 - **Timeout and cancel end the whole tree.** `taskkill /PID <pid> /T /F` removes a child started

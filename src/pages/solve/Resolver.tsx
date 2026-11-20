@@ -133,6 +133,33 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     });
   };
 
+  /** Asks the AI for the missing explanation and merges only that question's answer into the
+   * view, so answers given in the meantime aren't undone. */
+  const explain = async () => {
+    const q = current();
+    const latest = view();
+    if (!q?.reveal || !latest) return;
+    const next = await api.explainAsk(latest.id, q.position);
+    const reveal = next.questions.find((item) => item.position === q.position)?.reveal;
+    if (!reveal) return;
+    setView((now) =>
+      now
+        ? {
+            ...now,
+            questions: now.questions.map((item) =>
+              item.position === q.position && item.reveal
+                ? {
+                    ...item,
+                    reveal: { ...item.reveal, explanation: reveal.explanation, refs: reveal.refs },
+                  }
+                : item,
+            ),
+          }
+        : now,
+    );
+    showToast("Explicação adicionada à questão.");
+  };
+
   const dismissRecheck = () => {
     const q = current();
     const latest = view();
@@ -253,6 +280,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                   onEliminate={eliminate}
                   onFlag={flag}
                   onAnnul={annul}
+                  onExplain={explain}
                   onRecheck={recheck}
                   onRecheckApply={applyRecheck}
                   onRecheckDismiss={dismissRecheck}

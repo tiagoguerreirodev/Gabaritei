@@ -37,11 +37,14 @@ const boolean = (position: number): ResponseView => ({
 
 /** Keys and explanations the fake backend only hands out when a question is revealed. */
 const keys: Record<string, string> = { q0: "q0-o1", q1: "q1-e", q2: "q2-o4" };
+/** Explanations the fake AI wrote (`q2` starts without one). */
+const explanations: Record<string, string> = {};
 const revealOf = (q: ResponseView): Reveal => {
   const answerId = keys[q.questionId]!;
   return {
     answerId,
-    explanation: `Explicação secreta de ${q.questionId}`,
+    explanation:
+      q.questionId === "q2" ? (explanations.q2 ?? "") : `Explicação secreta de ${q.questionId}`,
     refs: ["Lei 8.112/1990, art. 5º"],
     annulled: false,
     disputed: q.questionId === "q1",
@@ -140,6 +143,9 @@ function backend(mode: FeedbackMode) {
             reveal: { ...reveal, annulled, outcome: annulled ? "annulled" : reveal.outcome },
           };
         });
+      case "explain_ask":
+        explanations[view.questions[position]!.questionId] = "Explicação escrita pela IA.";
+        return update(position, (q) => ({ ...q, reveal: revealOf(q) }));
       case "recheck_ask":
         return recheckAnswer;
       case "recheck_apply":
@@ -278,6 +284,27 @@ describe("Resolver", () => {
       reasoning: "O art. 37 estabelece outra regra.",
       sources: ["CF/88, art. 37"],
     };
+  });
+
+  it("offers Explicar only on a revealed question without an explanation, and fills it in", async () => {
+    const { user, calls } = await open("study");
+    // Question 1 has an explanation: no button, revealed or not.
+    expect(screen.queryByRole("button", { name: "Explicar" })).not.toBeInTheDocument();
+    await user.click(option("A"));
+    await screen.findByRole("region", { name: "Gabarito e explicação" });
+    expect(screen.queryByRole("button", { name: "Explicar" })).not.toBeInTheDocument();
+
+    // Question 3 has none, but it is hidden until answered.
+    await user.keyboard("{ArrowRight}{ArrowRight}");
+    await screen.findByRole("article", { name: "Questão 3 de 3" });
+    expect(screen.queryByRole("button", { name: "Explicar" })).not.toBeInTheDocument();
+
+    await user.click(option("A"));
+    await user.click(await screen.findByRole("button", { name: "Explicar" }));
+    expect(await screen.findByText("Explicação escrita pela IA.")).toBeVisible();
+    expect(calls.filter((c) => c.command === "explain_ask")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Explicar" })).not.toBeInTheDocument();
+    delete explanations.q2;
   });
 
   it("keeps everything hidden in Simulado until finishing, then shows the result", async () => {

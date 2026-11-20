@@ -266,3 +266,25 @@ deixe vazio se não tiver certeza).\n\n--- Questão ---\n{}Gabarito atual: ({})\
         question.refs.join("; ")
     )
 }
+
+/// System-level instructions for the explain role.
+pub fn explain_instructions() -> String {
+    format!(
+        "Você é um professor experiente de concursos públicos brasileiros. Responda em português \
+do Brasil. {DATA_RULE} Responda somente com o JSON pedido, no esquema fornecido."
+    )
+}
+
+/// The task for the explain role: write the missing explanation for the given key.
+pub fn explain_prompt(question: &crate::bank::Question) -> String {
+    format!(
+        "EXPLICAÇÃO DE QUESTÃO\n\nEscreva o comentário desta questão: devolva `explanation` (por \
+que o gabarito está certo e, nas de múltipla escolha, por que cada uma das outras está errada, de \
+forma clara e objetiva) e `refs` (fontes verificáveis: lei e artigo, página oficial, obra; NUNCA \
+invente uma fonte, e deixe vazio se não tiver certeza). O gabarito é o informado abaixo; se você \
+achar que ele está errado, diga isso na explicação em vez de mudá-lo.\n\n--- Questão ---\n{}Gabarito: \
+({})\n",
+        render_question(question),
+        question.answer_id
+    )
+}

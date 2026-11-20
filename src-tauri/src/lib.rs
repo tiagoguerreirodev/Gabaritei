@@ -73,6 +73,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::recheck_ask,
             commands::recheck_apply,
             commands::recheck_dismiss,
+            commands::explain_ask,
             commands::ai_request_cancel,
             commands::generation_cancel,
             commands::generation_status,

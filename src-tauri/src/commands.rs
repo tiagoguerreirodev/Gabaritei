@@ -10,6 +10,7 @@ use ts_rs::TS;
 use crate::ai::agent::Agent;
 use crate::ai::blind_check;
 use crate::ai::discovery::{self, CliStatus};
+use crate::ai::explain;
 use crate::ai::generate::GenerateRequest;
 use crate::ai::jobs::{GenerationManager, GenerationStatus};
 use crate::ai::ondemand::OnDemand;
@@ -420,6 +421,24 @@ pub fn recheck_dismiss(
     db.with(|conn| recheck::dismiss(conn, &jobs, &attempt_id, position))
 }
 
+/// Writes the missing explanation of a revealed question with the AI and returns the attempt.
+/// Waits for the AI.
+#[tauri::command]
+pub async fn explain_ask<R: Runtime>(
+    app: AppHandle<R>,
+    attempt_id: String,
+    position: u32,
+) -> AppResult<AttemptView> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let secrets = app.state::<Secrets>();
+        let jobs = app.state::<OnDemand>();
+        explain::ask_explain(&db, &secrets, &jobs, &attempt_id, position)
+    })
+    .await
+    .map_err(|error| AppError::Internal(error.to_string()))?
+}
+
 /// Cancels the on-demand AI request that is running (re-check or explain).
 #[tauri::command]
 pub fn ai_request_cancel(jobs: State<'_, OnDemand>) -> bool {
@@ -707,7 +726,12 @@ mod tests {
         let app = MockApp::new(solving_db());
         let view = start(&app, "study");
         let id = view["id"].clone();
-        for command in ["recheck_ask", "recheck_apply", "recheck_dismiss"] {
+        for command in [
+            "recheck_ask",
+            "recheck_apply",
+            "recheck_dismiss",
+            "explain_ask",
+        ] {
             let early = app.call(command, json!({ "attemptId": id, "position": 0 }));
             assert_eq!(
                 early,

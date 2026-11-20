@@ -123,7 +123,7 @@ mod pipeline {
         let stored = db.with(|conn| draft::load(conn, &draft.id)).unwrap();
         assert_eq!(stored, draft);
         let check = db.with(|conn| check_draft(conn, &stored)).unwrap();
-        assert_eq!(check.problems, Vec::<String>::new());
+        assert_eq!(check.problems, Vec::new());
         assert_eq!((check.multiple, check.boolean, check.duplicates), (1, 1, 0));
     }
 
@@ -207,9 +207,46 @@ mod pipeline {
         let draft = run(&db, &secrets, request(1)).unwrap();
         let check = db.with(|conn| check_draft(conn, &draft)).unwrap();
         assert!(
-            check.problems.iter().any(|p| p.contains("5 alternativas")),
+            check
+                .problems
+                .iter()
+                .any(|p| p.message.contains("5 alternativas")),
             "{:?}",
             check.problems
+        );
+    }
+
+    #[test]
+    fn problems_never_repeat_text_the_ai_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        // Quotes inside the option text used to survive the old quote-stripping.
+        let mut repeated = multiple("q1", "Enunciado SEGREDO-ENUNCIADO?");
+        repeated["options"][1]["text"] = json!("Segundo o \"princípio\" SEGREDO-OPCAO");
+        repeated["options"][2]["text"] = json!("Segundo o \"princípio\" SEGREDO-OPCAO");
+        repeated["options"][3]["id"] = json!("SEGREDO-ID");
+        repeated["options"][4]["id"] = json!("SEGREDO-ID");
+        let cli = fake_codex(dir.path(), &package(vec![repeated]));
+        let (db, secrets) = setup(&cli);
+        let draft = run(&db, &secrets, request(1)).unwrap();
+        let check = db.with(|conn| check_draft(conn, &draft)).unwrap();
+        assert!(!check.problems.is_empty());
+        let shown = format!("{:?}", check.problems);
+        for secret in ["SEGREDO", "princípio"] {
+            assert!(!shown.contains(secret), "{secret} leaked: {shown}");
+        }
+        assert!(
+            check
+                .problems
+                .iter()
+                .any(|p| p.message == "Há alternativas com o mesmo texto.")
+        );
+    }
+
+    #[test]
+    fn unknown_validation_messages_become_a_generic_one() {
+        assert_eq!(
+            fixed_message("Algo novo com \"texto da questão\""),
+            "A questão não passou na validação."
         );
     }
 
@@ -225,7 +262,13 @@ mod pipeline {
         only_boolean.format = Some(QuestionType::Boolean);
         let draft = run(&db, &secrets, only_boolean).unwrap();
         let check = db.with(|conn| check_draft(conn, &draft)).unwrap();
-        assert!(check.problems.iter().any(|p| p.contains("só Certo/Errado")));
+        assert!(
+            check
+                .problems
+                .iter()
+                .any(|p| p.position == Some(1) && p.message.contains("só Certo/Errado"))
+        );
+        assert!(check.is_blocked(0) && !check.is_blocked(1));
     }
 
     #[test]

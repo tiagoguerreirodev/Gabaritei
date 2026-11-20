@@ -13,6 +13,7 @@ pub mod draft;
 pub mod generate;
 pub mod jobs;
 pub mod prompts;
+pub mod review;
 pub mod roles;
 pub mod runner;
 pub mod secrets;

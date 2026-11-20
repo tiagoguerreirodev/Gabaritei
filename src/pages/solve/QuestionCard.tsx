@@ -117,6 +117,12 @@ export default function QuestionCard(props: {
       <Show when={reveal()}>
         {(revealed) => (
           <section class={`reveal reveal-${revealed().outcome}`} aria-label="Gabarito e explicação">
+            <Show when={revealed().disputed}>
+              <p class="disputed-badge" role="note">
+                Gabarito contestado na conferência: a IA conferente discordou da resposta. Se algo
+                parecer errado, use “Pedir revisão à IA” ou “Anular questão”.
+              </p>
+            </Show>
             <p class="reveal-outcome">
               <strong>{outcomeText[revealed().outcome]}</strong>
               <Show when={revealed().outcome !== "annulled" && keyLetter()}>

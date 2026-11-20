@@ -43,6 +43,7 @@ const revealOf = (q: ResponseView): Reveal => {
     explanation: `Explicação secreta de ${q.questionId}`,
     refs: ["Lei 8.112/1990, art. 5º"],
     annulled: false,
+    disputed: q.questionId === "q1",
     outcome: q.choice === null ? "blank" : q.choice === answerId ? "correct" : "wrong",
   };
 };
@@ -180,6 +181,26 @@ describe("Resolver", () => {
     await user.keyboard("{ArrowRight}");
     await screen.findByRole("article", { name: "Questão 2 de 3" });
     expectNoKey();
+  });
+
+  it("flags a disputed generated question only after it is revealed", async () => {
+    const { user } = await open("study");
+    // Question 2 (q1) was disputed in the blind check.
+    await user.keyboard("{ArrowRight}");
+    await screen.findByRole("article", { name: "Questão 2 de 3" });
+    expect(screen.queryByText(/Gabarito contestado/)).not.toBeInTheDocument();
+
+    // Question 2 is Certo/Errado.
+    await user.click(option("C"));
+    const reveal = await screen.findByRole("region", { name: "Gabarito e explicação" });
+    expect(reveal).toHaveTextContent("Gabarito contestado na conferência");
+
+    // A question the checker agreed with has no badge.
+    await user.keyboard("{ArrowLeft}");
+    await screen.findByRole("article", { name: "Questão 1 de 3" });
+    await user.click(option("A"));
+    const other = await screen.findByRole("region", { name: "Gabarito e explicação" });
+    expect(other).not.toHaveTextContent("Gabarito contestado");
   });
 
   it("keeps everything hidden in Simulado until finishing, then shows the result", async () => {

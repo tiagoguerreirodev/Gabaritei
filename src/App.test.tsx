@@ -21,6 +21,9 @@ describe("App shell", () => {
       if (command === "home") return emptyHome;
       if (command === "performance") return emptyPerformance;
       if (command === "topics_tree") return { areas: [], questions: 0 };
+      if (command === "generation_status")
+        return { running: false, startedAt: null, progress: null, outcome: null };
+      if (command === "drafts_waiting") return [];
       if (command === "collections")
         return { items: [], total: 0, page: 0, pageSize: 20, contests: [], boards: [] };
       throw new Error(`Unexpected command: ${command}`);
@@ -55,10 +58,10 @@ describe("App shell", () => {
     const user = userEvent.setup();
     render(() => <App />);
 
-    // Revisar pacote opens from Gerar; Resolver will open from "Iniciar" (#9).
-    await user.click(screen.getByRole("link", { name: "Gerar" }));
-    await user.click(screen.getByRole("link", { name: "Abrir a tela de revisão de pacote" }));
+    // Revisar pacote opens from the "pacote pronto" notice and the waiting list.
+    window.location.hash = "#/revisar-pacote";
     expect(await screen.findByRole("heading", { level: 1, name: "Revisar pacote" })).toBeVisible();
+    await user.click(screen.getByRole("link", { name: "Gerar" }));
 
     window.location.hash = "#/resolver";
     expect(await screen.findByRole("heading", { level: 1, name: "Resolver" })).toBeVisible();

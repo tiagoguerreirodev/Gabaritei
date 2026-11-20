@@ -1,7 +1,9 @@
 import { A } from "@solidjs/router";
-import { For, Show, createResource, type ParentProps } from "solid-js";
+import { For, Show, createResource, onMount, type ParentProps } from "solid-js";
 import { api } from "../api";
 import { routes, type AppRoute } from "../routes";
+import { watchGeneration } from "../generation";
+import GenerationBanner from "./GenerationBanner";
 import { Toaster } from "./toasts";
 
 function MenuLink(props: { route: AppRoute }) {
@@ -14,6 +16,7 @@ function MenuLink(props: { route: AppRoute }) {
 
 export default function Layout(props: ParentProps) {
   const [info] = createResource(() => api.appInfo());
+  onMount(watchGeneration);
 
   return (
     <div class="shell">
@@ -39,7 +42,10 @@ export default function Layout(props: ParentProps) {
           </Show>
         </div>
       </aside>
-      <main class="content">{props.children}</main>
+      <main class="content">
+        <GenerationBanner />
+        {props.children}
+      </main>
       <Toaster />
     </div>
   );

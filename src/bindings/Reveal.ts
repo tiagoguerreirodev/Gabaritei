@@ -4,4 +4,8 @@ import type { Outcome } from "./Outcome";
 /**
  * Key, explanation and result of a revealed question.
  */
-export type Reveal = { answerId: string, explanation: string, refs: Array<string>, annulled: boolean, outcome: Outcome, };
+export type Reveal = { answerId: string, explanation: string, refs: Array<string>, annulled: boolean, outcome: Outcome, 
+/**
+ * The blind check still disagreed with the key when this generated question was imported.
+ */
+disputed: boolean, };

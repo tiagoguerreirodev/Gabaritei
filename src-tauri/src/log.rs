@@ -62,7 +62,11 @@ fn append(dir: &Path, at: &str, message: &str, max_bytes: u64) -> std::io::Resul
     fs::create_dir_all(dir)?;
     let file = dir.join(FILE_NAME);
     if fs::metadata(&file).is_ok_and(|meta| meta.len() >= max_bytes) {
-        fs::rename(&file, dir.join(OLD_FILE_NAME))?;
+        // If the old log can't be replaced (a viewer has it open on Windows, say), drop the full
+        // one instead: a log that stays full would stop recording for good.
+        if fs::rename(&file, dir.join(OLD_FILE_NAME)).is_err() {
+            fs::remove_file(&file)?;
+        }
     }
     let mut out = OpenOptions::new().create(true).append(true).open(file)?;
     writeln!(out, "{at} {}", one_line(message))
@@ -100,6 +104,21 @@ mod tests {
         assert!(current.contains("message 5"));
         assert!(!old.contains("message 0"), "the oldest log is dropped");
         assert!(fs::metadata(dir.path().join(FILE_NAME)).unwrap().len() < 40);
+    }
+
+    #[test]
+    fn a_full_log_is_dropped_when_the_old_one_cannot_be_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        append(dir.path(), "t", "message 0", 5).unwrap();
+        // A folder where the old log goes: the rename fails.
+        fs::create_dir(dir.path().join(OLD_FILE_NAME)).unwrap();
+        fs::write(dir.path().join(OLD_FILE_NAME).join("keep"), b"x").unwrap();
+        append(dir.path(), "t", "message 1", 5).unwrap();
+        let current = fs::read_to_string(dir.path().join(FILE_NAME)).unwrap();
+        assert_eq!(
+            current, "t message 1\n",
+            "logging goes on after the failed rotation"
+        );
     }
 
     #[test]

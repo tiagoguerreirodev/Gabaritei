@@ -64,7 +64,7 @@ export default function Learning() {
                 <li class="stat-card">
                   <span class="stat-name">Caderno de erros</span>
                   <strong class="stat-value">{formatNumber(data().errors)}</strong>
-                  <span class="stat-hint muted">Último resultado errado</span>
+                  <span class="stat-hint muted">Última resposta errada</span>
                 </li>
               </ul>
 

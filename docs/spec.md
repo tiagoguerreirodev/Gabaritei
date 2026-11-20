@@ -105,7 +105,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 - **All attempts are kept** (drops `U-E1`).
 
 ### 3.5 Learning (*Erros e revisões*)
-- **Error notebook:** questions whose latest *answered* response is wrong (a later blank never hides an earlier wrong answer, as in §3.4). Blanks are optional: when included, a question whose latest result is blank is listed too.
+- **Error notebook:** questions whose latest *answered* response is wrong (a later blank never hides an earlier wrong answer, the same blank rule as §3.4); the list links to the attempt holding that wrong answer. Blanks are optional: when included, a question whose latest result is blank is listed too.
 - **Spaced repetition:** a full hit moves the interval along 1 → 3 → 7 → 14 → 30 → 60 days (the first hit is 1 day, as in the legacy app). A miss resets it to 1. A blank answer counts as a miss. Only finished attempts count, and annulled questions have no review.
 - **Derived state:** a review is recomputed from the question's answers against its current key, so key corrections and annulments apply to it, and it is rebuilt at startup.
 - **Practice sessions** are built from errors and due reviews: the reviews session takes due reviews first, then recent errors (1–100 questions).

@@ -588,3 +588,43 @@ fn scoring_in_sql_agrees_with_attempts_outcome() {
     assert_eq!(b.interval("q1"), Some(1));
     assert_eq!(b.errors(false).len(), 1);
 }
+
+#[test]
+fn a_wrong_then_blank_question_points_at_the_attempt_with_the_wrong_answer() {
+    let b = bank(&["q1"]);
+    let wrong_attempt = b.finished_attempt(D0, &[("q1", "o1")]);
+    b.answer(D1, &[("q1", "blank")]);
+    b.db.transaction(|tx| refresh_attempt(tx, &wrong_attempt))
+        .unwrap();
+    let ov = b.db.with(|c| overview(c, D1, false)).unwrap();
+    let item = ov.items.iter().find(|i| i.is_error).unwrap();
+    assert_eq!(item.last_attempt_id, wrong_attempt);
+    assert_eq!(item.last_answered_at, D0);
+}
+
+#[test]
+fn a_question_only_ever_left_blank_is_an_error_only_with_blanks() {
+    let b = bank(&["q1"]);
+    b.answer(D0, &[("q1", "blank")]);
+    assert!(b.errors(false).is_empty());
+    assert_eq!(b.errors(true).len(), 1);
+}
+
+#[test]
+fn a_key_correction_turns_an_earlier_wrong_answer_right_even_after_a_blank() {
+    let b = bank(&["q1"]);
+    b.answer(D0, &[("q1", "o1")]);
+    b.answer(D1, &[("q1", "blank")]);
+    assert_eq!(b.errors(false).len(), 1);
+    let wrong = b.option("q1", "o1").unwrap();
+    let q1 = b.id("q1");
+    b.db.with(|c| {
+        c.execute(
+            "UPDATE questions SET answer_id = ?1 WHERE id = ?2",
+            params![wrong, q1],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(b.errors(false).is_empty());
+}

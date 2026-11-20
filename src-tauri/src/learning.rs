@@ -147,7 +147,9 @@ struct Latest {
 
 /// The latest result of every non-annulled question that has one, newest first. `blank` is
 /// about the latest result; `wrong` is about the latest *answered* response, so a later blank
-/// never hides an earlier wrong answer (the same rule as the topic strength in Desempenho).
+/// never hides an earlier wrong answer (the same blank rule as the topic strength in
+/// Desempenho). When the question is wrong, `at` and `attempt_id` point at that wrong answer,
+/// so the page links to the attempt that shows it.
 fn latest_results(conn: &Connection) -> AppResult<Vec<Latest>> {
     let mut stmt = conn.prepare(
         "WITH base AS (
@@ -164,16 +166,19 @@ fn latest_results(conn: &Connection) -> AppResult<Vec<Latest>> {
            FROM base
          ),
          answered AS (
-           SELECT question_id, choice <> answer_id AS wrong, ROW_NUMBER() OVER (
+           SELECT question_id, attempt_id, at, choice <> answer_id AS wrong, ROW_NUMBER() OVER (
                     PARTITION BY question_id ORDER BY at DESC, attempt_id DESC, position DESC
                   ) AS rank
            FROM base WHERE choice IS NOT NULL
          )
-         SELECT l.question_id, l.at, l.attempt_id, l.choice IS NULL, COALESCE(w.wrong, 0)
+         SELECT l.question_id,
+                CASE WHEN w.wrong = 1 THEN w.at ELSE l.at END,
+                CASE WHEN w.wrong = 1 THEN w.attempt_id ELSE l.attempt_id END,
+                l.choice IS NULL, COALESCE(w.wrong, 0)
          FROM ranked l
          LEFT JOIN answered w ON w.question_id = l.question_id AND w.rank = 1
          WHERE l.rank = 1
-         ORDER BY l.at DESC, l.question_id",
+         ORDER BY 2 DESC, l.question_id",
     )?;
     let rows = stmt
         .query_map([], |r| {

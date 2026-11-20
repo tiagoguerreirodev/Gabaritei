@@ -5,8 +5,12 @@
  * (ts-rs). Add one function per Tauri command here; never call `invoke` elsewhere.
  */
 import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
+import type { Agent } from "./bindings/Agent";
+import type { AiSettings } from "./bindings/AiSettings";
+import type { AiSettingsInput } from "./bindings/AiSettingsInput";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { AttemptView } from "./bindings/AttemptView";
+import type { CliStatus } from "./bindings/CliStatus";
 import type { CollectionDetail } from "./bindings/CollectionDetail";
 import type { CollectionPage } from "./bindings/CollectionPage";
 import type { CollectionQuery } from "./bindings/CollectionQuery";
@@ -16,6 +20,7 @@ import type { LegacyImportOutcome } from "./bindings/LegacyImportOutcome";
 import type { LegacyImportStatus } from "./bindings/LegacyImportStatus";
 import type { Performance } from "./bindings/Performance";
 import type { PerformanceQuery } from "./bindings/PerformanceQuery";
+import type { RemNoteTest } from "./bindings/RemNoteTest";
 import type { SessionStart } from "./bindings/SessionStart";
 import type { TopicTree } from "./bindings/TopicTree";
 
@@ -87,4 +92,14 @@ export const api = {
     call<AttemptView>("unannul", { attemptId, position }),
   /** Deletes an unfinished attempt. */
   abandon: (attemptId: string) => call<null>("abandon", { attemptId }),
+  /** CLI paths, role configuration and RemNote (never the token). Writes defaults on first use. */
+  aiSettings: () => call<AiSettings>("ai_settings"),
+  /** Validates and saves the AI settings; returns them as saved. */
+  saveAiSettings: (input: AiSettingsInput) => call<AiSettings>("save_ai_settings", { input }),
+  /** Saves the RemNote token in the OS keychain (`null` or blank removes it). */
+  setRemnoteToken: (token: string | null) => call<boolean>("set_remnote_token", { token }),
+  /** Finds a CLI and reports its version and login state, using the saved path override. */
+  cliTest: (agent: Agent) => call<CliStatus>("cli_test", { agent }),
+  /** Checks the saved RemNote connection and lists the tools the server offers. */
+  remnoteTest: () => call<RemNoteTest>("remnote_test"),
 };

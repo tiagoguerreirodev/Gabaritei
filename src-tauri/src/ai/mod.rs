@@ -8,9 +8,13 @@ pub mod agent;
 mod claude;
 mod codex;
 pub mod discovery;
+pub mod roles;
 pub mod runner;
+pub mod secrets;
+pub mod settings;
 
 pub use agent::{Agent, Effort};
 pub use runner::{
-    CancelToken, JobOutput, JobSpec, Progress, ProgressKind, RemNoteAccess, RunError, run_job,
+    CancelToken, JobOutput, JobSpec, Progress, ProgressKind, RemNoteAccess, RunError,
+    is_valid_tool_name, is_write_like, run_job,
 };

@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use super::runner::{
     JobSpec, Parser, Plan, Progress, ProgressKind, RemNoteAccess, RunError, Workdir,
+    read_only_tools,
 };
 
 /// Environment variable that carries the RemNote token, so it never appears in arguments.
@@ -52,6 +53,7 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
     }
     let mut env = Vec::new();
     if let Some(RemNoteAccess::Server { url, token, tools }) = &spec.remnote
+        && let tools = read_only_tools(tools)
         && !tools.is_empty()
     {
         args.push("-c".into());
@@ -64,7 +66,7 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         args.push("-c".into());
         args.push(format!(
             "mcp_servers.remnote.enabled_tools={}",
-            serde_json::to_string(tools).expect("a list of strings serializes")
+            serde_json::to_string(&tools).expect("a list of strings serializes")
         ));
         env.push((TOKEN_ENV.to_owned(), token.clone()));
     }

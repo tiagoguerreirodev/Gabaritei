@@ -7,6 +7,10 @@ use tauri::{AppHandle, Manager, Runtime, State};
 use tauri_plugin_dialog::DialogExt;
 use ts_rs::TS;
 
+use crate::ai::agent::Agent;
+use crate::ai::discovery::{self, CliStatus};
+use crate::ai::secrets::Secrets;
+use crate::ai::settings::{self, AiSettings, AiSettingsInput, RemNoteTest};
 use crate::attempts::{self, AttemptView, SessionStart};
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
 use crate::db::Database;
@@ -220,6 +224,55 @@ pub fn abandon(db: State<'_, Database>, attempt_id: String) -> AppResult<()> {
     db.transaction(|tx| attempts::abandon(tx, &attempt_id))
 }
 
+/// The AI settings (CLI paths, roles, RemNote). Writes the defaults on first use.
+#[tauri::command]
+pub fn ai_settings(db: State<'_, Database>, secrets: State<'_, Secrets>) -> AppResult<AiSettings> {
+    db.with(|conn| settings::load(conn, &secrets))
+}
+
+/// Validates and saves the AI settings, and returns them as saved.
+#[tauri::command]
+pub fn save_ai_settings(
+    db: State<'_, Database>,
+    secrets: State<'_, Secrets>,
+    input: AiSettingsInput,
+) -> AppResult<AiSettings> {
+    db.with(|conn| {
+        settings::save(conn, input)?;
+        settings::load(conn, &secrets)
+    })
+}
+
+/// Saves the RemNote token in the OS keychain; `None` or blank removes it. Returns whether a
+/// token is saved. The token is never returned.
+#[tauri::command]
+pub fn set_remnote_token(secrets: State<'_, Secrets>, token: Option<String>) -> AppResult<bool> {
+    secrets.set_remnote_token(token.as_deref())?;
+    Ok(secrets.remnote_token()?.is_some())
+}
+
+/// Finds the CLI (using the saved path override) and reports its version and login state.
+#[tauri::command(async)]
+pub fn cli_test(
+    db: State<'_, Database>,
+    secrets: State<'_, Secrets>,
+    agent: Agent,
+) -> AppResult<CliStatus> {
+    let settings = db.with(|conn| settings::load(conn, &secrets))?;
+    let custom = settings.cli_paths.get(agent).map(std::path::Path::new);
+    Ok(discovery::cli_test(agent, custom))
+}
+
+/// Checks the saved RemNote connection and lists the tools the server offers.
+#[tauri::command(async)]
+pub fn remnote_test(
+    db: State<'_, Database>,
+    secrets: State<'_, Secrets>,
+) -> AppResult<RemNoteTest> {
+    let settings = db.with(|conn| settings::load(conn, &secrets))?;
+    settings::remnote_test(&settings, &secrets)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,6 +303,7 @@ mod tests {
                 .build(mock_context(noop_assets()))
                 .expect("mock app builds");
             app.manage(db);
+            app.manage(Secrets::memory());
             let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
                 .build()
                 .expect("mock webview builds");
@@ -530,6 +584,68 @@ mod tests {
         assert_eq!(performance["overall"]["smallSample"], json!(true));
         assert_eq!(performance["trend"], json!([]));
         assert_eq!(performance["filters"]["contests"], json!([]));
+    }
+
+    #[test]
+    fn ai_settings_default_save_and_never_return_the_token() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
+        let settings = app.call("ai_settings", json!({})).expect("loads");
+        assert_eq!(settings["roles"]["generate"]["model"], json!("gpt-6.2-sol"));
+        assert_eq!(settings["roles"]["generate"]["agent"], json!("codex"));
+        assert_eq!(settings["roles"]["blindCheck"]["effort"], json!("xhigh"));
+        assert_eq!(settings["hasRemnoteToken"], json!(false));
+
+        let saved = app
+            .call("set_remnote_token", json!({ "token": "TOKEN-SECRETO" }))
+            .expect("token saves");
+        assert_eq!(saved, json!(true));
+
+        let mut input = json!({
+            "cliPaths": { "claude": null, "codex": null },
+            "roles": settings["roles"],
+            "remnote": { "mode": "server", "url": "https://r.example/mcp", "tools": ["search"] },
+        });
+        input["roles"]["explain"]["agent"] = json!("claude");
+        input["roles"]["explain"]["model"] = json!("claude-sonnet-5-5");
+        input["roles"]["explain"]["effort"] = json!("medium");
+        let after = app
+            .call("save_ai_settings", json!({ "input": input }))
+            .expect("saves");
+        assert_eq!(after["roles"]["explain"]["agent"], json!("claude"));
+        assert_eq!(after["remnote"]["tools"], json!(["search"]));
+        assert_eq!(after["hasRemnoteToken"], json!(true));
+        assert!(!after.to_string().contains("TOKEN-SECRETO"));
+
+        let reloaded = app.call("ai_settings", json!({})).expect("reloads");
+        assert_eq!(
+            reloaded["roles"]["explain"]["model"],
+            json!("claude-sonnet-5-5")
+        );
+        assert!(!reloaded.to_string().contains("TOKEN-SECRETO"));
+
+        let removed = app
+            .call("set_remnote_token", json!({ "token": "" }))
+            .expect("token clears");
+        assert_eq!(removed, json!(false));
+    }
+
+    #[test]
+    fn saving_invalid_ai_settings_returns_a_pt_br_message() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
+        let mut settings = app.call("ai_settings", json!({})).unwrap();
+        settings["roles"]["generate"]["model"] = json!("");
+        let input = json!({
+            "cliPaths": settings["cliPaths"], "roles": settings["roles"], "remnote": settings["remnote"],
+        });
+        let error = app
+            .call("save_ai_settings", json!({ "input": input }))
+            .expect_err("a blank model is refused");
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains("Informe o modelo")
+        );
     }
 
     #[test]

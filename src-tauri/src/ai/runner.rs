@@ -201,6 +201,58 @@ impl From<RunError> for AppError {
     }
 }
 
+/// Words that mark a tool as one that changes data. Matched against whole words of the name
+/// (`create_note`, `createNote`), so `dataset_search` is not caught by `set`.
+const WRITE_WORDS: &[&str] = &[
+    "create", "update", "delete", "edit", "write", "move", "remove", "append", "replace", "insert",
+    "add", "set", "rename", "patch", "put", "post", "upsert", "merge", "clear", "destroy",
+    "archive", "modify", "save", "import", "send",
+];
+
+/// Whether a tool name looks like it changes data. Defence in depth: agents only get exact,
+/// user-approved read-only tools, and anything that looks like a write is refused anyway.
+pub fn is_write_like(tool: &str) -> bool {
+    let mut words: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for ch in tool.chars() {
+        if !ch.is_alphanumeric() {
+            if !current.is_empty() {
+                words.push(std::mem::take(&mut current));
+            }
+        } else {
+            if ch.is_uppercase() && current.chars().last().is_some_and(char::is_lowercase) {
+                words.push(std::mem::take(&mut current));
+            }
+            current.extend(ch.to_lowercase());
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+        .iter()
+        .any(|word| WRITE_WORDS.contains(&word.as_str()))
+}
+
+/// Whether a tool name is plain: letters, digits, `_` and `-`, 1 to 100 characters. Anything
+/// else (a comma, parenthesis, `*` or `:`) could change what an allowlist entry means to a CLI.
+pub fn is_valid_tool_name(tool: &str) -> bool {
+    (1..=100).contains(&tool.chars().count())
+        && tool
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// The approved tools that are safe to hand to an agent: plain names that don't look like
+/// writes. Checked again here, whatever settings allowed, because the names end up inside
+/// comma-separated CLI arguments.
+pub(super) fn read_only_tools(tools: &[String]) -> Vec<&String> {
+    tools
+        .iter()
+        .filter(|tool| is_valid_tool_name(tool) && !is_write_like(tool))
+        .collect()
+}
+
 /// Stops a run from outside. Cloning shares the same flag.
 #[derive(Debug, Clone, Default)]
 pub struct CancelToken(Arc<AtomicBool>);

@@ -278,6 +278,10 @@ pub(super) struct Workdir {
     /// the agent's working directory, so the agent's file tools can't read the token.
     _config_dir: Option<tempfile::TempDir>,
     pub schema: PathBuf,
+    /// Claude's role instructions, passed by file. On Windows an npm install is a `.cmd` shim,
+    /// and Rust refuses newlines in the arguments of batch files (and `cmd.exe` caps a command
+    /// line at 8191 characters), so long multi-line text must not travel as an argument.
+    pub instructions: Option<PathBuf>,
     /// Where Codex writes its last message (`-o`).
     pub output: PathBuf,
     /// Claude's MCP config, if RemNote is on (outside the working directory).
@@ -302,6 +306,14 @@ impl Workdir {
             serde_json::to_vec_pretty(&spec.schema).unwrap_or_default(),
         )
         .map_err(workspace)?;
+
+        let instructions = if spec.agent == Agent::Claude && !spec.instructions.is_empty() {
+            let path = dir.path().join("instrucoes.md");
+            std::fs::write(&path, &spec.instructions).map_err(workspace)?;
+            Some(path)
+        } else {
+            None
+        };
 
         if !spec.attachments.is_empty() {
             let folder = dir.path().join("anexos");
@@ -335,6 +347,7 @@ impl Workdir {
             _config_dir: config_dir,
             output: dir.path().join("saida.json"),
             schema,
+            instructions,
             mcp_config,
             has_attachments: !spec.attachments.is_empty(),
             dir,

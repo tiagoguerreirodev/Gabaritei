@@ -34,7 +34,7 @@ claude -p --output-format stream-json --verbose --json-schema '<schema>'
   --allowedTools "Read(./**),Grep(./**),Glob(./**)[,WebSearch,WebFetch][,mcp__remnote__<tool>...]"
   --permission-mode dontAsk --no-session-persistence --disable-slash-commands
   [--mcp-config mcp.json]
-  [--append-system-prompt "<role instructions>"]            # prompt on stdin
+  [--append-system-prompt-file <run folder>/instrucoes.md]  # role instructions; prompt on stdin
 ```
 
 - **Structured output:** the last `{"type":"result"}` event has `structured_output` (the answer),

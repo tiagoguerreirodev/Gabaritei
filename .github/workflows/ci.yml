@@ -88,6 +88,28 @@ jobs:
             exit 1
           fi
 
+  rust-test-windows:
+    name: Rust tests (Windows)
+    # The AI runner is only exercised for real on Windows here: .cmd shims, argument escaping
+    # and the process-tree kill (issue #49). Unix-only fake CLIs are skipped on this platform.
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          cache-on-failure: true
+
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
   frontend:
     name: Frontend (lint, typecheck, test)
     runs-on: ubuntu-latest

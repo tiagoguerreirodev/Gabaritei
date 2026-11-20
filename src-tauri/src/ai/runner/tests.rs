@@ -614,9 +614,149 @@ mod arguments {
     }
 
     #[test]
+    fn long_multi_line_instructions_travel_by_file_never_as_an_argument() {
+        // Rust refuses newlines in `.cmd` arguments and `cmd.exe` caps the command line at
+        // 8191 characters (issue #49), so the role instructions must not be an argument.
+        let mut job = spec(Agent::Claude, "claude".into());
+        job.instructions = format!("linha um\nlinha dois\r\n{}", "x".repeat(20_000));
+        let work = Workdir::prepare(&job).unwrap();
+        let plan = claude::plan(&job, &work);
+        let args: Vec<String> = plan
+            .args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let file = work.instructions.as_ref().expect("instructions file");
+        assert!(has_pair(
+            &args,
+            "--append-system-prompt-file",
+            &file.to_string_lossy()
+        ));
+        assert_eq!(std::fs::read_to_string(file).unwrap(), job.instructions);
+        assert!(!args.iter().any(|a| a.contains("linha um")));
+        assert!(!args.iter().any(|a| a.contains(['\n', '\r'])));
+        assert!(args.iter().map(String::len).sum::<usize>() < 4_000);
+    }
+
+    #[test]
     fn attachment_names_are_made_safe() {
         assert_eq!(sanitize("../../etc/passwd"), "_.._etc_passwd");
         assert_eq!(sanitize(".bashrc"), "bashrc");
         assert_eq!(sanitize("Lei 8.112 (1990).pdf"), "Lei_8.112__1990_.pdf");
+    }
+}
+
+/// The same behaviors on Windows, where npm installs the CLIs as `.cmd` shims (issue #49).
+/// The fakes are batch files; `ping -n` is the portable way to sleep in one.
+#[cfg(windows)]
+mod windows_cmd {
+    use super::*;
+
+    fn write_cmd(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let path = dir.join(format!("{name}.cmd"));
+        std::fs::write(
+            &path,
+            format!("@echo off\r\n{}\r\n", body.replace('\n', "\r\n")),
+        )
+        .unwrap();
+        path
+    }
+
+    /// Counts running `ping.exe` processes whose command line holds `marker`.
+    fn processes_with(marker: &str) -> usize {
+        let script = format!(
+            "(Get-CimInstance Win32_Process -Filter \"Name='ping.exe'\" | \
+             Where-Object {{ $_.CommandLine -like '*{marker}*' }} | Measure-Object).Count"
+        );
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-Command", &script])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_claude_cmd_shim_accepts_the_schema_and_multi_line_instructions() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli = write_cmd(
+            dir.path(),
+            "claude",
+            r#"more >nul
+echo {"type":"result","subtype":"success","is_error":false,"structured_output":{"answer":"pong"}}"#,
+        );
+        let mut job = spec(Agent::Claude, cli);
+        job.instructions = "linha um\nlinha dois\n".repeat(2_000);
+        let output = run(&job).0.unwrap();
+        assert_eq!(output.value, json!({ "answer": "pong" }));
+    }
+
+    #[test]
+    fn a_codex_cmd_shim_runs_and_writes_its_answer_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli = write_cmd(
+            dir.path(),
+            "codex",
+            r#"set "out="
+:next
+if "%~1"=="" goto done
+if "%~1"=="-o" set "out=%~2"
+shift
+goto next
+:done
+more >nul
+echo {"type":"turn.started"}
+echo {"answer":"pong"}> "%out%"
+echo {"type":"turn.completed","usage":{}}"#,
+        );
+        let (result, events) = run(&spec(Agent::Codex, cli));
+        assert_eq!(result.unwrap().value, json!({ "answer": "pong" }));
+        assert_eq!(events.first().unwrap().kind, ProgressKind::Started);
+    }
+
+    #[test]
+    fn timeout_ends_the_whole_process_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = "-n 4242";
+        let cli = write_cmd(
+            dir.path(),
+            "codex",
+            "start /b ping -n 4242 127.0.0.1 >nul\nmore >nul\nping -n 4243 127.0.0.1 >nul",
+        );
+        let mut job = spec(Agent::Codex, cli);
+        job.timeout = Duration::from_secs(2);
+        let started = Instant::now();
+        assert_eq!(run(&job).0, Err(RunError::TimedOut));
+        assert!(started.elapsed() < Duration::from_secs(15));
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(
+            processes_with(marker),
+            0,
+            "a child process outlived the run"
+        );
+    }
+
+    #[test]
+    fn cancel_ends_the_run_quickly() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli = write_cmd(
+            dir.path(),
+            "codex",
+            "more >nul\nping -n 4244 127.0.0.1 >nul",
+        );
+        let job = spec(Agent::Codex, cli);
+        let token = CancelToken::new();
+        let canceller = token.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
+            canceller.cancel();
+        });
+        let started = Instant::now();
+        assert_eq!(run_job(&job, &token, &mut |_| {}), Err(RunError::Cancelled));
+        assert!(started.elapsed() < Duration::from_secs(15));
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(processes_with("-n 4244"), 0);
     }
 }

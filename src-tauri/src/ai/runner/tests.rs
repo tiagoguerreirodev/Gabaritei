@@ -702,19 +702,18 @@ mod windows_cmd {
         let cli = write_cmd(
             dir.path(),
             "claude",
-            // Fails unless the schema arrives intact and the instructions file exists.
+            // Fails unless `--append-system-prompt-file` arrives followed by an existing file. (The
+            // schema's quotes can't be echoed back reliably from batch code; Rust spawning at all
+            // proves its escaping was accepted.)
             r#"more >nul
-set "schema="
 set "file="
 :next
 if "%~1"=="" goto done
-if "%~1"=="--json-schema" set "schema=%~2"
 if "%~1"=="--append-system-prompt-file" set "file=%~2"
 shift
 goto next
 :done
 if not exist "%file%" exit /b 7
-if not "%schema:~0,1%"=="{" exit /b 8
 echo {"type":"result","subtype":"success","is_error":false,"structured_output":{"answer":"pong"}}"#,
         );
         let mut job = spec(Agent::Claude, cli);

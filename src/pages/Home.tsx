@@ -10,7 +10,7 @@ const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
 
 /** Início: summary cards, attempts to resume, due reviews and drafts waiting for review. */
 export default function Home() {
-  const [status, { refetch: refetchStatus }] = createResource(() => api.legacyImportStatus());
+  const [status] = createResource(() => api.legacyImportStatus());
   const [home, { refetch: refetchHome }] = createResource(() => api.home());
 
   return (
@@ -19,13 +19,7 @@ export default function Home() {
 
       {/* First run: offer the legacy import while the bank is empty and it hasn't run. */}
       <Show when={status()?.bankEmpty && !status()?.report}>
-        <LegacyImport
-          initialReport={null}
-          onImported={() => {
-            void refetchStatus();
-            void refetchHome();
-          }}
-        />
+        <LegacyImport initialReport={null} onImported={() => void refetchHome()} />
       </Show>
 
       <Switch>

@@ -111,6 +111,8 @@ describe("Início", () => {
     await user.click(await screen.findByRole("button", { name: "Escolher pasta e importar" }));
 
     expect(await screen.findByText("9.368 questões no banco.")).toBeVisible();
+    // The import card keeps its summary even though the bank is no longer empty.
+    expect(screen.getByTestId("legacy-import-summary")).toBeVisible();
   });
 
   it("has pt-BR empty states for a fresh install", async () => {

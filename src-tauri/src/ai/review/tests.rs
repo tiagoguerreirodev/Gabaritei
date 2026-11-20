@@ -392,17 +392,13 @@ fn a_package_whose_check_is_running_cannot_be_imported_or_discarded() {
 }
 
 #[test]
-fn questions_imported_without_a_check_get_the_badge_like_disputed_ones() {
+fn importing_everything_needs_every_question_checked() {
     let db = Database::open_in_memory().unwrap();
     insert(&db, &draft_of("d1", vec![question("q1", "a")], None));
-    import_with(&db, "d1", ImportMode::All).unwrap();
-    assert_eq!(
-        count(
-            &db,
-            "SELECT COUNT(*) FROM questions WHERE json_extract(provenance, '$.disputed') = 1"
-        ),
-        1
-    );
+    let error = import_with(&db, "d1", ImportMode::All).unwrap_err();
+    assert!(error.to_string().contains("sem conferência"));
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM questions"), 0);
+    assert_eq!(summary_of(&db, "d1").status, DraftStatus::Review);
 }
 
 #[test]

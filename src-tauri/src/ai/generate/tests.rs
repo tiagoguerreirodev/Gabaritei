@@ -373,28 +373,17 @@ mod request_form {
     }
 
     #[test]
-    fn the_web_is_never_combined_with_attachments_or_remnote() {
+    fn the_web_can_be_combined_with_attachments_and_remnote() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("lei.md");
         std::fs::write(&file, "x").unwrap();
-        let mut with_remnote = request(1);
-        with_remnote.sources = GenerateSources {
+        let mut everything = request(1);
+        everything.sources = GenerateSources {
             remnote: true,
-            web: true,
-            attachments: vec![],
-        };
-        assert!(invalid(with_remnote).contains("pesquisa na web não pode"));
-        let mut with_files = request(1);
-        with_files.sources = GenerateSources {
-            remnote: false,
             web: true,
             attachments: vec![file.to_string_lossy().into_owned()],
         };
-        assert!(invalid(with_files).contains("pesquisa na web não pode"));
-        // Each source on its own is fine.
-        let mut web_only = request(1);
-        web_only.sources.web = true;
-        assert!(web_only.validate().is_ok());
+        assert!(everything.validate().is_ok());
     }
 
     #[test]

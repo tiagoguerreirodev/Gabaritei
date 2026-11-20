@@ -126,8 +126,6 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
   });
   const [submitting, setSubmitting] = createSignal(false);
   const remnoteOn = () => props.settings.remnote.mode !== "off";
-  const webBlocked = () => form.sources.remnote || form.sources.attachments.length > 0;
-  const privateBlocked = () => form.sources.web;
 
   const attach = async () => {
     try {
@@ -216,7 +214,7 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
             <input
               type="checkbox"
               checked={form.sources.remnote}
-              disabled={!remnoteOn() || privateBlocked()}
+              disabled={!remnoteOn()}
               onChange={(event) => setForm("sources", "remnote", event.currentTarget.checked)}
             />{" "}
             RemNote
@@ -229,15 +227,11 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
             <input
               type="checkbox"
               checked={form.sources.web}
-              disabled={webBlocked()}
               onChange={(event) => setForm("sources", "web", event.currentTarget.checked)}
             />{" "}
             Pesquisar na web
           </label>
-          <p class="muted">
-            Por segurança, a web não é usada junto com anexos ou com o RemNote na mesma geração.
-          </p>
-          <button type="button" disabled={privateBlocked()} onClick={() => void attach()}>
+          <button type="button" onClick={() => void attach()}>
             Anexar arquivos
           </button>
           <Show when={form.sources.attachments.length > 0}>

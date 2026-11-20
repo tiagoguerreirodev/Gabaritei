@@ -42,6 +42,19 @@ impl Serialize for AppError {
 /// Result type for domain functions and commands.
 pub type AppResult<T> = Result<T, AppError>;
 
+/// Unexpected failures from libraries become [`AppError::Internal`], keeping the detail.
+macro_rules! internal_from {
+    ($($source:ty),* $(,)?) => {
+        $(impl From<$source> for AppError {
+            fn from(error: $source) -> Self {
+                Self::Internal(error.to_string())
+            }
+        })*
+    };
+}
+
+internal_from!(rusqlite::Error, std::io::Error, serde_json::Error);
+
 #[cfg(test)]
 mod tests {
     use super::*;

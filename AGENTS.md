@@ -47,6 +47,8 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src-tauri/` | Rust backend (Tauri 2). All business logic: database, scoring, metrics, learning, AI runner, backups. |
 | `src-tauri/src/commands.rs` | Tauri commands (thin wrappers). Register each one in `register()` in `lib.rs`. |
 | `src-tauri/src/error.rs` | `AppError`: every command returns `AppResult<T>`; the frontend receives `{ message }` in pt-BR. |
+| `src-tauri/src/db.rs` | `Database` (managed Tauri state, opened at startup at `<app data dir>/gabaritei.sqlite`), `with`/`transaction` helpers, JSON settings helpers, migration runner. |
+| `src-tauri/migrations/` | SQL migrations, numbered `NNNN_name.sql`. Each one is listed in `MIGRATIONS` in `db.rs`; `PRAGMA user_version` records how many have run. |
 | `src/` | Solid.js + TypeScript + Vite frontend. Renders state and sends commands; holds no business rules. |
 | `src/api.ts` | The only place that calls `invoke`. One function per command. |
 | `src/bindings/` | TypeScript types **generated** from Rust by `cargo test` (ts-rs). Committed; never edit by hand. |
@@ -80,7 +82,7 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
 - **Thin commands.** Tauri commands only decode input, call a domain function, and encode output. Domain functions are plain Rust you can test without Tauri.
 - **One home for scoring.** Outcome and scoring rules live in one place (`attempts`/`metrics`). Scores are **derived from current question state**, so answer-key corrections and annulments apply retroactively. Never store a frozen score.
-- **Append-only migrations.** Never edit a released migration.
+- **Append-only migrations.** Never edit, reorder or delete a migration that has been merged. To change the schema, add the next numbered file in `src-tauri/migrations/`, append it to `MIGRATIONS` in `db.rs`, and test the upgrade from the previous version. Tables are `STRICT`; timestamps are RFC 3339 UTC text; booleans are `0`/`1`; JSON columns are checked with `json_valid()`.
 - **Typed frontend contract.** Types that cross the IPC boundary derive `ts_rs::TS` with `#[ts(export)]` (plus `#[serde(rename_all = "camelCase")]` for structs), and `cargo test` writes them to `src/bindings/`. Never call `invoke` outside `src/api.ts`. To add a command:
   1. write the domain function and test it;
   2. add a `#[tauri::command]` wrapper in `commands.rs` returning `AppResult<T>`, and register it in `register()` (`lib.rs`);

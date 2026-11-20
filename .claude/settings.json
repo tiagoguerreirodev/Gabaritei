@@ -15,9 +15,6 @@
       "Bash(gh pr list *)",
       "Bash(gh pr checks *)"
     ],
-    "deny": [
-      "Read(./.env)",
-      "Read(./.env.*)"
-    ]
+    "deny": ["Read(./.env)", "Read(./.env.*)"]
   }
 }

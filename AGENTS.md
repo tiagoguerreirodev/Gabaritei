@@ -42,27 +42,37 @@ If a task seems to need breaking any of these, stop and ask the owner.
 
 ## Stack and layout
 
-Planned layout; issue #1 creates it.
-
 | Path | What |
 |---|---|
 | `src-tauri/` | Rust backend (Tauri 2). All business logic: database, scoring, metrics, learning, AI runner, backups. |
+| `src-tauri/src/commands.rs` | Tauri commands (thin wrappers). Register each one in `register()` in `lib.rs`. |
+| `src-tauri/src/error.rs` | `AppError`: every command returns `AppResult<T>`; the frontend receives `{ message }` in pt-BR. |
 | `src/` | Solid.js + TypeScript + Vite frontend. Renders state and sends commands; holds no business rules. |
+| `src/api.ts` | The only place that calls `invoke`. One function per command. |
+| `src/bindings/` | TypeScript types **generated** from Rust by `cargo test` (ts-rs). Committed; never edit by hand. |
+| `src/routes.ts`, `src/pages/` | Route table (pt-BR labels, menu placement) and one component per page. |
 | `docs/` | Spec, legacy analysis, and notes such as `docs/ai-cli.md` (verified CLI flags). |
 
 Rust modules (spec §5): `db`, `bank`, `attempts`, `metrics`, `learning`, `ai` (runner, `claude`, `codex`, prompts, schemas, roles), `backup`, `migrate`.
 
+Frontend versions: **Solid 1.9** with `@solidjs/router` 0.15 (`HashRouter`). Don't upgrade to Solid 2 outside #26.
+
 ## Commands
 
-> Placeholder until #1 lands. The scaffold issue must replace this section with the real commands.
+Prerequisites: Rust stable (`rust-toolchain.toml`), Node 26 (`.nvmrc`), and the [Tauri 2 system dependencies](https://v2.tauri.app/start/prerequisites/). If `cargo` isn't found, add `~/.cargo/bin` to `PATH`.
 
 ```sh
-npm install                 # frontend deps + Tauri CLI
-npm run tauri dev           # run the app
-npm test                    # frontend tests
-npm run lint                # frontend lint + typecheck
-cargo test --manifest-path src-tauri/Cargo.toml
-cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+npm install                 # frontend deps + Tauri CLI (run once, and after package.json changes)
+npm run tauri dev           # run the app with hot reload (Vite + Rust)
+npm run tauri build -- --debug --no-bundle   # build the app with the frontend embedded (production CSP)
+
+npm test                    # frontend tests (Vitest + jsdom)
+npm run lint                # ESLint (typescript-eslint + eslint-plugin-solid) and Prettier check
+npm run typecheck           # tsc for the app and for vite.config.ts
+npm run format              # Prettier write + ESLint autofix
+
+cargo test --manifest-path src-tauri/Cargo.toml        # Rust tests; also regenerates src/bindings/
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 ```
 
@@ -71,7 +81,11 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --check
 - **Thin commands.** Tauri commands only decode input, call a domain function, and encode output. Domain functions are plain Rust you can test without Tauri.
 - **One home for scoring.** Outcome and scoring rules live in one place (`attempts`/`metrics`). Scores are **derived from current question state**, so answer-key corrections and annulments apply retroactively. Never store a frozen score.
 - **Append-only migrations.** Never edit a released migration.
-- **Typed frontend contract.** Generate TypeScript types from Rust (for example `specta`/`tauri-specta`) or keep one hand-written `src/api.ts`. Don't scatter raw `invoke` calls.
+- **Typed frontend contract.** Types that cross the IPC boundary derive `ts_rs::TS` with `#[ts(export)]` (plus `#[serde(rename_all = "camelCase")]` for structs), and `cargo test` writes them to `src/bindings/`. Never call `invoke` outside `src/api.ts`. To add a command:
+  1. write the domain function and test it;
+  2. add a `#[tauri::command]` wrapper in `commands.rs` returning `AppResult<T>`, and register it in `register()` (`lib.rs`);
+  3. add a function to `api` in `src/api.ts`;
+  4. run `cargo test` and commit the regenerated `src/bindings/`.
 - **Security.** Strict CSP, no remote content in the webview, minimal Tauri capabilities. Imported or generated text is never rendered as HTML.
 - **Performance.** No per-row JSON re-parsing or N+1 queries in metrics. This was a known problem in the legacy app.
 

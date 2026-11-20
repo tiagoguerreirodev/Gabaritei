@@ -1,0 +1,6 @@
+# Cargo reads this file when run from the repo root or any folder below it.
+[env]
+# `cargo test` writes the TypeScript bindings for `#[ts(export)]` types here.
+TS_RS_EXPORT_DIR = { value = "src/bindings", relative = true }
+# Plain `number` for 64-bit integers; values stay well below 2^53.
+TS_RS_LARGE_INT = "number"

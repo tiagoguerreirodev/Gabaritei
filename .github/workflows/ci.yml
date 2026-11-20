@@ -94,7 +94,7 @@ jobs:
     # and the process-tree kill (issue #49). Unix-only fake CLIs are skipped on this platform.
     # windows-latest is billed at 2x, so docs-only and frontend-only PRs skip the work. The job
     # itself always runs (a `paths` filter on the workflow would leave this required check
-    # pending forever); only its steps are skipped, and a skipped job still reports success.
+    # pending forever); only its steps are skipped, so the job still reports success.
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -112,14 +112,14 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           # Pushes to main always run the full suite. A PR runs it when it touches the Rust
-          # backend, the toolchain pin, or this workflow.
+          # backend, the cargo config, the toolchain pin, or this workflow.
           if [ "$EVENT" != "pull_request" ]; then
             echo "backend=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          files=$(git diff --name-only "origin/$BASE_REF...HEAD")
+          files=$(git diff --name-only --no-renames "origin/$BASE_REF...HEAD")
           echo "$files"
-          if echo "$files" | grep -qE '^(src-tauri/|rust-toolchain\.toml$|\.github/workflows/ci\.yml$)'; then
+          if grep -qE '^(src-tauri/|\.cargo/|rust-toolchain\.toml$|\.github/workflows/ci\.yml$)' <<< "$files"; then
             echo "backend=true" >> "$GITHUB_OUTPUT"
           else
             echo "backend=false" >> "$GITHUB_OUTPUT"

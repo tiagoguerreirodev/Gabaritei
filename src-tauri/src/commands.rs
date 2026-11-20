@@ -8,8 +8,9 @@ use tauri_plugin_dialog::DialogExt;
 use ts_rs::TS;
 
 use crate::ai::agent::Agent;
+use crate::ai::blind_check;
 use crate::ai::discovery::{self, CliStatus};
-use crate::ai::generate::{self, GenerateRequest};
+use crate::ai::generate::GenerateRequest;
 use crate::ai::jobs::{GenerationManager, GenerationStatus};
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, RemNoteTest};
@@ -292,8 +293,28 @@ pub fn generation_start<R: Runtime>(
         move |cancel, progress| {
             let db = worker.state::<Database>();
             let secrets = worker.state::<Secrets>();
-            let draft = generate::generate_draft(&db, &secrets, request, cancel, progress)?;
-            Ok(draft.id)
+            blind_check::generate_and_check(&db, &secrets, request, cancel, progress)
+        },
+        move |status| {
+            let _ = app.emit(GENERATION_EVENT, status);
+        },
+    )
+}
+
+/// Runs the blind check again on a draft whose check failed. Uses the same background slot as
+/// a generation, so only one runs at a time.
+#[tauri::command]
+pub fn blind_check_start<R: Runtime>(
+    app: AppHandle<R>,
+    manager: State<'_, GenerationManager>,
+    draft_id: String,
+) -> AppResult<()> {
+    let worker = app.clone();
+    manager.start(
+        move |cancel, progress| {
+            let db = worker.state::<Database>();
+            let secrets = worker.state::<Secrets>();
+            blind_check::recheck_draft(&db, &secrets, &draft_id, cancel, progress)
         },
         move |status| {
             let _ = app.emit(GENERATION_EVENT, status);
@@ -697,20 +718,25 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_generation_runs_in_the_background_and_ends_with_a_draft() {
+    fn a_generation_runs_in_the_background_and_ends_with_a_checked_draft() {
         let dir = tempfile::tempdir().unwrap();
-        let answer = json!({"questions": [{
+        // Call 1 is the generator, call 2 the blind checker (which agrees with the key).
+        let package = json!({"questions": [{
             "id": "q1", "type": "boolean", "stem": "A crase é obrigatória antes de verbos.",
             "options": [{"id": "c", "text": "Certo"}, {"id": "e", "text": "Errado"}],
             "answerId": "e", "explanation": "Não se usa crase antes de verbo.", "refs": []
         }], "notes": []});
-        std::fs::write(dir.path().join("answer.json"), answer.to_string()).unwrap();
+        let verdicts = json!({"verdicts": [
+            {"questionId": "q1", "choice": "e", "confidence": "high", "reason": "Verbo não aceita crase."}
+        ]});
+        std::fs::write(dir.path().join("answer-1.json"), package.to_string()).unwrap();
+        std::fs::write(dir.path().join("answer-2.json"), verdicts.to_string()).unwrap();
         let cli = crate::ai::runner::tests::write_script(
             dir.path(),
             "codex",
             &format!(
-                "out=\"\"\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) out=\"$2\"; shift;; esac; shift; done\ncat >/dev/null\ncp '{}' \"$out\"",
-                dir.path().join("answer.json").display()
+                "dir='{}'\nn=$(cat \"$dir/counter\" 2>/dev/null || echo 0); n=$((n+1)); echo $n > \"$dir/counter\"\nout=\"\"\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) out=\"$2\"; shift;; esac; shift; done\ncat >/dev/null\ncp \"$dir/answer-$n.json\" \"$out\"",
+                dir.path().display()
             ),
         );
         let app = MockApp::new(Database::open_in_memory().unwrap());
@@ -741,6 +767,12 @@ mod tests {
         }
         assert_eq!(status["outcome"]["kind"], json!("draft"), "{status}");
         assert!(status["outcome"]["draftId"].as_str().unwrap().len() > 8);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("counter"))
+                .unwrap()
+                .trim(),
+            "2"
+        );
         // The status carries labels and an ID, never question content.
         assert!(!status.to_string().contains("crase"));
         app.call("generation_dismiss", json!({})).unwrap();

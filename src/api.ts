@@ -106,6 +106,8 @@ export const api = {
   remnoteTest: () => call<RemNoteTest>("remnote_test"),
   /** Starts a generation in the background; progress arrives as `generation-status` events. */
   generationStart: (request: GenerateRequest) => call<null>("generation_start", { request }),
+  /** Runs the blind check again on a draft whose check failed (same background slot). */
+  blindCheckStart: (draftId: string) => call<null>("blind_check_start", { draftId }),
   /** Stops the running generation. `false` if none was running. */
   generationCancel: () => call<boolean>("generation_cancel"),
   /** What the generation is doing now, or how the last one ended. */

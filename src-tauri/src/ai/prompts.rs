@@ -123,3 +123,113 @@ atuais.\n",
     }
     text
 }
+
+/// What the blind checker sees of a question: the stem and the options, nothing else. Built
+/// from [`crate::bank::PackageQuestion`] without its key, explanation or references, so the
+/// prompt can't leak them (AGENTS.md rule 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckerView {
+    pub id: String,
+    pub kind: QuestionType,
+    pub stem: String,
+    pub options: Vec<(String, String)>,
+}
+
+impl From<&crate::bank::PackageQuestion> for CheckerView {
+    fn from(question: &crate::bank::PackageQuestion) -> Self {
+        Self {
+            id: question.id.clone(),
+            kind: question.kind,
+            stem: question.stem.clone(),
+            options: question
+                .options
+                .iter()
+                .map(|o| (o.id.clone(), o.text.clone()))
+                .collect(),
+        }
+    }
+}
+
+/// System-level instructions for the blind-check role.
+pub fn blind_check_instructions() -> String {
+    format!(
+        "Você é um candidato experiente em concursos públicos brasileiros, resolvendo questões \
+sem acesso ao gabarito. Responda em português do Brasil. {DATA_RULE} \
+Responda somente com o JSON pedido, no esquema fornecido."
+    )
+}
+
+/// The task for the blind-check role: answer every question.
+pub fn blind_check_prompt(questions: &[CheckerView]) -> String {
+    let mut text = String::from(
+        "CONFERÊNCIA ÀS CEGAS\n\nResolva cada questão abaixo como se fosse a prova. Para cada \
+uma, devolva em `verdicts`: `questionId`, `choice` (o id da alternativa que você marcaria), \
+`confidence` (low, medium ou high) e `reason` (justificativa curta). Se a questão estiver \
+ambígua, tiver mais de uma resposta defensável ou nenhuma correta, escolha a mais defensável, \
+baixe a confiança e diga isso na justificativa. Devolva uma resposta para cada questão, \
+sem pular nenhuma.\n",
+    );
+    for question in questions {
+        let kind = match question.kind {
+            QuestionType::Multiple => "múltipla escolha",
+            QuestionType::Boolean => "Certo/Errado",
+        };
+        text.push_str(&format!(
+            "\n--- Questão {} ({kind}) ---\n{}\n",
+            question.id, question.stem
+        ));
+        for (id, option) in &question.options {
+            text.push_str(&format!("({id}) {option}\n"));
+        }
+    }
+    text
+}
+
+/// One disagreement sent back to the generator.
+pub struct Objection<'a> {
+    pub question: &'a crate::bank::PackageQuestion,
+    /// The option the checker chose instead of the key.
+    pub checker_choice: &'a str,
+    pub checker_reason: &'a str,
+}
+
+/// System-level instructions for the generator when it answers an objection.
+pub fn dispute_instructions() -> String {
+    format!(
+        "Você é o elaborador das questões. Um conferente resolveu algumas delas às cegas e \
+discordou do seu gabarito. Avalie cada objeção com honestidade: se o conferente tem razão, corrija \
+a questão; se o gabarito está certo, defenda-o. {DATA_RULE} Responda somente com o JSON pedido."
+    )
+}
+
+/// The task for the generator: fix or defend each objected question.
+pub fn dispute_prompt(objections: &[Objection<'_>]) -> String {
+    let mut text = String::from(
+        "CONTESTAÇÃO DO GABARITO\n\nPara cada questão abaixo, devolva em `resolutions`: \
+`questionId`, `action`, `revised` e `rationale`.\n\
+- `action` = \"revise\": a objeção procede. Coloque em `revised` a questão corrigida completa \
+(mesmo `id`, mesmos campos do pacote, com gabarito e comentário coerentes) e explique em \
+`rationale`.\n\
+- `action` = \"defend\": o gabarito está certo. Deixe `revised` vazio e explique em `rationale` \
+por que a objeção não procede.\n",
+    );
+    for objection in objections {
+        let question = objection.question;
+        text.push_str(&format!(
+            "\n--- Questão {} ---\n{}\n",
+            question.id, question.stem
+        ));
+        for option in &question.options {
+            text.push_str(&format!("({}) {}\n", option.id, option.text));
+        }
+        text.push_str(&format!(
+            "Seu gabarito: ({})\nComentário atual: {}\nO conferente marcou: ({})\nJustificativa do \
+conferente: {}\n",
+            question.answer_id,
+            question.explanation,
+            objection.checker_choice,
+            objection.checker_reason
+        ));
+    }
+    text
+}

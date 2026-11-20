@@ -594,6 +594,26 @@ mod arguments {
     }
 
     #[test]
+    fn a_blind_check_run_puts_no_question_text_in_the_claude_arguments() {
+        use crate::ai::prompts::{CheckerView, blind_check_instructions, blind_check_prompt};
+        let view = CheckerView {
+            id: "q1".into(),
+            kind: crate::bank::QuestionType::Boolean,
+            stem: "ENUNCIADO-SECRETO".into(),
+            options: vec![("c".into(), "Certo".into()), ("e".into(), "Errado".into())],
+        };
+        let mut job = spec(Agent::Claude, "claude".into());
+        job.instructions = blind_check_instructions();
+        job.prompt = blind_check_prompt(&[view]);
+        let (args, env) = plan_for(&job);
+        // The questions travel on stdin only; arguments and environment never carry them.
+        assert!(!args.iter().any(|a| a.contains("ENUNCIADO-SECRETO")));
+        assert!(env.is_empty());
+        assert!(job.prompt.contains("ENUNCIADO-SECRETO"));
+        assert!(job.attachments.is_empty());
+    }
+
+    #[test]
     fn attachment_names_are_made_safe() {
         assert_eq!(sanitize("../../etc/passwd"), "_.._etc_passwd");
         assert_eq!(sanitize(".bashrc"), "bashrc");

@@ -64,6 +64,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::cli_test,
             commands::remnote_test,
             commands::generation_start,
+            commands::blind_check_start,
             commands::generation_cancel,
             commands::generation_status,
             commands::generation_dismiss,
@@ -77,6 +78,7 @@ fn open_database<R: Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error:
     let database = db::Database::open(&paths.database()).inspect_err(|error| {
         eprintln!("Gabaritei: {error} ({:?}: {error:?})", paths.database());
     })?;
+    database.with(|conn| ai::blind_check::recover_interrupted(conn))?;
     app.manage(database);
     app.manage(paths);
     app.manage(ai::secrets::Secrets::keychain());

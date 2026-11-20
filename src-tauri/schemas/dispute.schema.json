@@ -1,0 +1,126 @@
+{
+  "$defs": {
+    "DisputeAction": {
+      "description": "What the generator decides about an objection.",
+      "enum": [
+        "revise",
+        "defend"
+      ],
+      "type": "string"
+    },
+    "DisputeResolution": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/DisputeAction"
+        },
+        "questionId": {
+          "type": "string"
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "revised": {
+          "description": "The corrected question when `action` is `revise`; empty when it is `defend`.",
+          "items": {
+            "$ref": "#/$defs/PackageQuestion"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "questionId",
+        "action",
+        "revised",
+        "rationale"
+      ],
+      "type": "object"
+    },
+    "PackageQuestion": {
+      "additionalProperties": false,
+      "description": "One generated question. Option IDs are local; the app replaces them with canonical IDs.",
+      "properties": {
+        "answerId": {
+          "description": "ID of the correct option.",
+          "type": "string"
+        },
+        "explanation": {
+          "type": "string"
+        },
+        "id": {
+          "description": "Unique within the package, e.g. \"q1\".",
+          "type": "string"
+        },
+        "options": {
+          "description": "Five options for `multiple`; exactly \"Certo\" and \"Errado\" for `boolean`.",
+          "items": {
+            "$ref": "#/$defs/QuestionOption"
+          },
+          "type": "array"
+        },
+        "refs": {
+          "description": "Verifiable sources (law, article, official page). Never invented.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "stem": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/QuestionType"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "stem",
+        "options",
+        "answerId",
+        "explanation",
+        "refs"
+      ],
+      "type": "object"
+    },
+    "QuestionOption": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "type": "object"
+    },
+    "QuestionType": {
+      "description": "`multiple`: five options, one correct. `boolean`: Certo/Errado.",
+      "enum": [
+        "multiple",
+        "boolean"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "resolutions": {
+      "items": {
+        "$ref": "#/$defs/DisputeResolution"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "resolutions"
+  ],
+  "title": "Resolução das contestações",
+  "type": "object"
+}

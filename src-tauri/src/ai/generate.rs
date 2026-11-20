@@ -299,7 +299,8 @@ pub fn generate_draft(
             checker,
         },
         package,
-        blind_check: None,
+        // The blind check starts right after; until it ends the draft cannot be imported.
+        blind_check: Some(super::blind_check::pending_record()),
     };
     db.with(|conn| draft::insert(conn, &draft))?;
     Ok(draft)

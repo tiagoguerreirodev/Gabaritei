@@ -14,6 +14,7 @@ const overview: LearningOverview = {
   upcoming: 1,
   errors: 1,
   practice: 2,
+  practiceErrors: 1,
   items: [
     {
       questionId: "q-secret-id",
@@ -133,8 +134,16 @@ describe("Erros e revisões", () => {
     });
   });
 
+  it("disables and counts error practice by what a session can take, not by the notebook", async () => {
+    mockIPC(() => ({ ...overview, errors: 3, practiceErrors: 0 }));
+    render(() => <Learning />);
+
+    await screen.findByRole("list", { name: "Resumo" });
+    expect(screen.getByRole("button", { name: "Praticar erros (0)" })).toBeDisabled();
+  });
+
   it("has a pt-BR empty state and disabled practice buttons with nothing to review", async () => {
-    mockIPC(() => ({ due: 0, upcoming: 0, errors: 0, practice: 0, items: [] }));
+    mockIPC(() => ({ due: 0, upcoming: 0, errors: 0, practice: 0, practiceErrors: 0, items: [] }));
     render(() => <Learning />);
 
     expect(await screen.findByText("Nada para revisar por enquanto.")).toBeVisible();

@@ -20,6 +20,11 @@ errors: number,
  */
 practice: number, 
 /**
+ * How many questions "practice errors" would take: the notebook without the questions in an
+ * unfinished attempt (at most [`MAX_SESSION`]).
+ */
+practiceErrors: number, 
+/**
  * Due reviews first (most overdue first), then upcoming ones, then errors with no review.
  */
 items: Array<LearningItem>, };

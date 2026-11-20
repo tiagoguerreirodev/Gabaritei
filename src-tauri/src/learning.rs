@@ -16,7 +16,7 @@
 //! in a finished attempt is wrong (a later blank doesn't hide it), or whose latest result is a
 //! blank, when asked for.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -200,15 +200,30 @@ impl Latest {
     }
 }
 
-/// Questions of the error notebook for a practice session, most recent error first.
+/// Questions that sit in an unfinished attempt. Practice sessions leave them out: they stay
+/// due until that attempt is finished, and would otherwise be picked again.
+fn open_attempt_questions(conn: &Connection) -> AppResult<HashSet<String>> {
+    let ids = conn
+        .prepare(
+            "SELECT DISTINCT r.question_id FROM responses r
+             JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NULL",
+        )?
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<Result<_, _>>()?;
+    Ok(ids)
+}
+
+/// Questions of the error notebook for a practice session, most recent error first, without
+/// the ones already in an unfinished attempt.
 pub fn error_questions(
     conn: &Connection,
     include_blanks: bool,
     limit: u32,
 ) -> AppResult<Vec<String>> {
+    let in_open_attempt = open_attempt_questions(conn)?;
     Ok(latest_results(conn)?
         .into_iter()
-        .filter(|l| l.is_error(include_blanks))
+        .filter(|l| l.is_error(include_blanks) && !in_open_attempt.contains(&l.question_id))
         .take(limit as usize)
         .map(|l| l.question_id)
         .collect())
@@ -229,10 +244,15 @@ pub fn review_session(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec
     Ok(ids)
 }
 
-/// Questions whose review is due at `now`, the most overdue first.
+/// Questions whose review is due at `now`, the most overdue first, without the ones already
+/// in an unfinished attempt.
 pub fn due_questions(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<String>> {
     let mut stmt = conn.prepare(
-        "SELECT question_id FROM review_state WHERE due_at <= ?1
+        "SELECT question_id FROM review_state
+         WHERE due_at <= ?1
+           AND question_id NOT IN (
+             SELECT r.question_id FROM responses r
+             JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NULL)
          ORDER BY due_at, question_id LIMIT ?2",
     )?;
     let ids = stmt
@@ -275,6 +295,9 @@ pub struct LearningOverview {
     /// How many questions "practice now" would take: due reviews, then recent errors (at most
     /// [`MAX_SESSION`]).
     pub practice: u32,
+    /// How many questions "practice errors" would take: the notebook without the questions in an
+    /// unfinished attempt (at most [`MAX_SESSION`]).
+    pub practice_errors: u32,
     /// Due reviews first (most overdue first), then upcoming ones, then errors with no review.
     pub items: Vec<LearningItem>,
 }
@@ -346,6 +369,7 @@ pub fn overview(conn: &Connection, now: &str, include_blanks: bool) -> AppResult
         upcoming: due_dates.len() as u32 - due,
         errors: items.iter().filter(|i| i.is_error).count() as u32,
         practice: review_session(conn, now, MAX_SESSION)?.len() as u32,
+        practice_errors: error_questions(conn, include_blanks, MAX_SESSION)?.len() as u32,
         items,
     })
 }

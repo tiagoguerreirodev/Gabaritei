@@ -7,9 +7,6 @@ import { formatDate, formatNumber } from "./bank/format";
 import StartSessionModal from "./solve/StartSessionModal";
 import { openAttempt } from "./solve/format";
 
-/** Largest practice session the backend builds from reviews or errors. */
-const MAX_SESSION = 100;
-
 const topicLabel = (item: LearningItem) =>
   item.topics.length === 0
     ? "Sem assunto"
@@ -81,7 +78,7 @@ export default function Learning() {
                 </button>
                 <button
                   type="button"
-                  disabled={data().errors === 0}
+                  disabled={data().practiceErrors === 0}
                   onClick={() =>
                     setPractice({
                       title: "Praticar erros",
@@ -89,7 +86,7 @@ export default function Learning() {
                     })
                   }
                 >
-                  Praticar erros ({formatNumber(Math.min(data().errors, MAX_SESSION))})
+                  Praticar erros ({formatNumber(data().practiceErrors)})
                 </button>
                 <label class="learning-blanks">
                   <input

@@ -6,7 +6,9 @@
 //! feeds the trend; both are folded in Rust in a single pass, with no per-row JSON parsing.
 //!
 //! * **Topic strength** looks at *finished* attempts only, filtered by feedback mode, and
-//!   keeps the latest response of each question (by attempt finish time). A question counts
+//!   keeps the latest *answered* response of each question (by attempt finish time); a blank
+//!   response is used only for a question that was never answered, so a blank never hides
+//!   an earlier answer and coverage means "ever answered". A question counts
 //!   once per group (area, area › matter, area › matter › topic).
 //! * **Weekly trend** uses *every* answer of finished attempts, grouped by ISO week (Monday
 //!   to Sunday) in the caller's local time.
@@ -196,13 +198,18 @@ fn weakest_first(a: (&GroupStats, &str), b: (&GroupStats, &str)) -> Ordering {
     .then_with(|| cmp_pt(a.1, b.1))
 }
 
+/// Contest and board must both match **the same collection** of the question.
 const FILTERS: &str = "
-    AND (:contest IS NULL OR EXISTS (
+    AND ((:contest IS NULL AND :board IS NULL) OR EXISTS (
         SELECT 1 FROM collection_items ci JOIN collections c ON c.id = ci.collection_id
-        WHERE ci.question_id = q.id AND c.contest = :contest))
-    AND (:board IS NULL OR EXISTS (
-        SELECT 1 FROM collection_items ci JOIN collections c ON c.id = ci.collection_id
-        WHERE ci.question_id = q.id AND c.board = :board))";
+        WHERE ci.question_id = q.id
+          AND (:contest IS NULL OR trim(c.contest) = :contest)
+          AND (:board IS NULL OR trim(c.board) = :board)))";
+
+/// Offsets outside the real range of time zones (UTC−12 to UTC+14) are clamped.
+fn offset_minutes(query: &PerformanceQuery) -> i32 {
+    query.utc_offset_minutes.clamp(-12 * 60, 14 * 60)
+}
 
 fn tag(value: &Option<String>) -> Option<&str> {
     value.as_deref().map(str::trim).filter(|v| !v.is_empty())
@@ -235,7 +242,8 @@ fn strength(conn: &Connection, query: &PerformanceQuery) -> AppResult<Strength> 
              SELECT r.question_id, r.choice,
                     ROW_NUMBER() OVER (
                         PARTITION BY r.question_id
-                        ORDER BY a.finished_at DESC, a.id DESC, r.position DESC) AS rn
+                        ORDER BY r.choice IS NULL, a.finished_at DESC, a.id DESC,
+                                 r.position DESC) AS rn
              FROM responses r JOIN attempts a ON a.id = r.attempt_id
              WHERE a.finished_at IS NOT NULL
                AND (:mode IS NULL OR a.feedback_mode = :mode))
@@ -365,7 +373,7 @@ fn trend(conn: &Connection, query: &PerformanceQuery) -> AppResult<Vec<WeekPoint
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(named_params! {
-        ":offset": format!("{:+} minutes", query.utc_offset_minutes),
+        ":offset": format!("{:+} minutes", offset_minutes(query)),
         ":mode": mode(query),
         ":contest": tag(&query.contest),
         ":board": tag(&query.board),
@@ -402,7 +410,7 @@ fn filter_options(conn: &Connection) -> AppResult<FilterOptions> {
     let column = |name: &str| -> AppResult<Vec<String>> {
         let mut values: Vec<String> = conn
             .prepare(&format!(
-                "SELECT DISTINCT {name} FROM collections WHERE {name} IS NOT NULL AND trim({name}) <> ''"
+                "SELECT DISTINCT trim({name}) FROM collections WHERE {name} IS NOT NULL AND trim({name}) <> ''"
             ))?
             .query_map([], |r| r.get(0))?
             .collect::<Result<_, _>>()?;

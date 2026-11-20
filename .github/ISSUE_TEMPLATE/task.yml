@@ -1,0 +1,36 @@
+name: Task
+description: A unit of work an agent or human can pick up and finish in one PR.
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What this delivers and why, in 1–3 sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: spec
+    attributes:
+      label: Spec references
+      description: Sections of docs/spec.md and legacy feature IDs (docs/legacy-analysis.md).
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What to build, and what is explicitly NOT part of this issue.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checklist that must be true before the PR is merged.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: input
+    id: depends
+    attributes:
+      label: Depends on
+      placeholder: "#1, #3"

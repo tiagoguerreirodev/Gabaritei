@@ -1,0 +1,36 @@
+# Rust / Tauri
+/src-tauri/target/
+/src-tauri/gen/schemas/
+
+# Node / Vite
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Study data never lives in git (spec §3.6, AGENTS.md rule 3)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.gabaritei
+*.caderno
+/data/
+/backups/
+
+# Env and secrets
+.env
+.env.*
+
+# Test output
+/coverage/
+/test-results/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Claude Code local overrides
+.claude/settings.local.json

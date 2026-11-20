@@ -1,0 +1,215 @@
+# Gabaritei: product spec
+
+> **Status:** decisions from the 2026-11-19 interview with the owner. This is the source of truth for Gabaritei. Changing a decision needs the owner's approval; record the change here in the same PR.
+> **Companion:** [`legacy-analysis.md`](legacy-analysis.md), the inventory of the legacy Electron app (*Caderno Local*, repo `tiagoguerreirodev/Simulados-Concursos`). Feature IDs like `N-D3` refer to it.
+
+## 1. What the app is
+
+A personal desktop app for **one person (you) on two computers**. It:
+
+1. **Generates** exam questions with AI agents, using your own Claude Code and Codex subscriptions.
+2. **Checks** them blind with a second, stronger model before they enter your bank, without ever showing you the answers in advance.
+3. Lets you **solve** questions by collection, by topic, or from your errors and due reviews.
+4. **Records performance**: every answer, kept forever, with a breakdown by area › matter › topic and a trend over time.
+
+All UI text is in Portuguese. There are no accounts and no server.
+
+---
+
+## 2. Decision record
+
+| # | Topic | Decision |
+|---|---|---|
+| 1 | AI access | Run the **locally installed, already-logged-in `claude` and `codex` CLIs** as subprocesses with schema-checked JSON output. The app stores **no AI credentials**. |
+| 2 | AI roles | Four roles: **Generate, Blind check, Re-check on demand, Explain on demand**. Each has its own **agent (Claude or Codex), model and reasoning effort**. Defaults live in Settings; Generate and Blind check can be overridden in the generation form. Intended use: a cheaper model generates, a smarter model checks. |
+| 3 | Devices | Two computers, switching rarely. Data moves with a **manual export/import file**. No live sync. |
+| 4 | Users | Only you. No onboarding, no public distribution concerns. |
+| 5 | History migration | **Bank only.** Import questions, collections, topics and images once from this repo's `biblioteca/`. There is no attempt history to carry over. |
+| 6 | Question formats | **5-option multiple choice** and **Certo/Errado**. No essays. |
+| 7 | Taxonomy | One **topic tree** (area › matter › topic). **Contest** and **board** become optional tags, not the top-level grouping. |
+| 8 | Generation scope | **One topic per generation**, picked from the tree or typed as a new path. Every generated question gets exactly that topic. |
+| 9 | Generation form | Topic and count are required. Optional: **board style**, **format** (blank means the AI may mix both formats), **free-text instructions**. Sources: **RemNote**, **attached files**, **web**. The generator also gets **that topic's existing stems** so it avoids near-duplicates. |
+| 10 | No spoilers | **No screen shows a question's answer before you've answered it.** That includes the package preview. |
+| 11 | Package review | Preview shows the **summary and blind-check verdicts only**: count, topic, validation problems, and agrees/disputed per question. No stems, options or answers. You approve or discard. |
+| 12 | Blind check | The checker sees **only stems and options**, never the key or explanation, and answers each question. **Disputes:** the generator gets the objection **once** to fix or defend the question. Anything still disputed is **flagged** in the preview. |
+| 13 | Feedback timing | **Chosen per attempt:** *Estudo* reveals the answer and explanation right after each answer. *Simulado* reveals everything at the end. |
+| 14 | Bad questions | While solving, after the answer is revealed: **Annul**, or **Ask AI to re-check**. Re-check shows the verdict, corrected key and sources; **you confirm, then it's applied** and past answers are re-scored. There's no manual text editing. |
+| 15 | Missing explanations | **On demand only.** An *Explicar* button on questions that have no explanation. |
+| 16 | Sessions | From a **collection**, by **topic** (N questions, unseen first), or from **errors and due reviews**. |
+| 17 | Kept study tools | **Eliminate options** and **flag questions**. **Error notebook** and **spaced repetition** (1/3/7/14/30/60 days). |
+| 18 | Dropped study tools | Timer, exam mode with a locked timer, essays and AI grading. |
+| 19 | Counting | Topic strength uses the **latest answer per question**. A **weekly accuracy trend** uses all answers. **Every attempt is kept forever**, with no 5-attempt cap. |
+| 20 | Safety | **Daily automatic backup, 7 kept**, with a restore button. Plus the export/import file. |
+| 21 | Platforms | **Windows 11 x64** and **macOS Apple Silicon**. |
+| 22 | Repo | **This repository (Gabaritei).** Study data stays **out of git**: it lives in the app data folder, backups and exports. |
+| 23 | Extras | **Keyboard shortcuts**, **dark mode** following the system, **LaTeX** via KaTeX, **CSV export**. |
+| 24 | Images | Display the 52 migrated images. **Generated questions are text-only.** |
+| 25 | Stack | **Tauri 2 + Rust** backend, **Solid.js + Vite** frontend (see the analysis, §7.1). |
+
+---
+
+## 3. Feature set
+
+### 3.1 Bank and taxonomy
+- **Topic tree:** area › matter › topic. Browse it with counts of questions, answered questions and accuracy.
+- **Question fields:** `type` (`multiple` or `boolean`), stem, options (5 for multiple choice, Certo/Errado for boolean), answer key, explanation, references, topics (one or more paths), image (migrated only), `annulled`, contest and board tags, provenance (agent, model, date, blind-check verdict).
+- **Collections** are fixed question lists: the 352 migrated *cadernos*, plus one collection per approved package.
+- **Deduplication** works as today (`N-C5`): canonical option IDs plus a content fingerprint. An answer-key conflict blocks import.
+- **Dropped:** `difficulty`, generic `tags`, `objectives`, the versions table, syllabus, taxonomy merges and aliases (`U-C1`, `U-C2`, `U-C6`, `O-C3`).
+
+### 3.2 Generation (*Gerar*)
+**Form**
+- Topic (tree picker or new path)
+- Count
+- Board style (optional)
+- Format (optional; blank means the AI may mix)
+- Free-text instructions (optional)
+- Sources: RemNote on/off, attached files (PDF, MD, TXT), web on/off
+- Generator agent, model and effort, prefilled from Settings
+- Checker agent, model and effort, prefilled from Settings
+
+**Pipeline**
+1. **Generate.** Run the generator CLI with the package JSON schema. The input includes the topic path, count, board, format, instructions, the topic's existing stems and the source settings.
+2. **Validate.** Check the schema, option rules, duplicates and answer-key conflicts.
+3. **Blind check.** Run the checker CLI with **stems and options only**. It returns its chosen option, confidence and short justification per question.
+4. **Resolve disputes once.** Send each disagreement (the checker's choice and reasoning) back to the generator, which revises or defends the question. The checker re-checks the revised questions. Whatever still disagrees is marked **disputed**.
+5. **Save the draft** and show the preview.
+
+**Run behavior**
+- Progress comes from the CLIs' streaming JSON events.
+- *Cancelar* kills the subprocess.
+- Only one generation runs at a time.
+
+**Preview (*Revisar pacote*)**
+- Shows the topic, count, format mix, validation problems and agreed/disputed counts. Each question appears as "Q3 · disputed" with no content.
+- Actions: **Import**, **Discard**.
+
+### 3.3 Solving (*Resolver*)
+- **Start a session from** a collection; a topic with N questions (unseen first, then least recently answered); or errors and due reviews (`O-F1`–`O-F3`).
+- **Feedback mode per attempt:**
+  - *Estudo*: choosing an option locks it and reveals the key and explanation for that question.
+  - *Simulado*: everything is revealed on finish.
+- **Carried over from today:** shuffled questions and options, eliminating options, flags, the navigator, autosave, finish with a confirmation, abandon, one active attempt per collection (`N-D1`–`N-D10`, `O-D3`, `O-D4`).
+- **Keyboard:** `A`–`E` (or `C`/`E`) to answer, `←`/`→` to move, `X` plus a letter to eliminate, `F` to flag.
+- **After a question is revealed:**
+  - **Anular** removes it from all scores.
+  - **Pedir revisão à IA** runs the Re-check role. It shows the verdict, the corrected key if any, and sources. Confirming applies the key change, logs it and re-scores past answers.
+  - **Explicar** (only when the explanation is missing) runs the Explain role and saves the result to the question.
+
+### 3.4 Performance (*Desempenho*)
+- **Scoring:** correct, wrong, blank or annulled (§3.4 of the analysis, without essays or pending grades).
+- **Topic strength** uses the latest answer per question, with achievement, accuracy and coverage by area › matter › topic. Weakest topics come first, with a small-sample warning.
+- **Trend:** weekly accuracy from all answers.
+- **Filters:** contest tag, board tag, feedback mode.
+- **Other views:** history per collection and per session, a home dashboard, and CSV export.
+- **All attempts are kept** (drops `U-E1`).
+
+### 3.5 Learning (*Erros e revisões*)
+- **Error notebook:** questions whose latest result is wrong, with blanks optional.
+- **Spaced repetition:** a full hit moves the interval along 1 → 3 → 7 → 14 → 30 → 60 days. A miss resets it to 1.
+- **Practice sessions** are built from errors and due reviews.
+
+### 3.6 Data
+- **Storage:** SQLite in the OS app-data folder.
+- **Daily backup:** keeps 7. Restore validates the backup, then makes a safety copy before replacing anything.
+- **Export:** one file, a zip with a consistent DB copy and the images.
+- **Import:** replaces local data after a safety backup. There's no merging, so use one computer at a time.
+- **First-run migration:** imports the bank from `biblioteca/estado.json.gz` and `biblioteca/recursos/` of the old repo: questions, topics, collections, contest tags and images. Attempts, drafts and settings are skipped.
+
+### 3.7 Settings (*Configurações*)
+- **CLI paths:** detected automatically, with manual override. Apps opened from the macOS Finder see a short PATH, so detection matters there. Includes a "Test" button per CLI that shows its version and login state.
+- **Role defaults:** agent, model and effort for each of the 4 roles.
+- **RemNote MCP:** URL and token, or reuse the existing Codex config.
+- **Data:** backup folder and restore, export/import, open data folder.
+
+---
+
+## 4. AI integration design
+
+### 4.1 Roles
+| Role | Input | Output (JSON schema) | Sees the answer key? |
+|---|---|---|---|
+| Generate | Form, topic stems, sources | Package (questions with key and explanation) | Writes it |
+| Blind check | Stems and options only | `{questionId, choice, confidence, reason}[]` | **No** |
+| Re-check | One question with key, explanation and refs | `{verdict: correct\|wrong\|ambiguous, correctedKey?, reasoning, sources[]}` | Yes, after you've answered |
+| Explain | One question with key | `{explanation, refs[]}` | Yes, after you've answered |
+
+### 4.2 Running the CLIs
+
+The patterns below are **to verify at build time**; the flags come from the current docs.
+
+- **Claude Code:** `claude -p "<prompt>" --output-format json --json-schema '<schema>' --model <m> --permission-mode dontAsk --allowedTools "<read-only list>" --mcp-config <remnote.json> --append-system-prompt "<role instructions>"`
+  - The result is in the `structured_output` field. Check that the field is present before using it.
+  - Use `--output-format stream-json --verbose` for progress.
+  - Don't use `--bare`, because bare mode skips the subscription login.
+  - Without `--bare`, Claude Code loads `~/.claude` hooks, plugins and `CLAUDE.md`, and the working directory's `.claude/` and `.mcp.json`. Run it in an empty temporary folder, and check for a flag that limits which settings sources load.
+  - The exact flag for effort still needs confirming.
+- **Codex:** `codex exec "<prompt>" --output-schema <schema.json> -o <out.json> --json -m <model> -c model_reasoning_effort=<e> --sandbox read-only --skip-git-repo-check --ephemeral`
+  - Codex runs read-only by default.
+  - RemNote comes from your Codex config, so `--ignore-user-config` can't be used.
+  - Still to confirm: whether web search needs a config switch, and the exact `-m` and effort keys.
+- **Working folder:** each run gets a fresh temporary folder. Attachments are copied into it and the agent reads them itself, so the app has no PDF parser.
+- **Tools:** read-only only, meaning file read, web search and fetch, and the RemNote read tools. No shell and no file edits. Sources and tool results are treated as data, never as instructions.
+- **Cancel and timeout:** SIGINT, then SIGTERM after a grace period.
+- **Policy:** the app never handles Claude or OpenAI credentials. It runs the CLI you logged into yourself. Anthropic doesn't allow third-party products to offer claude.ai login, and this app doesn't.
+
+---
+
+## 5. Architecture sketch
+
+**Rust crates and modules**
+- `db`: rusqlite, migrations
+- `bank`: questions, topics, collections, dedup, import
+- `attempts`: sessions, feedback modes, scoring
+- `metrics`: strength, trend, CSV
+- `learning`: errors, spaced repetition
+- `ai`: runner, `claude`, `codex`, prompts, schemas, roles
+- `backup`: daily, restore, export/import
+- `migrate`: legacy bank import
+
+**Tauri commands, about 25:**
+- `home`
+- `topics_tree`
+- `collections`, `collection`
+- `session_start`, `attempt`, `answer`, `eliminate`, `flag`, `finish`, `abandon`
+- `annul`, `recheck`, `apply_recheck`, `explain`
+- `metrics`, `trend`, `export_csv`
+- `learning`
+- `generate`, `cancel`, `draft`, `import_draft`, `discard_draft`
+- `settings_get` / `settings_set`, `cli_test`
+- `backup_now`, `restore`, `export_data`, `import_data`
+
+**Events:** generation progress, re-check and explain progress.
+
+**Frontend pages (Solid):** *Início*, *Banco*, *Gerar*, *Revisar pacote*, *Resolver*, *Desempenho*, *Erros e revisões*, *Configurações*.
+
+**Tables:**
+- `topics`, `questions`, `question_topics`
+- `collections`, `collection_items`
+- `attempts` (source, feedback mode)
+- `responses` (snapshot, choice, eliminated, flagged, revealed_at)
+- `review_state`
+- `drafts`
+- `key_changes` (re-check audit)
+- `settings`
+
+That's 11 tables, down from 16.
+
+---
+
+## 6. Explicitly out of scope
+- **Sync and credentials:** GitHub sync (`U-I*`), ChatGPT OAuth and the token vault (`N-B1`'s current form), the model catalog.
+- **AI plumbing:** the in-app tool loop, the PDF extractor, the website-fetch allowlist tool, bank reuse (`U-A1`), the jobs log (`U-A2`).
+- **Study features:** essays and AI grading (`O-G*`), the timer and exam mode (`O-D1`, `O-D2`), the syllabus, taxonomy merges.
+- **Legacy and distribution:** legacy collection cards, the C# launcher, release scripts, Electron test scripts.
+- **UI:** decoration, i18n.
+
+## 7. Proposed defaults (change any you disagree with)
+| Item | Proposed default |
+|---|---|
+| Count per generation | 1–30. Each question goes through the blind check, so large batches are slow. |
+| Import with disputed questions | Two buttons: **Import all** (disputed questions get a badge after you answer) and **Import agreed only**. |
+| Topic session order | Unseen questions first, then least recently answered, with annulled questions excluded |
+| Role defaults | Generate: a cheaper model at medium effort. Blind check and Re-check: the strongest model at high effort. Explain: a cheaper model. Set on first run in Settings. |
+| `Estudo` lock rule | Once revealed, a question's choice can't change |
+| Export file name | `Gabaritei-<date>.gabaritei` (a zip) |

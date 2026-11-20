@@ -70,6 +70,10 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::draft_import,
             commands::draft_discard,
             commands::pick_attachments,
+            commands::recheck_ask,
+            commands::recheck_apply,
+            commands::recheck_dismiss,
+            commands::ai_request_cancel,
             commands::generation_cancel,
             commands::generation_status,
             commands::generation_dismiss,
@@ -87,6 +91,7 @@ fn open_database<R: Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error:
     app.manage(paths);
     app.manage(ai::secrets::Secrets::keychain());
     app.manage(ai::jobs::GenerationManager::default());
+    app.manage(ai::ondemand::OnDemand::default());
     Ok(())
 }
 

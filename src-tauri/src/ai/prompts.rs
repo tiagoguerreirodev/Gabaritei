@@ -231,3 +231,38 @@ conferente: {}\n",
     }
     text
 }
+
+/// System-level instructions for the re-check role.
+pub fn recheck_instructions() -> String {
+    format!(
+        "Você é um revisor jurídico e técnico rigoroso de questões de concursos públicos \
+brasileiros. Responda em português do Brasil. {DATA_RULE} \
+Responda somente com o JSON pedido, no esquema fornecido."
+    )
+}
+
+fn render_question(question: &crate::bank::Question) -> String {
+    let mut text = format!("{}\n", question.stem);
+    for option in &question.options {
+        text.push_str(&format!("({}) {}\n", option.id, option.text));
+    }
+    text
+}
+
+/// The task for the re-check role: is the key of this question right?
+pub fn recheck_prompt(question: &crate::bank::Question) -> String {
+    format!(
+        "REVISÃO DE GABARITO\n\nO usuário desconfia do gabarito da questão abaixo. Resolva-a por \
+conta própria, confira o gabarito e o comentário e devolva: `verdict` (\"correct\" se o gabarito \
+está certo; \"wrong\" se outra alternativa é a correta; \"ambiguous\" se a questão é ambígua, \
+tem mais de uma resposta defensável ou nenhuma), `correctedKey` (o id da alternativa correta \
+quando `verdict` for \"wrong\"; vazio nos demais casos), `reasoning` (justificativa objetiva) e \
+`sources` (fontes verificáveis: lei e artigo, página oficial, obra; NUNCA invente uma fonte, e \
+deixe vazio se não tiver certeza).\n\n--- Questão ---\n{}Gabarito atual: ({})\nComentário atual: \
+{}\nReferências atuais: {}\n",
+        render_question(question),
+        question.answer_id,
+        question.explanation,
+        question.refs.join("; ")
+    )
+}

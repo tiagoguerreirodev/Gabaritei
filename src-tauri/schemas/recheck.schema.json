@@ -1,0 +1,43 @@
+{
+  "$defs": {
+    "RecheckVerdict": {
+      "description": "What the re-checker concluded about the key.",
+      "enum": [
+        "correct",
+        "wrong",
+        "ambiguous"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The re-checker's structured answer.",
+  "properties": {
+    "correctedKey": {
+      "description": "ID of the correct option when `verdict` is `wrong`; empty otherwise.",
+      "type": "string"
+    },
+    "reasoning": {
+      "type": "string"
+    },
+    "sources": {
+      "description": "Verifiable sources. Never invented.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "verdict": {
+      "$ref": "#/$defs/RecheckVerdict"
+    }
+  },
+  "required": [
+    "verdict",
+    "correctedKey",
+    "reasoning",
+    "sources"
+  ],
+  "title": "Revisão de gabarito",
+  "type": "object"
+}

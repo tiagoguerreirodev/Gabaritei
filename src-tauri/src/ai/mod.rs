@@ -12,12 +12,15 @@ pub mod discovery;
 pub mod draft;
 pub mod generate;
 pub mod jobs;
+pub mod ondemand;
 pub mod prompts;
+pub mod recheck;
 pub mod review;
 pub mod roles;
 pub mod runner;
 pub mod secrets;
 pub mod settings;
+mod task;
 
 pub use agent::{Agent, Effort};
 pub use runner::{

@@ -12,6 +12,8 @@ use crate::ai::blind_check;
 use crate::ai::discovery::{self, CliStatus};
 use crate::ai::generate::GenerateRequest;
 use crate::ai::jobs::{GenerationManager, GenerationStatus};
+use crate::ai::ondemand::OnDemand;
+use crate::ai::recheck::{self, RecheckView};
 use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportResult};
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, RemNoteTest};
@@ -375,6 +377,55 @@ pub async fn pick_attachments<R: Runtime>(app: AppHandle<R>) -> AppResult<Vec<St
     .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
+/// Asks the re-check role whether the key of a revealed question is right. Waits for the AI;
+/// the proposal stays in the backend until it is applied or dismissed.
+#[tauri::command]
+pub async fn recheck_ask<R: Runtime>(
+    app: AppHandle<R>,
+    attempt_id: String,
+    position: u32,
+) -> AppResult<RecheckView> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let secrets = app.state::<Secrets>();
+        let jobs = app.state::<OnDemand>();
+        recheck::ask_recheck(&db, &secrets, &jobs, &attempt_id, position)
+    })
+    .await
+    .map_err(|error| AppError::Internal(error.to_string()))?
+}
+
+/// Applies the key the AI proposed, after the user confirmed. Past attempts are re-scored.
+#[tauri::command]
+pub fn recheck_apply(
+    db: State<'_, Database>,
+    jobs: State<'_, OnDemand>,
+    attempt_id: String,
+    position: u32,
+) -> AppResult<AttemptView> {
+    db.transaction(|tx| {
+        recheck::apply(tx, &jobs, &attempt_id, position, &crate::clock::now())?;
+        attempts::load(tx, &attempt_id)
+    })
+}
+
+/// Drops the AI's proposal and keeps the current key.
+#[tauri::command]
+pub fn recheck_dismiss(
+    db: State<'_, Database>,
+    jobs: State<'_, OnDemand>,
+    attempt_id: String,
+    position: u32,
+) -> AppResult<()> {
+    db.with(|conn| recheck::dismiss(conn, &jobs, &attempt_id, position))
+}
+
+/// Cancels the on-demand AI request that is running (re-check or explain).
+#[tauri::command]
+pub fn ai_request_cancel(jobs: State<'_, OnDemand>) -> bool {
+    jobs.cancel()
+}
+
 /// Stops the running generation. Returns whether one was running.
 #[tauri::command]
 pub fn generation_cancel(manager: State<'_, GenerationManager>) -> bool {
@@ -425,6 +476,7 @@ mod tests {
             app.manage(db);
             app.manage(Secrets::memory());
             app.manage(GenerationManager::default());
+            app.manage(OnDemand::default());
             let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
                 .build()
                 .expect("mock webview builds");
@@ -648,6 +700,21 @@ mod tests {
             locked,
             Err(json!({ "message": "A resposta desta questão já foi revelada e não pode mudar." }))
         );
+    }
+
+    #[test]
+    fn ai_commands_need_a_revealed_question() {
+        let app = MockApp::new(solving_db());
+        let view = start(&app, "study");
+        let id = view["id"].clone();
+        for command in ["recheck_ask", "recheck_apply", "recheck_dismiss"] {
+            let early = app.call(command, json!({ "attemptId": id, "position": 0 }));
+            assert_eq!(
+                early,
+                Err(json!({ "message": "Só é possível usar a IA depois de ver o gabarito." })),
+                "{command}"
+            );
+        }
     }
 
     #[test]

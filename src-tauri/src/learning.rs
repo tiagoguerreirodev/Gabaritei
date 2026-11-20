@@ -289,6 +289,9 @@ pub struct LearningItem {
 pub struct LearningOverview {
     /// Reviews due now.
     pub due: u32,
+    /// Of the reviews due now, how many sit in an unfinished attempt: they stay due, but a new
+    /// session leaves them out.
+    pub due_in_open_attempt: u32,
     /// Reviews scheduled for later.
     pub upcoming: u32,
     /// Questions in the error notebook.
@@ -365,8 +368,14 @@ pub fn overview(conn: &Connection, now: &str, include_blanks: bool) -> AppResult
         !only_upcoming || upcoming_only <= MAX_UPCOMING_ROWS
     });
     let due = due_dates.values().filter(|d| d.as_str() <= now).count() as u32;
+    let in_open_attempt = open_attempt_questions(conn)?;
+    let due_in_open_attempt = due_dates
+        .iter()
+        .filter(|(q, d)| d.as_str() <= now && in_open_attempt.contains(*q))
+        .count() as u32;
     Ok(LearningOverview {
         due,
+        due_in_open_attempt,
         upcoming: due_dates.len() as u32 - due,
         errors: items.iter().filter(|i| i.is_error).count() as u32,
         practice: review_session(conn, now, MAX_SESSION)?.len() as u32,

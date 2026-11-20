@@ -11,6 +11,7 @@ use crate::attempts::{self, AttemptView, SessionStart};
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
+use crate::metrics::{self, Performance, PerformanceQuery};
 use crate::migrate::{self, LegacyImportOutcome, LegacyImportStatus};
 use crate::paths::AppPaths;
 
@@ -81,6 +82,45 @@ pub async fn import_legacy_bank<R: Runtime>(
         let paths = app.state::<AppPaths>();
         migrate::import_legacy_bank(&db, &paths.images_dir(), &source, &crate::clock::now())
             .map(Some)
+    })
+    .await
+    .map_err(|error| AppError::Internal(error.to_string()))?
+}
+
+/// Topic strength, weekly trend and filter options under the given filters.
+#[tauri::command]
+pub fn performance(db: State<'_, Database>, query: PerformanceQuery) -> AppResult<Performance> {
+    db.with(|conn| metrics::performance(conn, &query))
+}
+
+/// Asks where to save the performance table as CSV (using the same filters) and writes it.
+/// Returns `false` if the user cancels.
+#[tauri::command]
+pub async fn export_performance_csv<R: Runtime>(
+    app: AppHandle<R>,
+    query: PerformanceQuery,
+) -> AppResult<bool> {
+    let csv = app
+        .state::<Database>()
+        .with(|conn| metrics::export_csv(conn, &query))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(file) = app
+            .dialog()
+            .file()
+            .set_title("Exportar desempenho")
+            .set_file_name("desempenho.csv")
+            .add_filter("Planilha CSV", &["csv"])
+            .blocking_save_file()
+        else {
+            return Ok(false);
+        };
+        let path = file
+            .into_path()
+            .map_err(|_| AppError::Invalid("Escolha um local deste computador.".into()))?;
+        std::fs::write(&path, csv).map_err(|error| {
+            AppError::Invalid(format!("Não foi possível salvar o arquivo: {error}"))
+        })?;
+        Ok(true)
     })
     .await
     .map_err(|error| AppError::Internal(error.to_string()))?
@@ -444,6 +484,21 @@ mod tests {
         let info = current_app_info();
         assert_eq!(info.name, "Gabaritei");
         assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn performance_decodes_filters_and_returns_camel_case() {
+        let db = Database::open_in_memory().unwrap();
+        let performance = invoke_with(
+            "performance",
+            json!({ "query": { "contest": "TRT", "feedbackMode": "study", "utcOffsetMinutes": -180 } }),
+            db,
+        )
+        .expect("performance succeeds");
+        assert_eq!(performance["overall"]["score"]["evaluated"], json!(0));
+        assert_eq!(performance["overall"]["smallSample"], json!(true));
+        assert_eq!(performance["trend"], json!([]));
+        assert_eq!(performance["filters"]["contests"], json!([]));
     }
 
     #[test]

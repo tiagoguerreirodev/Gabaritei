@@ -88,6 +88,35 @@ jobs:
             exit 1
           fi
 
+  rust-test-windows:
+    name: Rust tests (Windows)
+    # The AI runner is only exercised for real on Windows here: .cmd shims, argument escaping
+    # and the process-tree kill (issue #49). Unix-only fake CLIs are skipped on this platform.
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          cache-on-failure: true
+
+      - name: cargo test
+        # The manifest makes the lib test executable start (see src-tauri/build.rs). The app's
+        # own executable already has one, so only the lib tests run here.
+        env:
+          GABARITEI_TEST_MANIFEST: "1"
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: cargo clippy (lints the cfg(windows) code)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib --tests -- -D warnings
+
   frontend:
     name: Frontend (lint, typecheck, test)
     runs-on: ubuntu-latest

@@ -79,9 +79,9 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         args.push("--mcp-config".into());
         args.push(config.to_string_lossy().into_owned());
     }
-    if !spec.instructions.is_empty() {
-        args.push("--append-system-prompt".into());
-        args.push(spec.instructions.clone());
+    if let Some(file) = &work.instructions {
+        args.push("--append-system-prompt-file".into());
+        args.push(file.to_string_lossy().into_owned());
     }
     // `RemNoteAccess::CodexConfig` only makes sense for Codex; Claude then gets no RemNote.
     Plan {

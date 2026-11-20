@@ -278,6 +278,10 @@ pub(super) struct Workdir {
     /// the agent's working directory, so the agent's file tools can't read the token.
     _config_dir: Option<tempfile::TempDir>,
     pub schema: PathBuf,
+    /// Claude's role instructions, passed by file. On Windows an npm install is a `.cmd` shim,
+    /// and Rust refuses newlines in the arguments of batch files (and `cmd.exe` caps a command
+    /// line at 8191 characters), so long multi-line text must not travel as an argument.
+    pub instructions: Option<PathBuf>,
     /// Where Codex writes its last message (`-o`).
     pub output: PathBuf,
     /// Claude's MCP config, if RemNote is on (outside the working directory).
@@ -318,23 +322,44 @@ impl Workdir {
             }
         }
 
-        let (config_dir, mcp_config) = match (&spec.agent, &spec.remnote) {
-            (Agent::Claude, Some(RemNoteAccess::Server { url, token, .. })) => {
-                let folder = tempfile::Builder::new()
+        // Files for the CLI itself live outside the run folder, so the agent's file tools
+        // (scoped to it) can't list or cite them. Holds the RemNote token and Claude's
+        // role instructions.
+        let claude_files = spec.agent == Agent::Claude
+            && (!spec.instructions.is_empty()
+                || matches!(spec.remnote, Some(RemNoteAccess::Server { .. })));
+        let config_dir = if claude_files {
+            Some(
+                tempfile::Builder::new()
                     .prefix("gabaritei-config-")
                     .tempdir()
-                    .map_err(workspace)?;
+                    .map_err(workspace)?,
+            )
+        } else {
+            None
+        };
+        let mut mcp_config = None;
+        let mut instructions = None;
+        if let Some(folder) = &config_dir {
+            if let (Agent::Claude, Some(RemNoteAccess::Server { url, token, .. })) =
+                (&spec.agent, &spec.remnote)
+            {
                 let path = folder.path().join("mcp.json");
                 write_private(&path, &claude::mcp_config(url, token)).map_err(workspace)?;
-                (Some(folder), Some(path))
+                mcp_config = Some(path);
             }
-            _ => (None, None),
-        };
+            if !spec.instructions.is_empty() {
+                let path = folder.path().join("instrucoes.md");
+                std::fs::write(&path, &spec.instructions).map_err(workspace)?;
+                instructions = Some(path);
+            }
+        }
 
         Ok(Self {
             _config_dir: config_dir,
             output: dir.path().join("saida.json"),
             schema,
+            instructions,
             mcp_config,
             has_attachments: !spec.attachments.is_empty(),
             dir,

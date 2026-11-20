@@ -1,3 +1,5 @@
+#![cfg_attr(not(unix), allow(dead_code, unused_imports))] // fake CLIs need `sh`
+
 use super::*;
 use crate::ai::agent::{Agent, Effort};
 use crate::ai::draft::{DraftRequest, GenerationInfo};

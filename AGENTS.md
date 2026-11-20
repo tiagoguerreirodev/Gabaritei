@@ -82,6 +82,8 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 ```
 
+On Windows, `cargo test` needs `GABARITEI_TEST_MANIFEST=1` and `--lib` (the test executable otherwise dies with `STATUS_ENTRYPOINT_NOT_FOUND`; see `src-tauri/build.rs`).
+
 ## Architecture rules
 
 - **Thin commands.** Tauri commands only decode input, call a domain function, and encode output. Domain functions are plain Rust you can test without Tauri.

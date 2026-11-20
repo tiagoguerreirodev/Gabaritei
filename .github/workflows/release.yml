@@ -6,10 +6,20 @@ on:
   workflow_dispatch:
   # Edits to this workflow are built too, so a broken release build shows up in the PR.
   pull_request:
-    paths: [.github/workflows/release.yml, src-tauri/tauri.conf.json, src-tauri/icons/**]
+    paths:
+      - .github/workflows/release.yml
+      - src-tauri/tauri.conf.json
+      - src-tauri/Cargo.toml
+      - src-tauri/build.rs
+      - src-tauri/icons/**
+      - package.json
 
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -57,7 +67,10 @@ jobs:
       - name: Build installer
         run: npm run tauri build -- --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
+      # Only manual runs upload: PR runs just prove the installers still build (and save quota).
+      # The .app is inside the .dmg, so the dmg is the macOS artifact.
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.glob }}

@@ -2,7 +2,7 @@
 
 A personal desktop app that **generates exam questions with AI agents**, checks them blind with a second model, and **tracks your performance** by area › matter › topic. Built for studying for Brazilian public exams (*concursos*). The interface is in Portuguese.
 
-> **Status:** features are complete through M6; M7 is packaging and Windows verification. Work is tracked in [Issues](../../issues) and grouped in milestones `M0`–`M7`.
+> **Status:** core features are in place, some M4–M6 issues are still open, and M7 covers packaging and Windows verification. Work is tracked in [Issues](../../issues) and grouped in milestones `M0`–`M7`.
 
 ## How it works
 - **Generation:** you pick a topic and a count, plus optional board style, format and instructions. Your locally installed **Claude Code** or **Codex** CLI writes the questions using your own subscription. It can read your RemNote notes, attached files and the web.
@@ -22,7 +22,7 @@ Tauri 2 (Rust) · Solid.js + TypeScript + Vite · SQLite (rusqlite) · KaTeX. Ta
 ## Install
 Installers are built by hand: in **Actions**, run the *Release build* workflow and download the artifacts. The version comes from `package.json` (keep it equal to `src-tauri/Cargo.toml`; a test checks this).
 - **Windows 11 x64:** run the `.exe` (NSIS). It installs for the current user only, with no admin prompt. Windows SmartScreen may warn about an unknown publisher: choose *More info* › *Run anyway*.
-- **macOS (Apple Silicon):** open the `.dmg` and drag Gabaritei to *Applications*. The app is only ad-hoc signed (no notarization), so the first launch needs right-click › *Open*. If macOS still refuses, run `xattr -dr com.apple.quarantine /Applications/Gabaritei.app`.
+- **macOS (Apple Silicon):** open the `.dmg` and drag Gabaritei to *Applications*. The app is only ad-hoc signed (no notarization), so macOS blocks the first launch. Run `xattr -dr com.apple.quarantine /Applications/Gabaritei.app` once (or, on macOS 15 and later, use System Settings › Privacy & Security › *Open Anyway*).
 - There is no auto-updater: install a newer build over the old one. Data lives in the OS app-data folder, so it survives reinstalling.
 - For the AI features, install and log in to `claude` and/or `codex` first.
 

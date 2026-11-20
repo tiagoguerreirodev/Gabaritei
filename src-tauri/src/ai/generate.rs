@@ -120,16 +120,6 @@ impl GenerateRequest {
             }
         }
         self.validate_attachments()?;
-        // Web pages are the one untrusted input. If one carried instructions, an agent that can
-        // also read the user's files or RemNote notes could send them out in a web request, so
-        // the web is never combined with those in the same run.
-        if self.sources.web && (self.sources.remnote || !self.sources.attachments.is_empty()) {
-            return Err(AppError::Invalid(
-                "Por segurança, a pesquisa na web não pode ser usada junto com anexos ou com o \
-RemNote na mesma geração. Escolha uma das fontes."
-                    .into(),
-            ));
-        }
         Ok(())
     }
 

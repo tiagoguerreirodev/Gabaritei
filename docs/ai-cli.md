@@ -91,13 +91,6 @@ codex exec - --output-schema schema.json -o saida.json --json
   (no writes), when it has. Codex has no other way to read attachments.
 - **RemNote token:** passed in the child's environment (`GABARITEI_REMNOTE_TOKEN`), never as an argument.
 
-## Web search is never combined with private sources
-
-Web pages are the one untrusted input. A page carrying instructions could make an agent that can
-also read the user's attachments or RemNote notes send them out in a request. So a generation
-cannot turn on the web together with attachments or RemNote (`GenerateRequest::validate`), and
-Codex's web search is additionally forced off whenever its shell is on. Each source alone is fine.
-
 ## Windows (not verified)
 
 Nothing here was run on Windows yet. Known risks to check on the Windows machine: npm installs give

@@ -585,3 +585,44 @@ fn annulling_leaves_every_denominator_and_unannulling_restores_it() {
     let restored = db.with(|c| load(c, &first.id)).unwrap().score.unwrap();
     assert_eq!(restored, before);
 }
+
+#[test]
+fn an_answered_exam_question_cannot_be_annulled_before_finish() {
+    let (db, _) = bank();
+    let view = start_collection(&db, FeedbackMode::Exam);
+    let choice = view.questions[0].options[0].id.clone();
+    db.transaction(|tx| answer(tx, &view.id, 0, Some(&choice), T1))
+        .unwrap();
+
+    for annulled in [true, false] {
+        let error = db
+            .transaction(|tx| set_annulled(tx, &view.id, 0, annulled, T1))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("depois de ver o gabarito"), "{error}");
+    }
+    let loaded = db.with(|c| load(c, &view.id)).unwrap();
+    loaded.questions.iter().for_each(assert_no_spoiler);
+    let annulled: i64 = db
+        .with(|c| {
+            Ok(c.query_row(
+                "SELECT COUNT(*) FROM questions WHERE annulled = 1",
+                [],
+                |r| r.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(annulled, 0);
+
+    // After finishing, the same question can be annulled.
+    let done = db
+        .transaction(|tx| finish(tx, &view.id, loaded.revision, T2))
+        .unwrap();
+    let done = db
+        .transaction(|tx| set_annulled(tx, &done.id, 0, true, T2))
+        .unwrap();
+    assert_eq!(
+        done.questions[0].reveal.as_ref().unwrap().outcome,
+        Outcome::Annulled
+    );
+}

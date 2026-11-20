@@ -405,6 +405,41 @@ mod tests {
     }
 
     #[test]
+    fn annul_commands_need_a_revealed_question() {
+        let app = MockApp::new(solving_db());
+        let view = start(&app, "study");
+        let id = view["id"].clone();
+        let option = view["questions"][0]["options"][0]["id"].clone();
+
+        let early = app.call("annul", json!({ "attemptId": id, "position": 0 }));
+        assert_eq!(
+            early,
+            Err(json!({ "message": "Só é possível anular uma questão depois de ver o gabarito." }))
+        );
+
+        app.call(
+            "answer",
+            json!({ "attemptId": id, "position": 0, "optionId": option }),
+        )
+        .expect("answer succeeds");
+        let annulled = app
+            .call("annul", json!({ "attemptId": id, "position": 0 }))
+            .expect("annul succeeds");
+        assert_eq!(annulled["questions"][0]["reveal"]["annulled"], json!(true));
+        assert_eq!(
+            annulled["questions"][0]["reveal"]["outcome"],
+            json!("annulled")
+        );
+        assert_hidden(&annulled["questions"][1]);
+
+        let restored = app
+            .call("unannul", json!({ "attemptId": id, "position": 0 }))
+            .expect("unannul succeeds");
+        assert_eq!(restored["questions"][0]["reveal"]["annulled"], json!(false));
+        assert_hidden(&restored["questions"][1]);
+    }
+
+    #[test]
     fn app_info_reports_name_and_crate_version() {
         let info = current_app_info();
         assert_eq!(info.name, "Gabaritei");

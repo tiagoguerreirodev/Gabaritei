@@ -156,26 +156,26 @@ describe("Gerar", () => {
     expect(await screen.findByText(/Assunto novo: será criado/)).toBeVisible();
   });
 
-  it("never combines the web with attachments or RemNote", async () => {
+  it("lets the web be combined with attachments and RemNote", async () => {
     const calls = backend();
     const user = userEvent.setup();
     renderPage();
     await fillTopic(user);
 
     await user.click(screen.getByRole("checkbox", { name: "Pesquisar na web" }));
-    expect(screen.getByRole("checkbox", { name: "RemNote" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Anexar arquivos" })).toBeDisabled();
-
-    await user.click(screen.getByRole("checkbox", { name: "Pesquisar na web" }));
+    await user.click(screen.getByRole("checkbox", { name: "RemNote" }));
     await user.click(screen.getByRole("button", { name: "Anexar arquivos" }));
     expect(await screen.findByText("Lei 8.112.md")).toBeVisible();
-    expect(screen.getByRole("checkbox", { name: "Pesquisar na web" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "Gerar" }));
     await waitFor(() => expect(calls.some((c) => c.command === "generation_start")).toBe(true));
     const request = calls.find((c) => c.command === "generation_start")!.args
       .request as GenerateRequest;
-    expect(request.sources.attachments).toEqual(["/tmp/Lei 8.112.md"]);
+    expect(request.sources).toEqual({
+      remnote: true,
+      web: true,
+      attachments: ["/tmp/Lei 8.112.md"],
+    });
   });
 
   it("explains that RemNote is off in Configurações", async () => {

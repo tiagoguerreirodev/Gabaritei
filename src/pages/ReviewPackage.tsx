@@ -6,7 +6,7 @@ import type { ImportMode } from "../bindings/ImportMode";
 import type { LineState } from "../bindings/LineState";
 import { ErrorState, Loading } from "../components/states";
 import { showError, showToast } from "../components/toasts";
-import { generationStatus } from "../generation";
+import { dismissGeneration, generationStatus } from "../generation";
 import { agentLabels, effortLabels } from "./settings/labels";
 
 const lineText: Record<LineState, string> = {
@@ -114,9 +114,37 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
     }
   };
 
+  /** Waits until the background job (the blind check) is done. */
+  const waitForJob = async () => {
+    for (;;) {
+      const status = await api.generationStatus();
+      if (!status.running) return;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+
   const importAs = (mode: ImportMode) => {
     const id = s().id;
+    const onChanged = props.onChanged;
+    const needsCheck = mode === "all" && (s().unchecked > 0 || s().checkFailed !== null);
     return run(async () => {
+      if (needsCheck) {
+        // "Importar tudo" imports checked questions only: check the unchecked ones first.
+        await api.blindCheckStart(id);
+        showToast("Conferindo as questões que faltavam. A importação segue sozinha.");
+        await waitForJob();
+        await dismissGeneration();
+        const after = await api.draftSummary(id);
+        if (after.unchecked > 0 || after.checkFailed !== null || after.problems.length > 0) {
+          onChanged();
+          showToast(
+            after.checkFailed !== null
+              ? `A conferência não terminou: ${after.checkFailed} Nada foi importado.`
+              : "O pacote ainda tem pendências. Nada foi importado.",
+          );
+          return;
+        }
+      }
       const result = await api.draftImport(id, mode);
       showToast(
         `${number(result.imported)} questões importadas para “${result.title}”` +
@@ -237,7 +265,9 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
             disabled={busy() || checking() || s().problems.length > 0}
             onClick={() => void importAs("all")}
           >
-            Importar tudo
+            {s().unchecked > 0 || s().checkFailed !== null
+              ? "Conferir e importar tudo"
+              : "Importar tudo"}
           </button>
           <button
             type="button"

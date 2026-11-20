@@ -127,17 +127,18 @@ pub(super) struct Captured {
     pub stderr: String,
 }
 
-/// Starts `command`, retrying briefly when Linux answers "text file busy" (`ETXTBSY`).
+/// Starts `command`, retrying briefly when the OS answers "text file busy" (`ETXTBSY`, Unix only).
 ///
 /// That error means another thread forked while the executable was still open for writing, which
 /// is only a race (it shows up when a script is written right before it runs) and clears within
 /// milliseconds.
 pub(super) fn spawn_retrying(command: &mut Command) -> std::io::Result<std::process::Child> {
-    const TEXT_FILE_BUSY: i32 = 26;
     let mut attempts = 0;
     loop {
         match command.spawn() {
-            Err(error) if error.raw_os_error() == Some(TEXT_FILE_BUSY) && attempts < 50 => {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 50 =>
+            {
                 attempts += 1;
                 std::thread::sleep(Duration::from_millis(10));
             }

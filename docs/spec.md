@@ -136,7 +136,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 
 ### 4.2 Running the CLIs
 
-The patterns below are **to verify at build time**; the flags come from the current docs.
+The patterns below were **verified against the installed CLIs** (Claude Code 2.1.329, codex-cli 0.171.0); the exact flags and behavior are recorded in [`docs/ai-cli.md`](ai-cli.md), which wins over the sketches here.
 
 - **Claude Code:** `claude -p "<prompt>" --output-format json --json-schema '<schema>' --model <m> --permission-mode dontAsk --allowedTools "<read-only list>" --mcp-config <remnote.json> --append-system-prompt "<role instructions>"`
   - The result is in the `structured_output` field. Check that the field is present before using it.
@@ -149,8 +149,8 @@ The patterns below are **to verify at build time**; the flags come from the curr
   - RemNote comes from your Codex config, so `--ignore-user-config` can't be used.
   - Still to confirm: whether web search needs a config switch, and the exact `-m` and effort keys.
 - **Working folder:** each run gets a fresh temporary folder. Attachments are copied into it and the agent reads them itself, so the app has no PDF parser.
-- **Tools:** read-only only, meaning file read, web search and fetch, and the RemNote read tools. No shell and no file edits. Sources and tool results are treated as data, never as instructions.
-- **Cancel and timeout:** SIGINT, then SIGTERM after a grace period.
+- **Tools:** read-only only, meaning file read, web search and fetch, and the RemNote read tools. No file edits and no shell, except Codex's shell inside its read-only sandbox, which is kept only when a run has attachments (owner-approved, 2026-11-20). Sources and tool results are treated as data, never as instructions.
+- **Cancel and timeout:** SIGINT to the process group, then SIGKILL after a short grace period (on Windows the process tree is ended with `taskkill /T /F`).
 - **Policy:** the app never handles Claude or OpenAI credentials. It runs the CLI you logged into yourself. Anthropic doesn't allow third-party products to offer claude.ai login, and this app doesn't.
 
 ---
@@ -210,6 +210,6 @@ That's 11 tables, down from 16.
 | Count per generation | 1–30. Each question goes through the blind check, so large batches are slow. |
 | Import with disputed questions | Two buttons: **Import all** (disputed questions get a badge after you answer) and **Import agreed only**. |
 | Topic session order | Unseen questions first, then least recently answered, with annulled questions excluded |
-| Role defaults | Generate: a cheaper model at medium effort. Blind check and Re-check: the strongest model at high effort. Explain: a cheaper model. Set on first run in Settings. |
+| Role defaults | Owner decision (2026-11-20): **every role defaults to Codex `gpt-6.2-sol` at extra-high effort** (Generate, Blind check, Re-check and Explain). Set on first run in Settings and editable per role. |
 | `Estudo` lock rule | Once revealed, a question's choice can't change |
 | Export file name | `Gabaritei-<date>.gabaritei` (a zip) |

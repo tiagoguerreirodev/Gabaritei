@@ -69,6 +69,12 @@ export const api = {
   /** Finishes the attempt; `revision` must be the latest one seen. */
   finish: (attemptId: string, revision: number) =>
     call<AttemptView>("finish", { attemptId, revision }),
+  /** Annuls a revealed question: it leaves every score until restored. */
+  annul: (attemptId: string, position: number) =>
+    call<AttemptView>("annul", { attemptId, position }),
+  /** Restores an annulled question to every score. */
+  unannul: (attemptId: string, position: number) =>
+    call<AttemptView>("unannul", { attemptId, position }),
   /** Deletes an unfinished attempt. */
   abandon: (attemptId: string) => call<null>("abandon", { attemptId }),
 };

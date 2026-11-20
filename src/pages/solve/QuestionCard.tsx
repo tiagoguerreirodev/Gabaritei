@@ -30,6 +30,8 @@ export default function QuestionCard(props: {
   onAnswer: (optionId: string) => void;
   onEliminate: (optionId: string) => void;
   onFlag: () => void;
+  /** Annuls the revealed question, or restores it with `false`. */
+  onAnnul: (annulled: boolean) => void;
 }) {
   const letters = () => optionLetters(props.question);
   const reveal = () => props.question.reveal;
@@ -134,6 +136,16 @@ export default function QuestionCard(props: {
                 <For each={revealed().refs}>{(ref) => <li>{ref}</li>}</For>
               </ul>
             </Show>
+            <div class="reveal-actions">
+              <button type="button" onClick={() => props.onAnnul(!revealed().annulled)}>
+                {revealed().annulled ? "Desfazer anulação" : "Anular questão"}
+              </button>
+              <span class="muted">
+                {revealed().annulled
+                  ? "Fora de todas as pontuações, inclusive das tentativas anteriores."
+                  : "Use se a questão estiver errada ou ambígua: ela sai de todas as pontuações."}
+              </span>
+            </div>
           </section>
         )}
       </Show>

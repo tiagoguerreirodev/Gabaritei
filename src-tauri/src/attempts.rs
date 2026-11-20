@@ -712,6 +712,38 @@ pub fn finish(conn: &Connection, id: &str, revision: u32, now: &str) -> AppResul
     load(conn, id)
 }
 
+/// Annuls (or restores) the question at `position`, removing it from (or returning it to)
+/// every score. Only allowed once that question is revealed in this attempt, so annulling
+/// never gives an answer away. Applies to every attempt, since scores read current state.
+pub fn set_annulled(
+    conn: &Connection,
+    id: &str,
+    position: u32,
+    annulled: bool,
+    now: &str,
+) -> AppResult<AttemptView> {
+    load_header(conn, id)?;
+    let (question_id, revealed) = conn
+        .query_row(
+            "SELECT question_id, revealed_at IS NOT NULL FROM responses
+             WHERE attempt_id = ?1 AND position = ?2",
+            params![id, position],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Invalid("Questão não encontrada nesta tentativa.".into()))?;
+    if !revealed {
+        return Err(AppError::Invalid(
+            "Só é possível anular uma questão depois de ver o gabarito.".into(),
+        ));
+    }
+    conn.execute(
+        "UPDATE questions SET annulled = ?2, updated_at = ?3 WHERE id = ?1",
+        params![question_id, annulled, now],
+    )?;
+    load(conn, id)
+}
+
 /// Deletes an unfinished attempt. Finished attempts are history and are kept forever.
 pub fn abandon(conn: &Connection, id: &str) -> AppResult<()> {
     let header = load_header(conn, id)?;

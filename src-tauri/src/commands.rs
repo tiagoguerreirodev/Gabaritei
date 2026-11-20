@@ -149,6 +149,26 @@ pub fn finish(
     db.transaction(|tx| attempts::finish(tx, &attempt_id, revision, &crate::clock::now()))
 }
 
+/// Annuls a revealed question: it leaves every score until restored.
+#[tauri::command]
+pub fn annul(db: State<'_, Database>, attempt_id: String, position: u32) -> AppResult<AttemptView> {
+    db.transaction(|tx| {
+        attempts::set_annulled(tx, &attempt_id, position, true, &crate::clock::now())
+    })
+}
+
+/// Restores an annulled question to every score.
+#[tauri::command]
+pub fn unannul(
+    db: State<'_, Database>,
+    attempt_id: String,
+    position: u32,
+) -> AppResult<AttemptView> {
+    db.transaction(|tx| {
+        attempts::set_annulled(tx, &attempt_id, position, false, &crate::clock::now())
+    })
+}
+
 /// Deletes an unfinished attempt.
 #[tauri::command]
 pub fn abandon(db: State<'_, Database>, attempt_id: String) -> AppResult<()> {
@@ -382,6 +402,41 @@ mod tests {
             locked,
             Err(json!({ "message": "A resposta desta questão já foi revelada e não pode mudar." }))
         );
+    }
+
+    #[test]
+    fn annul_commands_need_a_revealed_question() {
+        let app = MockApp::new(solving_db());
+        let view = start(&app, "study");
+        let id = view["id"].clone();
+        let option = view["questions"][0]["options"][0]["id"].clone();
+
+        let early = app.call("annul", json!({ "attemptId": id, "position": 0 }));
+        assert_eq!(
+            early,
+            Err(json!({ "message": "Só é possível anular uma questão depois de ver o gabarito." }))
+        );
+
+        app.call(
+            "answer",
+            json!({ "attemptId": id, "position": 0, "optionId": option }),
+        )
+        .expect("answer succeeds");
+        let annulled = app
+            .call("annul", json!({ "attemptId": id, "position": 0 }))
+            .expect("annul succeeds");
+        assert_eq!(annulled["questions"][0]["reveal"]["annulled"], json!(true));
+        assert_eq!(
+            annulled["questions"][0]["reveal"]["outcome"],
+            json!("annulled")
+        );
+        assert_hidden(&annulled["questions"][1]);
+
+        let restored = app
+            .call("unannul", json!({ "attemptId": id, "position": 0 }))
+            .expect("unannul succeeds");
+        assert_eq!(restored["questions"][0]["reveal"]["annulled"], json!(false));
+        assert_hidden(&restored["questions"][1]);
     }
 
     #[test]

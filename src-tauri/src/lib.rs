@@ -53,6 +53,8 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::flag,
             commands::finish,
             commands::abandon,
+            commands::annul,
+            commands::unannul,
         ])
 }
 

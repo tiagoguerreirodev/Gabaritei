@@ -1145,3 +1145,42 @@ button {
   color: var(--danger);
   font-size: 0.85rem;
 }
+
+.learning-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.learning-blanks {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.learning-list {
+  margin: 0;
+  padding: 0;
+  max-width: 56rem;
+  list-style: none;
+}
+
+.learning-list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.15rem 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.learning-list button {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: center;
+}
+
+.learning-topic {
+  font-weight: 600;
+}

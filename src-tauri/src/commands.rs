@@ -200,6 +200,65 @@ fn ensure_not_backing_up(service: &BackupService) -> AppResult<()> {
     Ok(())
 }
 
+/// Asks where to save the data file and writes it. `false` if the user cancels.
+#[tauri::command]
+pub async fn export_data<R: Runtime>(app: AppHandle<R>) -> AppResult<bool> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let now = crate::clock::now();
+        let Some(file) = app
+            .dialog()
+            .file()
+            .set_title("Exportar dados")
+            .set_file_name(crate::backup::datafile::file_name(&now))
+            .add_filter("Dados do Gabaritei", &[crate::backup::datafile::EXTENSION])
+            .blocking_save_file()
+        else {
+            return Ok(false);
+        };
+        let dest = file
+            .into_path()
+            .map_err(|_| AppError::Invalid("Escolha um local deste computador.".into()))?;
+        let db = app.state::<Database>();
+        let paths = app.state::<AppPaths>();
+        let service = app.state::<BackupService>();
+        service.export(&db, &paths, &dest, &now).map(|()| true)
+    })
+    .await
+    .map_err(|error| AppError::Internal(error.to_string()))?
+}
+
+/// Asks for a data file and replaces the local data with it, after a safety backup. `false` if
+/// the user cancels. Not while a generation runs.
+#[tauri::command]
+pub async fn import_data<R: Runtime>(app: AppHandle<R>) -> AppResult<bool> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(file) = app
+            .dialog()
+            .file()
+            .set_title("Importar dados")
+            .add_filter("Dados do Gabaritei", &[crate::backup::datafile::EXTENSION])
+            .blocking_pick_file()
+        else {
+            return Ok(false);
+        };
+        let source = file
+            .into_path()
+            .map_err(|_| AppError::Invalid("Escolha um arquivo deste computador.".into()))?;
+        let db = app.state::<Database>();
+        let paths = app.state::<AppPaths>();
+        let service = app.state::<BackupService>();
+        let generation = app.state::<GenerationManager>();
+        let on_demand = app.state::<OnDemand>();
+        service.import(&db, &paths, &source, &crate::clock::now(), || {
+            ensure_no_ai_job(&generation, &on_demand, "importar")
+        })?;
+        on_demand.clear_proposals();
+        Ok(true)
+    })
+    .await
+    .map_err(|error| AppError::Internal(error.to_string()))?
+}
+
 /// Topic strength, weekly trend and filter options under the given filters.
 #[tauri::command(async)]
 pub fn performance(db: State<'_, Database>, query: PerformanceQuery) -> AppResult<Performance> {

@@ -32,6 +32,7 @@ rand = "0.9"
 tempfile = "3"
 keyring = "4"
 ureq = "3"
+zip = { version = "9.8.1", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

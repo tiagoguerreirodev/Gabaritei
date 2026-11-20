@@ -4,7 +4,10 @@
 //! here so a retry of the blind check can give the generator the same files it wrote from. They
 //! are removed when the draft is imported or discarded.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+use rusqlite::Connection;
 
 use crate::error::{AppError, AppResult};
 
@@ -81,6 +84,37 @@ pub fn remove(root: &Path, draft_id: &str) {
     }
 }
 
+/// Deletes every folder under `root` whose draft is missing or no longer in `review`. Run at
+/// startup, when no generation can be running: a kill during a generation, or a draft removed
+/// another way, can leave a folder behind. Best effort per entry; returns how many were removed.
+pub fn sweep(conn: &Connection, root: &Path) -> AppResult<usize> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Ok(0); // no folder yet: nothing to sweep
+    };
+    let mut statement = conn.prepare("SELECT id FROM drafts WHERE status = 'review'")?;
+    let waiting: HashSet<String> = statement
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let keep = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| waiting.contains(name));
+        if keep {
+            continue;
+        }
+        let path = entry.path();
+        let gone = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        removed += usize::from(gone.is_ok());
+    }
+    Ok(removed)
+}
+
 fn bad_id() -> AppError {
     AppError::Internal("invalid draft id".into())
 }
@@ -146,5 +180,52 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         assert!(keep(root.path(), "d1", &[]).unwrap().is_empty());
         assert!(!root.path().join("d1").exists());
+    }
+
+    fn insert_draft(conn: &Connection, id: &str, status: &str) {
+        conn.execute(
+            "INSERT INTO drafts (id, created_at, status, request, package) \
+             VALUES (?1, '2026-01-01T00:00:00Z', ?2, '{}', '{}')",
+            (id, status),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn sweep_removes_folders_of_drafts_that_are_missing_or_not_in_review() {
+        let db = crate::db::Database::open_in_memory().unwrap();
+        let source = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let file = source.path().join("a.md");
+        std::fs::write(&file, "x").unwrap();
+        db.with(|conn| {
+            insert_draft(conn, "waiting", "review");
+            insert_draft(conn, "done", "imported");
+            insert_draft(conn, "dropped", "discarded");
+            Ok(())
+        })
+        .unwrap();
+        for id in ["waiting", "done", "dropped", "orphan"] {
+            keep(root.path(), id, std::slice::from_ref(&file)).unwrap();
+        }
+        std::fs::write(root.path().join("stray.txt"), "x").unwrap();
+
+        let removed = db.with(|conn| sweep(conn, root.path())).unwrap();
+
+        assert_eq!(removed, 4);
+        assert_eq!(load(root.path(), "waiting").unwrap().len(), 1);
+        for id in ["done", "dropped", "orphan"] {
+            assert!(!root.path().join(id).exists(), "{id}");
+        }
+        assert!(!root.path().join("stray.txt").exists());
+    }
+
+    #[test]
+    fn sweep_without_a_folder_does_nothing() {
+        let db = crate::db::Database::open_in_memory().unwrap();
+        let parent = tempfile::tempdir().unwrap();
+        let missing = parent.path().join("draft-files");
+        assert_eq!(db.with(|conn| sweep(conn, &missing)).unwrap(), 0);
+        assert!(!missing.exists());
     }
 }

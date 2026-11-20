@@ -99,6 +99,8 @@ fn open_state(data_dir: PathBuf) -> AppResult<(db::Database, paths::AppPaths)> {
     let paths = paths::AppPaths::new(data_dir);
     let database = db::Database::open(&paths.database())?;
     database.with(|conn| ai::blind_check::recover_interrupted(conn))?;
+    // Attachment copies of drafts that are gone (a kill mid-generation, a draft removed another way).
+    database.with(|conn| ai::draft_files::sweep(conn, &paths.draft_files_dir()))?;
     // Reviews are derived: history from before the feature, or a restored backup, gets its schedule.
     database.transaction(|tx| learning::refresh_all(tx))?;
     Ok((database, paths))

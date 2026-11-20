@@ -15,7 +15,7 @@ against the installed CLIs with real runs, not only `--help`.
 |---|---|
 | Spawning | No shell. `Command` with an argument list. Stdout and stderr are piped. |
 | Prompt | Written to **stdin**, then stdin is closed. This keeps answer keys out of the process list and avoids argument length limits. |
-| Working folder | A fresh temp folder per run (`gabaritei-run-*`), deleted afterwards. It holds `schema.json`, `anexos/` (attachments copied in) and, for Claude with RemNote, `mcp.json`. |
+| Working folder | A fresh temp folder per run (`gabaritei-run-*`), deleted afterwards. It holds `schema.json` and `anexos/` (attachments copied in). |
 | API keys | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and `CODEX_API_KEY` are removed from the child's environment, so a CLI can't silently bill an API key instead of the user's login. |
 | Cancel / timeout | Unix: `SIGINT` to the process group, a grace period (3 s), then `SIGKILL` to the group, always, to catch children. Windows: `taskkill /T /F`. Default timeout 20 min. |
 | Progress | Only fixed pt-BR labels ("Lendo as fontes…"), never model text, so a generation can't leak a question through progress events. |
@@ -45,8 +45,10 @@ claude -p --output-format stream-json --verbose --json-schema '<schema>'
   project `CLAUDE.md` or `.mcp.json` is found.
 - **Not `--bare`:** bare mode reads only `ANTHROPIC_API_KEY`, skipping the subscription login.
 - **Events used:** `system`/`init`, `assistant` (`tool_use` names), `result`.
-- **RemNote:** `mcp.json` with an `http` server and an `Authorization: Bearer` header, written in the
-  temp folder and deleted with it. The token is never an argument.
+- **RemNote:** `mcp.json` with an `http` server and an `Authorization: Bearer` header, written (mode
+  0600) in a **separate** temp folder, not under the working directory, so the agent's file tools
+  (scoped to the run folder) can't read the token. Deleted after the run. The token is never an
+  argument.
 - **File scope (verified):** `Read(./**)` lets the agent read inside the run folder only. A read of a
   file outside it is denied (`permission_denials` lists it).
 - **RemNote tools are an allowlist:** only the exact tool names the user approved in Configurações

@@ -12,6 +12,12 @@ const old = {
   createdAt: "2026-11-18T10:00:00.000Z",
   sizeBytes: 3 * 1024 * 1024,
 } as const;
+const manual = {
+  name: "manual-20261119-090000-000",
+  kind: "manual",
+  createdAt: "2026-11-19T09:00:00.000Z",
+  sizeBytes: 2 * 1024 * 1024,
+} as const;
 const safety = {
   name: "safety-20261119-120000-000",
   kind: "safety",
@@ -23,7 +29,7 @@ function backend(initial: Partial<BackupStatus> = {}, fail: Record<string, strin
   let status: BackupStatus = {
     folder: "/dados/backups",
     isDefaultFolder: true,
-    backups: [safety, old],
+    backups: [safety, manual, old],
     lastError: null,
     ...initial,
   };
@@ -66,12 +72,13 @@ describe("BackupSection", () => {
 
     expect(await screen.findByTestId("backup-folder")).toHaveTextContent("/dados/backups");
     const items = screen.getAllByRole("listitem");
-    expect(items).toHaveLength(2);
-    expect(within(items[0] as HTMLElement).getByText("antes de restaurar")).toBeInTheDocument();
-    expect(
-      within(items[1] as HTMLElement).queryByText("antes de restaurar"),
-    ).not.toBeInTheDocument();
-    expect(within(items[1] as HTMLElement).getByText(/3 MB/)).toBeInTheDocument();
+    expect(items).toHaveLength(3);
+    const [first, second, third] = items as [HTMLElement, HTMLElement, HTMLElement];
+    expect(within(first).getByText("antes de restaurar")).toBeInTheDocument();
+    expect(within(second).getByText("manual")).toBeInTheDocument();
+    expect(within(third).queryByText("antes de restaurar")).not.toBeInTheDocument();
+    expect(within(third).queryByText("manual")).not.toBeInTheDocument();
+    expect(within(third).getByText(/3 MB/)).toBeInTheDocument();
   });
 
   it("makes a backup now and shows it", async () => {
@@ -88,7 +95,7 @@ describe("BackupSection", () => {
 
     expect(await screen.findByText("Backup feito.")).toBeInTheDocument();
     expect(calls.map((c) => c.command)).toContain("backup_now");
-    expect(await screen.findAllByRole("listitem")).toHaveLength(3);
+    expect(await screen.findAllByRole("listitem")).toHaveLength(4);
   });
 
   it("changes the folder and goes back to the default one", async () => {

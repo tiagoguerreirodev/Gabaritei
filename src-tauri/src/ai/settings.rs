@@ -18,7 +18,9 @@ use super::secrets::Secrets;
 use crate::db::{get_setting, set_setting};
 use crate::error::{AppError, AppResult};
 
-const KEY_ROLES: &str = "ai.roles";
+/// Agent, model and effort per role. Kept when data from another computer is restored: the
+/// models and CLIs available can differ between computers.
+pub const KEY_ROLES: &str = "ai.roles";
 /// Where the CLIs are on this computer. Kept when data from another computer is restored.
 pub const KEY_CLI_PATHS: &str = "ai.cliPaths";
 /// The RemNote connection. Kept when data from another computer is restored: the keychain token

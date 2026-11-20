@@ -19,7 +19,7 @@ use serde::Serialize;
 use time::OffsetDateTime;
 use ts_rs::TS;
 
-use crate::ai::settings::{KEY_CLI_PATHS, KEY_REMNOTE};
+use crate::ai::settings::{KEY_CLI_PATHS, KEY_REMNOTE, KEY_ROLES};
 use crate::db::{Database, get_setting, set_setting};
 use crate::error::{AppError, AppResult};
 use crate::paths::AppPaths;
@@ -28,10 +28,13 @@ use crate::paths::AppPaths;
 const KEY_FOLDER: &str = "backup.folder";
 /// Settings that describe this computer. Restoring or importing data from another computer
 /// must not overwrite them.
-pub const LOCAL_SETTINGS: &[&str] = &[KEY_FOLDER, KEY_CLI_PATHS, KEY_REMNOTE];
+pub const LOCAL_SETTINGS: &[&str] = &[KEY_FOLDER, KEY_CLI_PATHS, KEY_REMNOTE, KEY_ROLES];
 
-/// Automatic backups kept (also counts the ones made by hand).
+/// Daily backups kept.
 const KEEP_BACKUPS: usize = 7;
+/// Backups made by hand with "Fazer backup agora" kept. Apart from the daily ones, so pressing
+/// the button never pushes a daily backup out.
+const KEEP_MANUAL: usize = 7;
 /// Safety backups kept.
 const KEEP_SAFETY: usize = 5;
 /// A new automatic backup is due when the newest one is older than this.
@@ -43,8 +46,10 @@ const MAX_FOLDER: usize = 1_000;
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum BackupKind {
-    /// Daily, or "Fazer backup agora".
+    /// The daily automatic backup.
     Backup,
+    /// "Fazer backup agora".
+    Manual,
     /// Made right before a restore or import replaced the data.
     Safety,
 }
@@ -53,6 +58,7 @@ impl BackupKind {
     fn prefix(self) -> &'static str {
         match self {
             Self::Backup => "backup",
+            Self::Manual => "manual",
             Self::Safety => "safety",
         }
     }
@@ -60,6 +66,7 @@ impl BackupKind {
     fn keep(self) -> usize {
         match self {
             Self::Backup => KEEP_BACKUPS,
+            Self::Manual => KEEP_MANUAL,
             Self::Safety => KEEP_SAFETY,
         }
     }
@@ -99,11 +106,9 @@ fn stamp(created_at: &str) -> String {
 
 /// The kind a folder name says it is, if it is a backup name at all.
 fn parse_name(name: &str) -> Option<BackupKind> {
-    let (kind, rest) = if let Some(rest) = name.strip_prefix("backup-") {
-        (BackupKind::Backup, rest)
-    } else {
-        (BackupKind::Safety, name.strip_prefix("safety-")?)
-    };
+    let (kind, rest) = [BackupKind::Backup, BackupKind::Manual, BackupKind::Safety]
+        .into_iter()
+        .find_map(|kind| Some((kind, name.strip_prefix(kind.prefix())?.strip_prefix('-')?)))?;
     let shape = rest.len() == 19
         && rest.bytes().enumerate().all(|(index, byte)| match index {
             8 | 15 => byte == b'-',
@@ -224,7 +229,7 @@ impl BackupService {
         self.exclusive(|| {
             let result = db
                 .with(|conn| folder(conn, paths))
-                .and_then(|folder| create(db, paths, &folder, BackupKind::Backup, now, true));
+                .and_then(|folder| create(db, paths, &folder, BackupKind::Manual, now, true));
             self.remember(&result);
             result
         })
@@ -687,6 +692,7 @@ mod tests {
         f.db.with(|conn| {
             set_setting(conn, KEY_CLI_PATHS, &"windows-path")?;
             set_setting(conn, KEY_REMNOTE, &"http://remote.example/mcp")?;
+            set_setting(conn, KEY_ROLES, &"roles from the other computer")?;
             set_setting(conn, "other", &"from the backup")
         })
         .unwrap();
@@ -694,6 +700,7 @@ mod tests {
         f.db.with(|conn| {
             set_setting(conn, KEY_CLI_PATHS, &"mac-path")?;
             set_setting(conn, KEY_REMNOTE, &"http://localhost/mcp")?;
+            set_setting(conn, KEY_ROLES, &"roles of this computer")?;
             set_setting(conn, "other", &"changed")?;
             set_setting(conn, KEY_FOLDER, &"/elsewhere")
         })
@@ -722,6 +729,10 @@ mod tests {
             assert_eq!(
                 get_setting::<String>(conn, KEY_REMNOTE)?.as_deref(),
                 Some("http://localhost/mcp")
+            );
+            assert_eq!(
+                get_setting::<String>(conn, KEY_ROLES)?.as_deref(),
+                Some("roles of this computer")
             );
             assert_eq!(
                 get_setting::<String>(conn, KEY_FOLDER)?.as_deref(),
@@ -785,6 +796,52 @@ mod tests {
             all.iter().filter(|b| b.kind == BackupKind::Backup).count(),
             7
         );
+    }
+
+    #[test]
+    fn manual_backups_are_kept_apart_from_the_daily_ones() {
+        let f = fixture();
+        let folder = default_folder(&f.paths);
+        let service = BackupService::default();
+        for day in 1..=3 {
+            backup(&f, &format!("2026-11-{day:02}T10:00:00.000Z"));
+        }
+        // Pressing the button many times never pushes a daily backup out...
+        for minute in 0..9 {
+            let made = service
+                .backup_now(
+                    &f.db,
+                    &f.paths,
+                    &format!("2026-11-04T10:{minute:02}:00.000Z"),
+                )
+                .unwrap();
+            assert_eq!(made.kind, BackupKind::Manual);
+            assert!(made.name.starts_with("manual-"));
+        }
+        let all = list(&folder);
+        assert_eq!(
+            all.iter().filter(|b| b.kind == BackupKind::Backup).count(),
+            3
+        );
+        // ...and keeps only the newest manual ones.
+        assert_eq!(
+            all.iter().filter(|b| b.kind == BackupKind::Manual).count(),
+            7
+        );
+        assert!(all.iter().all(|b| b.name != "manual-20261104-100000-000"));
+        // Manual backups are not the daily one: it is due a day after the last daily backup,
+        // however many manual ones exist.
+        let at = |time| service.backup_if_due(&f.db, &f.paths, time).unwrap();
+        assert!(at(datetime!(2026-11-04 09:30:00 UTC)).is_none());
+        assert!(at(datetime!(2026-11-04 11:00:00 UTC)).is_some());
+        // A manual backup can be restored like any other.
+        restore(
+            &f.db,
+            &f.paths,
+            "manual-20261104-100800-000",
+            "2026-11-06T10:00:00.000Z",
+        )
+        .unwrap();
     }
 
     #[test]

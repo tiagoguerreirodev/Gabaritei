@@ -8,8 +8,14 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{AppError, AppResult};
 
-fn folder(root: &Path, draft_id: &str) -> PathBuf {
-    root.join(draft_id)
+/// The draft's folder, or `None` if the id is not a single plain name. Draft ids reach commands
+/// from the frontend, so `..`, separators and absolute paths must never leave `root`.
+fn folder(root: &Path, draft_id: &str) -> Option<PathBuf> {
+    let valid = !draft_id.is_empty()
+        && draft_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    valid.then(|| root.join(draft_id))
 }
 
 /// Copies `files` into the draft's folder and returns the copies, in order. Names are numbered
@@ -18,7 +24,7 @@ pub fn keep(root: &Path, draft_id: &str, files: &[PathBuf]) -> AppResult<Vec<Pat
     if files.is_empty() {
         return Ok(Vec::new());
     }
-    let target = folder(root, draft_id);
+    let target = folder(root, draft_id).ok_or_else(bad_id)?;
     std::fs::create_dir_all(&target)?;
     files
         .iter()
@@ -37,7 +43,9 @@ pub fn keep(root: &Path, draft_id: &str, files: &[PathBuf]) -> AppResult<Vec<Pat
 
 /// The kept copies of a draft, in the order they were attached. Empty if there are none.
 pub fn load(root: &Path, draft_id: &str) -> AppResult<Vec<PathBuf>> {
-    let target = folder(root, draft_id);
+    let Some(target) = folder(root, draft_id) else {
+        return Ok(Vec::new());
+    };
     if !target.is_dir() {
         return Ok(Vec::new());
     }
@@ -52,7 +60,13 @@ pub fn load(root: &Path, draft_id: &str) -> AppResult<Vec<PathBuf>> {
 
 /// Deletes a draft's kept copies. Best effort: a leftover folder is harmless.
 pub fn remove(root: &Path, draft_id: &str) {
-    let _ = std::fs::remove_dir_all(folder(root, draft_id));
+    if let Some(target) = folder(root, draft_id) {
+        let _ = std::fs::remove_dir_all(target);
+    }
+}
+
+fn bad_id() -> AppError {
+    AppError::Internal("invalid draft id".into())
 }
 
 #[cfg(test)]
@@ -80,6 +94,22 @@ mod tests {
         remove(root.path(), "d1");
         assert!(load(root.path(), "d1").unwrap().is_empty());
         remove(root.path(), "d1"); // already gone: no panic
+    }
+
+    #[test]
+    fn an_id_that_is_not_a_plain_name_never_leaves_the_folder() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("draft-files");
+        std::fs::create_dir(&root).unwrap();
+        let outside = parent.path().join("keep");
+        std::fs::create_dir(&outside).unwrap();
+        for id in ["..", "../keep", "", "/etc", "a/b", "a\\b", "."] {
+            remove(&root, id);
+            assert!(load(&root, id).unwrap().is_empty());
+            assert!(keep(&root, id, &[outside.join("x")]).is_err(), "{id:?}");
+        }
+        assert!(outside.is_dir(), "nothing outside the root was removed");
+        assert!(root.is_dir());
     }
 
     #[test]

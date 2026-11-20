@@ -110,3 +110,27 @@ is untested; `taskkill /T /F` is the only cancel path (no SIGINT).
 - Models are passed as `--model=<m>` so a value can never be read as another flag.
 - Not checked: the exact wording of every login failure (both CLIs were logged in during
   verification). The runner matches several phrases; tests cover them with fakes.
+
+## Windows (issue #49)
+
+Checked by the `rust-test-windows` CI job (`windows-latest`) with batch-file fake CLIs:
+
+- **`.cmd` shims work.** A `claude.cmd` given the real argument list (JSON schema with quotes) and
+  a codex `.cmd` run and return their answers.
+- **Long, multi-line text never travels as an argument.** Rust refuses newlines in the arguments of
+  batch files and `cmd.exe` caps a command line at 8191 characters. The role instructions went in
+  a long `--append-system-prompt` argument, so they now go through
+  `--append-system-prompt-file <run folder>/instrucoes.md` (verified with the real `claude`).
+  The prompt is on stdin; the schema is the only large argument left (compact JSON, no newlines;
+  a test keeps all arguments under 4,000 characters in total).
+- **Timeout and cancel end the whole tree.** `taskkill /PID <pid> /T /F` removes a child started
+  with `start /b` as well as the batch process.
+- **Discovery** tries `<name>.exe` then `<name>.cmd` in each folder.
+- CI runs `cargo test --lib` only, with `GABARITEI_TEST_MANIFEST=1` (see `src-tauri/build.rs`):
+  without a Common Controls v6 manifest the Windows test executable dies at startup with
+  `STATUS_ENTRYPOINT_NOT_FOUND`.
+
+Still to check by hand on the Windows 11 machine, with the real CLIs:
+
+- Codex's read-only sandbox on Windows (can it read `anexos/`?).
+- A real `claude` / `codex` run end to end from the installed app (login probe, generation, blind check).

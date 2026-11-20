@@ -4,6 +4,9 @@ name: Release build
 # the macOS app is ad-hoc signed, so the first launch needs right-click > Open.
 on:
   workflow_dispatch:
+  # Edits to this workflow are built too, so a broken release build shows up in the PR.
+  pull_request:
+    paths: [.github/workflows/release.yml, src-tauri/tauri.conf.json, src-tauri/icons/**]
 
 permissions:
   contents: read

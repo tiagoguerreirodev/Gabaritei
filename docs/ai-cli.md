@@ -89,6 +89,27 @@ codex exec - --output-schema schema.json -o saida.json --json
   --disable unified_exec` leaves it unable to read attachments (verified: it answered "can't read").
   So the shell is disabled when a run has no attachments, and kept, inside `--sandbox read-only`
   (no writes), when it has. Codex has no other way to read attachments.
+- **What the read-only sandbox can read (investigated for #53, codex-cli 0.171.0, Linux):**
+  `--sandbox read-only` lets the shell read **any** file the user can read. Verified: with the
+  run folder as cwd, `cat <absolute path outside the run folder>` returned the contents of a canary
+  file. So a prompt-injected page or attachment could make Codex read, say, `~/.ssh`, and the
+  answer (or a web-search query) could carry it out.
+- **Narrowing it works with a permissions profile (verified on Linux):** replacing `--sandbox` with
+  `-c default_permissions="gab" -c 'permissions.gab.filesystem={":minimal"="read", "<codex install dir>"="read", ":workspace_roots"={"."="read"}}'`
+  (run folder as cwd) let `cat anexos/a.md` work and made the same canary file outside the run
+  folder invisible ("No such file"). Caveats:
+  - `:minimal` alone is not enough: the sandbox re-executes the `codex` binary, so its install
+    folder (`~/.codex/packages/...` for the standalone install) must also be readable, or every
+    command fails with `bwrap: execvp ...: No such file`. The app would have to work that folder
+    out from the resolved CLI path, and the layout differs per install method and OS.
+  - The `":workspace_roots"` key only parses inside one inline table (`-c 'a.b.":x"=...'` keeps
+    the quotes and is rejected).
+  - Not verified on macOS (Seatbelt) or on Windows, where the sandbox has its own backends and
+    unsupported split policies fail closed instead of weakening.
+- **Other options, not implemented:** inlining MD/TXT attachments into the prompt would let those
+  runs keep the shell disabled (only PDFs would need it), but large files need a size cap and the
+  prompt-injection surface of the attachment text stays. Codex has no domain allowlist for web
+  search (`web_search` is `live` or `disabled`).
 - **RemNote token:** passed in the child's environment (`GABARITEI_REMNOTE_TOKEN`), never as an argument.
 
 ## Windows (not verified)

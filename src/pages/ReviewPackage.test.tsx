@@ -34,6 +34,7 @@ const summary: DraftSummary = {
   disputed: 1,
   unchecked: 0,
   checkFailed: null,
+  checking: false,
 };
 
 function backend(current: DraftSummary = summary) {
@@ -52,6 +53,7 @@ function backend(current: DraftSummary = summary) {
             count: current.count,
             createdAt: current.createdAt,
             disputed: 1,
+            checking: false,
           },
         ];
       case "draft_import":
@@ -177,6 +179,24 @@ describe("Revisar pacote", () => {
     expect(screen.getByRole("button", { name: "Importar só as confirmadas" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Conferir de novo" }));
     await waitFor(() => expect(calls.some((c) => c.command === "blind_check_start")).toBe(true));
+  });
+
+  it("keeps every action off while the blind check is still running", async () => {
+    backend({
+      ...summary,
+      checking: true,
+      lines: summary.lines.map((line) => ({ ...line, state: "unchecked" as const })),
+      agreed: 0,
+      fixed: 0,
+      disputed: 0,
+      unchecked: 4,
+    });
+    renderAt("/revisar-pacote?id=d1");
+    expect(await screen.findByText(/ainda está em andamento/)).toBeVisible();
+    for (const name of ["Importar tudo", "Importar só as confirmadas", "Descartar"]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    expect(screen.queryByRole("button", { name: "Conferir de novo" })).not.toBeInTheDocument();
   });
 
   it("lists the packages waiting when no package is chosen", async () => {

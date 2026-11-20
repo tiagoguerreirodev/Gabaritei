@@ -78,6 +78,8 @@ pub struct DraftSummary {
     pub unchecked: u32,
     /// Why the blind check could not complete, if it failed.
     pub check_failed: Option<String>,
+    /// The blind check is still running: the package can't be imported or discarded yet.
+    pub checking: bool,
 }
 
 /// A draft in the "waiting for review" list.
@@ -90,6 +92,8 @@ pub struct DraftListItem {
     pub count: u32,
     pub created_at: String,
     pub disputed: u32,
+    /// Its blind check is still running.
+    pub checking: bool,
 }
 
 /// Which questions to import.
@@ -117,9 +121,10 @@ pub struct ImportResult {
     pub skipped: u32,
 }
 
-fn states(draft: &Draft) -> AppResult<(Vec<LineState>, Option<String>)> {
+fn states(draft: &Draft) -> AppResult<(Vec<LineState>, Option<String>, bool)> {
     let check = blind_check::stored(draft)?;
     let failed = check.as_ref().and_then(|c| c.failed.clone());
+    let pending = check.as_ref().is_some_and(|c| c.pending);
     let lines = draft
         .package
         .questions
@@ -135,7 +140,7 @@ fn states(draft: &Draft) -> AppResult<(Vec<LineState>, Option<String>)> {
                 })
         })
         .collect();
-    Ok((lines, failed))
+    Ok((lines, failed, pending))
 }
 
 fn count(items: &[LineState], wanted: LineState) -> u32 {
@@ -145,7 +150,7 @@ fn count(items: &[LineState], wanted: LineState) -> u32 {
 pub fn summary(conn: &Connection, id: &str) -> AppResult<DraftSummary> {
     let draft = draft::load(conn, id)?;
     let check = check_draft(conn, &draft)?;
-    let (states, check_failed) = states(&draft)?;
+    let (states, check_failed, checking) = states(&draft)?;
     let request = &draft.request;
     Ok(DraftSummary {
         id: draft.id.clone(),
@@ -184,6 +189,7 @@ pub fn summary(conn: &Connection, id: &str) -> AppResult<DraftSummary> {
         disputed: count(&states, LineState::Disputed),
         unchecked: count(&states, LineState::Unchecked),
         check_failed,
+        checking,
     })
 }
 
@@ -196,16 +202,21 @@ pub fn waiting(conn: &Connection) -> AppResult<Vec<DraftListItem>> {
     ids.iter()
         .map(|id| {
             let draft = draft::load(conn, id)?;
-            let (states, _) = states(&draft)?;
+            let (states, _, checking) = states(&draft)?;
             Ok(DraftListItem {
                 id: draft.id.clone(),
                 topic: draft.request.request.topic.clone(),
                 count: u32::try_from(draft.package.questions.len()).unwrap_or(u32::MAX),
                 created_at: draft.created_at.clone(),
                 disputed: count(&states, LineState::Disputed),
+                checking,
             })
         })
         .collect()
+}
+
+fn checking_error() -> AppError {
+    AppError::Invalid("A conferência às cegas ainda está em andamento. Espere terminar.".into())
 }
 
 fn not_waiting() -> AppError {
@@ -220,7 +231,10 @@ pub fn import(conn: &Connection, id: &str, mode: ImportMode, now: &str) -> AppRe
         return Err(not_waiting());
     }
     let check = check_draft(conn, &draft)?;
-    let (states, _) = states(&draft)?;
+    let (states, _, checking) = states(&draft)?;
+    if checking {
+        return Err(checking_error());
+    }
     let total = draft.package.questions.len();
     let chosen: Vec<usize> = match mode {
         ImportMode::All => {
@@ -245,12 +259,15 @@ pub fn import(conn: &Connection, id: &str, mode: ImportMode, now: &str) -> AppRe
         ));
     }
 
-    let inputs: Vec<_> = draft_inputs(&draft, &|index| states[index] == LineState::Disputed)
-        .into_iter()
-        .enumerate()
-        .filter(|(index, _)| chosen.contains(index))
-        .map(|(_, input)| input)
-        .collect();
+    // Questions the blind check did not confirm (contested, or never checked) get the badge.
+    let inputs: Vec<_> = draft_inputs(&draft, &|index| {
+        matches!(states[index], LineState::Disputed | LineState::Unchecked)
+    })
+    .into_iter()
+    .enumerate()
+    .filter(|(index, _)| chosen.contains(index))
+    .map(|(_, input)| input)
+    .collect();
     let local_ids: Vec<String> = inputs.iter().map(|i| i.local_id.clone()).collect();
     let outcome = import_questions(conn, inputs, now).map_err(|error| match error {
         // The detailed message quotes question text; the preview must not.
@@ -305,6 +322,9 @@ pub fn discard(conn: &Connection, id: &str) -> AppResult<()> {
     let draft = draft::load(conn, id)?;
     if draft.status != DraftStatus::Review {
         return Err(not_waiting());
+    }
+    if states(&draft)?.2 {
+        return Err(checking_error());
     }
     draft::set_status(conn, id, DraftStatus::Discarded)
 }

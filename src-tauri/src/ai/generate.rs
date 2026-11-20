@@ -218,23 +218,71 @@ impl DraftCheck {
     }
 }
 
-/// Replaces text between double quotes with `(…)`: validation messages quote option texts and
-/// stems, which the preview must not show.
-pub fn redact_quotes(message: &str) -> String {
-    let mut out = String::new();
-    let mut quoted = false;
-    for ch in message.chars() {
-        match (ch, quoted) {
-            ('"', false) => {
-                quoted = true;
-                out.push_str("(…)");
-            }
-            ('"', true) => quoted = false,
-            (_, false) => out.push(ch),
-            (_, true) => {}
-        }
-    }
-    out
+/// A fixed pt-BR message for each rule `validate` can report. The validator's own messages
+/// quote option texts, option IDs and counts chosen by the AI, so they are never passed on:
+/// anything the table does not know becomes a generic message. Matching is by the rule's fixed
+/// prefix, never by anything the question contains.
+pub fn fixed_message(problem: &str) -> &'static str {
+    const RULES: &[(&str, &str)] = &[
+        (
+            "Identificador inválido",
+            "O identificador da questão é inválido.",
+        ),
+        ("O enunciado", "O enunciado está vazio ou é longo demais."),
+        (
+            "Questões de múltipla escolha têm",
+            "Questões de múltipla escolha precisam ter exatamente 5 alternativas.",
+        ),
+        (
+            "Questões Certo/Errado têm",
+            "Questões Certo/Errado precisam ter exatamente as alternativas Certo e Errado.",
+        ),
+        (
+            "Alternativa com identificador inválido",
+            "Há uma alternativa com identificador inválido.",
+        ),
+        (
+            "Identificador de alternativa repetido",
+            "Há alternativas com o mesmo identificador.",
+        ),
+        (
+            "Há uma alternativa sem texto",
+            "Há uma alternativa sem texto.",
+        ),
+        (
+            "Uma alternativa tem mais de",
+            "Há uma alternativa longa demais.",
+        ),
+        (
+            "Alternativas com o mesmo texto",
+            "Há alternativas com o mesmo texto.",
+        ),
+        (
+            "O gabarito não corresponde",
+            "O gabarito não corresponde a nenhuma alternativa.",
+        ),
+        ("O comentário tem mais de", "O comentário é longo demais."),
+        ("Há mais de", "Há referências demais."),
+        ("Há uma referência vazia", "Há uma referência vazia."),
+        (
+            "Uma referência tem mais de",
+            "Há uma referência longa demais.",
+        ),
+        (
+            "Cada questão precisa de",
+            "A questão precisa de um assunto válido.",
+        ),
+        (
+            "Área, matéria",
+            "Área, matéria ou assunto vazio ou longo demais.",
+        ),
+    ];
+    RULES
+        .iter()
+        .find(|(prefix, _)| problem.starts_with(prefix))
+        .map_or("A questão não passou na validação.", |(_, message)| {
+            message
+        })
 }
 
 fn provenance(draft_id: &str, disputed: bool) -> Provenance {
@@ -298,7 +346,7 @@ pub fn check_draft(conn: &Connection, draft: &Draft) -> AppResult<DraftCheck> {
         match canonicalize(input) {
             Err(problems) => {
                 for message in problems {
-                    problem(redact_quotes(&message));
+                    problem(fixed_message(&message).to_owned());
                 }
             }
             Ok(canonical) => {

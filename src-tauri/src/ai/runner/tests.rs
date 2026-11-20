@@ -707,8 +707,10 @@ mod windows_cmd {
             // proves its escaping was accepted.)
             r#"more >nul
 set "file="
+set /a n=0
 :next
-if "%~1"=="" goto done
+set /a n+=1
+if %n% GTR 40 goto done
 if "%~1"=="--append-system-prompt-file" set "file=%~2"
 shift
 goto next

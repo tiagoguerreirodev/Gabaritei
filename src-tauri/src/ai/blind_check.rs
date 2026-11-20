@@ -408,7 +408,8 @@ pub fn generate_and_check(
 }
 
 /// Re-runs the blind check of a draft that has none or whose check failed. The dispute round
-/// gets the attachments kept for the draft (see [`draft_files`]).
+/// gets the attachments kept for the draft (see [`draft_files`]); if they are gone (an older
+/// draft, or one restored from a backup) it runs without them and says so in the progress.
 pub fn recheck_draft(
     db: &Database,
     secrets: &Secrets,
@@ -417,7 +418,7 @@ pub fn recheck_draft(
     cancel: &CancelToken,
     progress: &mut dyn FnMut(Progress),
 ) -> AppResult<String> {
-    db.transaction(|tx| {
+    let wanted = db.transaction(|tx| {
         let draft = draft::load(tx, draft_id)?;
         if draft.status != DraftStatus::Review {
             return Err(invalid("Este pacote já foi importado ou descartado."));
@@ -425,9 +426,17 @@ pub fn recheck_draft(
         if stored(&draft)?.is_some_and(|check| check.pending) {
             return Err(invalid("A conferência deste pacote já está em andamento."));
         }
-        draft::set_blind_check(tx, draft_id, &pending_record())
+        draft::set_blind_check(tx, draft_id, &pending_record())?;
+        Ok(draft.request.request.sources.attachments.len())
     })?;
     let attachments = draft_files::load(files_dir, draft_id).unwrap_or_default();
+    if attachments.len() != wanted {
+        // Drafts from before attachments were kept, or restored from a backup, have no copies.
+        progress(Progress::new(
+            ProgressKind::Thinking,
+            "Os anexos originais não estão mais guardados; a contestação segue sem eles.",
+        ));
+    }
     match run(db, secrets, draft_id, &attachments, cancel, progress) {
         Ok(_) => Ok(draft_id.to_owned()),
         Err(_) if cancel.is_cancelled() => {

@@ -583,16 +583,23 @@ mod pipeline {
         assert_eq!(draft_files::load(&files_dir(&s), &id).unwrap().len(), 1);
         // The user may move or delete the file; the retry uses the kept copy.
         std::fs::remove_file(&original).unwrap();
+        let mut progress = Vec::new();
         recheck_draft(
             &s.db,
             &s.secrets,
             &files_dir(&s),
             &id,
             &CancelToken::new(),
-            &mut |_| {},
+            &mut |p| progress.push(p.label),
         )
         .unwrap();
         assert!(files(s.dir.path(), 4).contains(&"anexos".to_owned()));
+        assert!(
+            progress
+                .iter()
+                .all(|label| !label.contains("anexos originais")),
+            "no warning when the copies exist"
+        );
         assert!(
             stored(&only_draft(&s.db))
                 .unwrap()
@@ -600,6 +607,65 @@ mod pipeline {
                 .failed
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_retry_without_kept_copies_says_so() {
+        let s = setup_pipeline(&[
+            generated(vec![question("q1", "c")]),
+            answers(vec![]),
+            answers(vec![answer("q1", "c")]),
+        ]);
+        let original = s.dir.path().join("Lei.md");
+        std::fs::write(&original, "texto").unwrap();
+        let mut job = request(1);
+        job.sources.attachments = vec![original.to_string_lossy().into_owned()];
+        let id = generate_and_check(
+            &s.db,
+            &s.secrets,
+            &files_dir(&s),
+            job,
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+        draft_files::remove(&files_dir(&s), &id);
+        let mut progress = Vec::new();
+        recheck_draft(
+            &s.db,
+            &s.secrets,
+            &files_dir(&s),
+            &id,
+            &CancelToken::new(),
+            &mut |p| progress.push(p.label),
+        )
+        .unwrap();
+        assert!(progress.iter().any(|l| l.contains("anexos originais")));
+    }
+
+    #[test]
+    fn kept_copies_hold_the_original_file_names_and_content() {
+        let s = setup_pipeline(&[
+            generated(vec![question("q1", "c")]),
+            answers(vec![answer("q1", "c")]),
+        ]);
+        let original = s.dir.path().join("Lei.md");
+        std::fs::write(&original, "texto").unwrap();
+        let mut job = request(1);
+        job.sources.attachments = vec![original.to_string_lossy().into_owned()];
+        let id = generate_and_check(
+            &s.db,
+            &s.secrets,
+            &files_dir(&s),
+            job,
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+        let kept = draft_files::load(&files_dir(&s), &id).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].file_name().unwrap(), "Lei.md");
+        assert_eq!(std::fs::read_to_string(&kept[0]).unwrap(), "texto");
     }
 
     #[test]
@@ -644,17 +710,21 @@ if [ "$n" = 1 ]; then cp "$dir/answer-1.json" "$out"; else sleep 60; fi"#,
             std::thread::sleep(std::time::Duration::from_millis(1500));
             canceller.cancel();
         });
-        let error = generate_and_check(
-            &s.db,
-            &s.secrets,
-            &files_dir(&s),
-            request(1),
-            &token,
-            &mut |_| {},
-        )
-        .unwrap_err();
+        let original = s.dir.path().join("Lei.md");
+        std::fs::write(&original, "texto").unwrap();
+        let mut job = request(1);
+        job.sources.attachments = vec![original.to_string_lossy().into_owned()];
+        let error = generate_and_check(&s.db, &s.secrets, &files_dir(&s), job, &token, &mut |_| {})
+            .unwrap_err();
         assert!(error.to_string().contains("cancelada"));
-        assert_eq!(only_draft(&s.db).status, DraftStatus::Discarded);
+        let draft = only_draft(&s.db);
+        assert_eq!(draft.status, DraftStatus::Discarded);
+        assert!(
+            draft_files::load(&files_dir(&s), &draft.id)
+                .unwrap()
+                .is_empty(),
+            "a cancelled run keeps no copies"
+        );
     }
 }
 

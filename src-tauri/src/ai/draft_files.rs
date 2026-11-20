@@ -18,15 +18,16 @@ fn folder(root: &Path, draft_id: &str) -> Option<PathBuf> {
     valid.then(|| root.join(draft_id))
 }
 
-/// Copies `files` into the draft's folder and returns the copies, in order. Names are numbered
-/// so two files with the same name don't overwrite each other.
+/// Copies `files` into the draft's folder and returns the copies, in order. Each file goes in
+/// its own numbered subfolder under its original name, so two files with the same name don't
+/// collide and the agent sees the same file names as on the first run. If any copy fails,
+/// nothing is kept.
 pub fn keep(root: &Path, draft_id: &str, files: &[PathBuf]) -> AppResult<Vec<PathBuf>> {
     if files.is_empty() {
         return Ok(Vec::new());
     }
     let target = folder(root, draft_id).ok_or_else(bad_id)?;
-    std::fs::create_dir_all(&target)?;
-    files
+    let copied = files
         .iter()
         .enumerate()
         .map(|(index, source)| {
@@ -34,11 +35,17 @@ pub fn keep(root: &Path, draft_id: &str, files: &[PathBuf]) -> AppResult<Vec<Pat
                 || "arquivo".to_owned(),
                 |n| n.to_string_lossy().into_owned(),
             );
-            let copy = target.join(format!("{:02}-{name}", index + 1));
+            let slot = target.join(format!("{:02}", index + 1));
+            std::fs::create_dir_all(&slot)?;
+            let copy = slot.join(name);
             std::fs::copy(source, &copy)?;
             Ok(copy)
         })
-        .collect()
+        .collect::<AppResult<Vec<_>>>();
+    if copied.is_err() {
+        remove(root, draft_id);
+    }
+    copied
 }
 
 /// The kept copies of a draft, in the order they were attached. Empty if there are none.
@@ -49,12 +56,21 @@ pub fn load(root: &Path, draft_id: &str) -> AppResult<Vec<PathBuf>> {
     if !target.is_dir() {
         return Ok(Vec::new());
     }
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&target)?
+    let mut slots: Vec<PathBuf> = std::fs::read_dir(&target)?
         .map(|entry| entry.map(|e| e.path()))
         .collect::<Result<_, _>>()
         .map_err(AppError::from)?;
-    files.retain(|path| path.is_file());
-    files.sort();
+    slots.retain(|path| path.is_dir());
+    slots.sort();
+    let mut files = Vec::new();
+    for slot in slots {
+        for entry in std::fs::read_dir(&slot)? {
+            let path = entry?.path();
+            if path.is_file() {
+                files.push(path);
+            }
+        }
+    }
     Ok(files)
 }
 
@@ -86,6 +102,7 @@ mod tests {
 
         let kept = keep(root.path(), "d1", &[a, b]).unwrap();
         assert_eq!(kept.len(), 2, "same file name must not collide");
+        assert!(kept.iter().all(|p| p.file_name().unwrap() == "aula.md"));
         assert_eq!(std::fs::read_to_string(&kept[0]).unwrap(), "um");
         assert_eq!(std::fs::read_to_string(&kept[1]).unwrap(), "dois");
         assert_eq!(load(root.path(), "d1").unwrap(), kept);
@@ -110,6 +127,18 @@ mod tests {
         }
         assert!(outside.is_dir(), "nothing outside the root was removed");
         assert!(root.is_dir());
+    }
+
+    #[test]
+    fn a_failed_copy_keeps_nothing() {
+        let source = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let good = source.path().join("a.md");
+        std::fs::write(&good, "ok").unwrap();
+        let missing = source.path().join("sumiu.md");
+        assert!(keep(root.path(), "d1", &[good, missing]).is_err());
+        assert!(load(root.path(), "d1").unwrap().is_empty());
+        assert!(!root.path().join("d1").exists());
     }
 
     #[test]

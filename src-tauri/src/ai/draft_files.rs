@@ -2,7 +2,7 @@
 //!
 //! A draft stores attachment *file names* only (never paths). The files themselves are copied
 //! here so a retry of the blind check can give the generator the same files it wrote from. They
-//! are removed when the draft is imported or discarded.
+//! are removed when the draft is imported or discarded, and [`sweep`] clears any left behind at startup.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -110,7 +110,10 @@ pub fn sweep(conn: &Connection, root: &Path) -> AppResult<usize> {
         } else {
             std::fs::remove_file(&path)
         };
-        removed += usize::from(gone.is_ok());
+        match gone {
+            Ok(()) => removed += 1,
+            Err(error) => eprintln!("Gabaritei: could not remove {}: {error}", path.display()),
+        }
     }
     Ok(removed)
 }

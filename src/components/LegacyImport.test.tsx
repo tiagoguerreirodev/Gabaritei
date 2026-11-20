@@ -118,6 +118,20 @@ describe("legacy import", () => {
       expect(calls).not.toContain("import_legacy_bank");
     });
 
+    it("does nothing when clicked while another action runs", async () => {
+      const calls = backend({ report: null, bankEmpty: true });
+      const busy = createBusy();
+      let release!: () => void;
+      void busy.run(() => new Promise<void>((resolve) => (release = resolve)));
+      const user = userEvent.setup();
+      render(() => <LegacyImport initialReport={null} busy={busy} />);
+
+      await user.click(screen.getByRole("button", { name: "Escolher pasta e importar" }));
+
+      expect(calls).not.toContain("import_legacy_bank");
+      release();
+    });
+
     it("holds the shared flag while it runs, so other actions are blocked", async () => {
       let finish!: (value: unknown) => void;
       backend(

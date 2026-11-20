@@ -94,8 +94,13 @@ pub async fn import_legacy_bank<R: Runtime>(
     tauri::async_runtime::spawn_blocking(move || {
         let db = app.state::<Database>();
         let paths = app.state::<AppPaths>();
-        migrate::import_legacy_bank(&db, &paths.images_dir(), &source, &crate::clock::now())
-            .map(Some)
+        let service = app.state::<BackupService>();
+        // Not while a backup, restore or data-file import runs: they must never overlap. The
+        // frontend's busy flag is only a convenience; this is what enforces it.
+        service.exclusive(|| {
+            migrate::import_legacy_bank(&db, &paths.images_dir(), &source, &crate::clock::now())
+                .map(Some)
+        })
     })
     .await
     .map_err(|error| AppError::Internal(error.to_string()))?

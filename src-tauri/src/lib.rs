@@ -64,6 +64,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::cli_test,
             commands::remnote_test,
             commands::generation_start,
+            commands::blind_check_start,
             commands::generation_cancel,
             commands::generation_status,
             commands::generation_dismiss,

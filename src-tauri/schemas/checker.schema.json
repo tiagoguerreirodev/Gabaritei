@@ -1,0 +1,55 @@
+{
+  "$defs": {
+    "CheckerAnswer": {
+      "additionalProperties": false,
+      "description": "The checker's answer to one question.",
+      "properties": {
+        "choice": {
+          "description": "ID of the option the checker chose.",
+          "type": "string"
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "questionId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "questionId",
+        "choice",
+        "confidence",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "Confidence": {
+      "description": "How sure the checker is of its answer.",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What the checker returns (the root of a structured answer must be an object).",
+  "properties": {
+    "verdicts": {
+      "items": {
+        "$ref": "#/$defs/CheckerAnswer"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "verdicts"
+  ],
+  "title": "Conferência às cegas",
+  "type": "object"
+}

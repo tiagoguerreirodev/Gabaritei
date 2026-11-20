@@ -5,6 +5,7 @@
 //! Verified CLI flags are recorded in `docs/ai-cli.md`.
 
 pub mod agent;
+pub mod blind_check;
 mod claude;
 mod codex;
 pub mod discovery;

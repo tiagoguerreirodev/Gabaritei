@@ -72,7 +72,8 @@ export default function BackupSection(props: {
     <section class="card" aria-labelledby="backup-title">
       <h2 id="backup-title">Backups</h2>
       <p class="muted">
-        O Gabaritei faz um backup por dia enquanto está aberto e guarda os 7 mais recentes.
+        O Gabaritei faz um backup por dia enquanto está aberto e guarda os 7 mais recentes. Os
+        backups feitos por você ficam à parte e não tomam o lugar dos diários.
       </p>
       <Show when={!status.error} fallback={<ErrorState error={status.error as unknown} />}>
         <Show when={status()} fallback={<Loading />}>
@@ -175,9 +176,11 @@ function Content(props: {
               <li>
                 <span>
                   {dateTime(backup.createdAt)} · {megabytes(backup.sizeBytes)}
-                  <Show when={backup.kind === "safety"}>
+                  <Show when={backup.kind !== "backup"}>
                     {" "}
-                    <span class="badge">antes de restaurar</span>
+                    <span class="badge">
+                      {backup.kind === "safety" ? "antes de restaurar" : "manual"}
+                    </span>
                   </Show>
                 </span>
                 <button

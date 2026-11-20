@@ -3,4 +3,4 @@
 /**
  * Why a backup was made.
  */
-export type BackupKind = "backup" | "safety";
+export type BackupKind = "backup" | "manual" | "safety";

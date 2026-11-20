@@ -78,7 +78,7 @@ mod fake_cli {
         assert_eq!(output.value, json!({ "answer": "pong" }));
         assert_eq!(output.cost_usd, None);
         assert_eq!(events.first().unwrap().kind, ProgressKind::Started);
-        assert_eq!(events.last().unwrap().kind, ProgressKind::Done);
+        assert_eq!(events.last().unwrap().kind, ProgressKind::Writing);
         // Model text never reaches the frontend through progress events.
         assert!(events.iter().all(|e| !e.label.contains("SEGREDO")));
     }
@@ -136,12 +136,37 @@ printf '{"args":"%s","stdin":"%s"}' "$all" "$input" > "$out""#,
         let cli = write_script(
             dir.path(),
             "codex",
-            "cat >/dev/null\necho 'algo quebrou' >&2\nexit 3",
+            "cat >/dev/null\necho 'ENUNCIADO-SECRETO e gabarito B' >&2\nexit 3",
         );
         match run(&spec(Agent::Codex, cli)).0 {
-            Err(RunError::Failed { code, detail }) => {
+            Err(error @ RunError::Failed { .. }) => {
+                let RunError::Failed { code, detail } = &error else {
+                    unreachable!()
+                };
                 assert_eq!(code, "3");
-                assert!(detail.contains("algo quebrou"));
+                // The CLI's own text never reaches the message: it can hold question content.
+                assert_eq!(detail, "");
+                assert!(!error.to_string().contains("SECRETO"));
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_usage_limit_gets_a_fixed_hint_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli = write_script(
+            dir.path(),
+            "claude",
+            r#"cat >/dev/null
+echo '{"type":"result","is_error":true,"result":"Usage limit reached. ENUNCIADO-SECRETO"}'
+exit 1"#,
+        );
+        match run(&spec(Agent::Claude, cli)).0 {
+            Err(error) => {
+                let message = error.to_string();
+                assert!(message.contains("limite de uso"), "{message}");
+                assert!(!message.contains("SECRETO"));
             }
             other => panic!("unexpected: {other:?}"),
         }
@@ -274,14 +299,7 @@ JSON"#
         assert_eq!(output.value, json!({ "answer": "pong" }));
         assert_eq!(output.cost_usd, Some(0.0273));
         let kinds: Vec<_> = events.iter().map(|e| e.kind).collect();
-        assert_eq!(
-            kinds,
-            [
-                ProgressKind::Started,
-                ProgressKind::Reading,
-                ProgressKind::Done
-            ]
-        );
+        assert_eq!(kinds, [ProgressKind::Started, ProgressKind::Reading]);
     }
 
     #[test]
@@ -345,7 +363,7 @@ mod arguments {
         ));
         assert!(has_pair(&args, "--permission-mode", "dontAsk"));
         assert!(has_pair(&args, "--setting-sources", ""));
-        assert!(has_pair(&args, "--model", "modelo-x"));
+        assert!(args.contains(&"--model=modelo-x".to_owned()));
         assert!(has_pair(&args, "--effort", "xhigh"));
         assert!(has_pair(&args, "--output-format", "stream-json"));
         assert!(args.contains(&"--strict-mcp-config".to_owned()));
@@ -407,7 +425,7 @@ mod arguments {
     fn codex_is_read_only_ignores_user_config_and_closes_the_shell_without_attachments() {
         let (args, _) = plan_for(&spec(Agent::Codex, "codex".into()));
         assert!(has_pair(&args, "--sandbox", "read-only"));
-        assert!(has_pair(&args, "-m", "modelo-x"));
+        assert!(args.contains(&"--model=modelo-x".to_owned()));
         assert!(has_pair(&args, "-c", "model_reasoning_effort=xhigh"));
         assert!(has_pair(&args, "-c", "web_search=disabled"));
         assert!(has_pair(&args, "--disable", "shell_tool"));

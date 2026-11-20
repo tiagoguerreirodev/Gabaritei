@@ -120,21 +120,27 @@ pub struct CliStatus {
     pub message: String,
 }
 
-struct Captured {
-    success: bool,
-    stdout: String,
-    stderr: String,
+pub(super) struct Captured {
+    pub success: bool,
+    pub stdout: String,
+    #[allow(dead_code)]
+    pub stderr: String,
 }
 
 /// Runs a short probe command with a timeout, with no stdin.
-fn capture(cli: &Path, args: &[&str]) -> Option<Captured> {
-    let mut child = Command::new(cli)
+pub(super) fn capture(cli: &Path, args: &[&str]) -> Option<Captured> {
+    let mut command = Command::new(cli);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .ok()?;
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = command.spawn().ok()?;
     let mut stdout = child.stdout.take()?;
     let mut stderr = child.stderr.take()?;
     let out = std::thread::spawn(move || read_all(&mut stdout));

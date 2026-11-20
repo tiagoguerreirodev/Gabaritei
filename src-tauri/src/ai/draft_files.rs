@@ -112,7 +112,9 @@ pub fn sweep(conn: &Connection, root: &Path) -> AppResult<usize> {
         };
         match gone {
             Ok(()) => removed += 1,
-            Err(error) => eprintln!("Gabaritei: could not remove {}: {error}", path.display()),
+            Err(error) => {
+                crate::log::error(format!("could not remove {}: {error}", path.display()))
+            }
         }
     }
     Ok(removed)

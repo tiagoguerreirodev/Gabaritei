@@ -100,6 +100,7 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
 - Every domain rule gets unit tests. The legacy test names in `docs/legacy-analysis.md` and the legacy repo make a good checklist of behaviors to port.
 - Before opening a PR, run Rust tests, clippy and fmt, plus frontend lint, typecheck and tests. Don't open a PR with failing checks.
+- CI (`.github/workflows/ci.yml`) runs the same checks on every PR and on pushes to `main`. It also fails if `src/bindings/` is out of date, so commit what `cargo test` regenerates.
 - UI changes: add a component test where behavior matters. No-spoiler rendering always needs one.
 
 ## Workflow

@@ -12,7 +12,8 @@ export type LearningItem = { questionId: string, topics: Array<TopicPath>,
  */
 dueAt: string | null, 
 /**
- * The latest result is wrong (or blank, when blanks are included).
+ * The latest answered response is wrong (or the latest result is blank, when blanks are
+ * included).
  */
 isError: boolean, 
 /**

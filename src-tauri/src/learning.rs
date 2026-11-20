@@ -12,8 +12,9 @@
 //! 60), and anything else, wrong or blank, resets the streak and schedules 1 day. Annulled
 //! questions have no review.
 //!
-//! **The error notebook** is read straight from the data: a question whose latest result in
-//! a finished attempt is wrong (or blank, when asked for).
+//! **The error notebook** is read straight from the data: a question whose latest answered response
+//! in a finished attempt is wrong (a later blank doesn't hide it), or whose latest result is a
+//! blank, when asked for.
 
 use std::collections::HashMap;
 
@@ -135,7 +136,7 @@ pub fn refresh_all(conn: &Connection) -> AppResult<()> {
 
 // ---- Error notebook --------------------------------------------------------------------------
 
-/// A question's latest result in a finished attempt.
+/// A question's latest result (and latest answered response) in finished attempts.
 struct Latest {
     question_id: String,
     at: String,
@@ -144,24 +145,35 @@ struct Latest {
     wrong: bool,
 }
 
-/// The latest result of every non-annulled question that has one, newest first.
+/// The latest result of every non-annulled question that has one, newest first. `blank` is
+/// about the latest result; `wrong` is about the latest *answered* response, so a later blank
+/// never hides an earlier wrong answer (the same rule as the topic strength in Desempenho).
 fn latest_results(conn: &Connection) -> AppResult<Vec<Latest>> {
     let mut stmt = conn.prepare(
-        "WITH ranked AS (
-           SELECT r.question_id, a.id AS attempt_id, r.choice, q.answer_id,
-                  COALESCE(r.answered_at, a.finished_at) AS at,
-                  ROW_NUMBER() OVER (
-                    PARTITION BY r.question_id
-                    ORDER BY COALESCE(r.answered_at, a.finished_at) DESC, a.id DESC, r.position DESC
-                  ) AS rank
+        "WITH base AS (
+           SELECT r.question_id, a.id AS attempt_id, r.choice, q.answer_id, r.position,
+                  COALESCE(r.answered_at, a.finished_at) AS at
            FROM responses r
            JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NOT NULL
            JOIN questions q ON q.id = r.question_id AND q.annulled = 0
+         ),
+         ranked AS (
+           SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY question_id ORDER BY at DESC, attempt_id DESC, position DESC
+                  ) AS rank
+           FROM base
+         ),
+         answered AS (
+           SELECT question_id, choice <> answer_id AS wrong, ROW_NUMBER() OVER (
+                    PARTITION BY question_id ORDER BY at DESC, attempt_id DESC, position DESC
+                  ) AS rank
+           FROM base WHERE choice IS NOT NULL
          )
-         SELECT question_id, at, attempt_id, choice IS NULL,
-                choice IS NOT NULL AND choice <> answer_id
-         FROM ranked WHERE rank = 1
-         ORDER BY at DESC, question_id",
+         SELECT l.question_id, l.at, l.attempt_id, l.choice IS NULL, COALESCE(w.wrong, 0)
+         FROM ranked l
+         LEFT JOIN answered w ON w.question_id = l.question_id AND w.rank = 1
+         WHERE l.rank = 1
+         ORDER BY l.at DESC, l.question_id",
     )?;
     let rows = stmt
         .query_map([], |r| {
@@ -237,7 +249,8 @@ pub struct LearningItem {
     /// When the next review is due. `None` for an error with no review (never the case for
     /// a finished attempt, but kept honest).
     pub due_at: Option<String>,
-    /// The latest result is wrong (or blank, when blanks are included).
+    /// The latest answered response is wrong (or the latest result is blank, when blanks are
+    /// included).
     pub is_error: bool,
     /// The attempt holding the question's latest result.
     pub last_attempt_id: String,

@@ -367,12 +367,30 @@ fn blanks_are_in_the_error_notebook_only_on_request() {
 }
 
 #[test]
-fn a_later_blank_makes_the_latest_result_a_blank_not_a_wrong() {
+fn a_later_blank_does_not_hide_an_earlier_wrong_answer() {
     let b = bank(&["q1"]);
     b.answer(D0, &[("q1", "o1")]);
     b.answer(D1, &[("q1", "blank")]);
+    assert_eq!(b.errors(false), vec![b.id("q1")]);
+    assert_eq!(b.errors(true), vec![b.id("q1")]);
+}
+
+#[test]
+fn a_blank_after_a_hit_is_an_error_only_when_blanks_are_included() {
+    let b = bank(&["q1"]);
+    b.answer(D0, &[("q1", "o0")]);
+    b.answer(D1, &[("q1", "blank")]);
     assert!(b.errors(false).is_empty());
     assert_eq!(b.errors(true).len(), 1);
+}
+
+#[test]
+fn a_hit_after_a_wrong_answer_leaves_the_notebook() {
+    let b = bank(&["q1"]);
+    b.answer(D0, &[("q1", "o1")]);
+    b.answer(D1, &[("q1", "o0")]);
+    b.answer(D4, &[("q1", "blank")]);
+    assert!(b.errors(false).is_empty());
 }
 
 #[test]
@@ -565,6 +583,8 @@ fn scoring_in_sql_agrees_with_attempts_outcome() {
     assert_eq!(b.interval("q1"), Some(1));
     b.answer(D1, &[("q1", "o1")]);
     assert_eq!(b.errors(false).len(), 1);
+    // A later blank resets the review streak but never hides the wrong answer.
     b.answer(D4, &[("q1", "blank")]);
-    assert!(b.errors(false).is_empty());
+    assert_eq!(b.interval("q1"), Some(1));
+    assert_eq!(b.errors(false).len(), 1);
 }

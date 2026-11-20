@@ -59,7 +59,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src/components/` | Shared UI: `Modal`, toasts (`showToast`, `showError`; `Toaster` lives in the layout), `Loading` / `EmptyState` / `ErrorState`, and `errorMessage()` for anything thrown. Reuse these instead of writing new ones. |
 | `docs/` | Spec, legacy analysis, and notes such as `docs/ai-cli.md` (verified CLI flags). |
 
-Rust modules (spec §5): `db`, `bank`, `attempts`, `metrics`, `learning`, `ai` (runner, `claude`, `codex`, prompts, schemas, roles), `backup`, `migrate`.
+Rust modules (spec §5): `db`, `bank`, `attempts`, `metrics`, `learning`, `ai` (runner, `claude`, `codex`, prompts, roles, jobs, plus one submodule per task: generate, blind check, explain, recheck, review), `backup`, `migrate`, `clock`.
 
 Frontend versions: **Solid 1.9** with `@solidjs/router` 0.15 (`HashRouter`). Don't upgrade to Solid 2 outside #26.
 

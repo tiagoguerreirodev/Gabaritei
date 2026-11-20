@@ -184,8 +184,11 @@ pub fn apply(
     if old_key != proposal.based_on_key {
         return Err(invalid("O gabarito mudou desde a revisão. Peça de novo."));
     }
+    // A corrected key settles the dispute; `key_changes` below keeps the history.
     conn.execute(
-        "UPDATE questions SET answer_id = ?2, updated_at = ?3 WHERE id = ?1",
+        "UPDATE questions SET answer_id = ?2, updated_at = ?3,
+                provenance = json_remove(provenance, '$.disputed')
+         WHERE id = ?1",
         params![question_id, new_key, now],
     )?;
     conn.execute(

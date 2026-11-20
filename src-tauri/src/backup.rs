@@ -81,6 +81,11 @@ pub struct BackupInfo {
     /// Folder name; identifies the backup in `backup_restore`.
     pub name: String,
     pub kind: BackupKind,
+    /// The computer tag in the name (see [`computer_tag`]); none for backups made before tags.
+    pub computer: Option<String>,
+    /// Whether the backup was made by another computer (a tagged one with another tag). Such
+    /// backups can be restored but are never deleted by this computer's rotation.
+    pub other_computer: bool,
     pub created_at: String,
     #[ts(type = "number")]
     pub size_bytes: u64,
@@ -120,17 +125,86 @@ fn stamp(created_at: &str) -> String {
     format!("{}-{}-{}", &digits[0..8], &digits[8..14], &digits[14..17])
 }
 
-/// The kind a folder name says it is, if it is a backup name at all.
-fn parse_name(name: &str) -> Option<BackupKind> {
+/// Longest computer tag kept in a name.
+const MAX_TAG: usize = 24;
+
+/// This computer's tag, put at the end of the names of the backups it makes
+/// (`backup-20261119-210000-123-<tag>`), so two computers sharing one synced backup folder keep
+/// apart: each rotates only its own backups. Derived from the host name when the app runs,
+/// reduced to lowercase letters, digits and single hyphens. `None` when the host name has
+/// nothing usable; those backups are untagged, like the ones made before tags existed.
+pub fn computer_tag() -> Option<String> {
+    #[cfg(test)]
+    {
+        tests::TAG.with(|tag| tag.borrow().clone()).flatten()
+    }
+    #[cfg(not(test))]
+    {
+        static TAG: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        TAG.get_or_init(|| slug(&gethostname::gethostname().to_string_lossy()))
+            .clone()
+    }
+}
+
+/// `Desktop_ABC 12` → `desktop-abc-12`: ASCII letters and digits, other runs become one hyphen.
+fn slug(text: &str) -> Option<String> {
+    let mut out = String::new();
+    for c in text.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.truncate(MAX_TAG);
+    let out = out.trim_end_matches('-');
+    (!out.is_empty()).then(|| out.to_owned())
+}
+
+/// What a backup folder name says.
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedName {
+    kind: BackupKind,
+    tag: Option<String>,
+}
+
+/// Reads a backup folder name (`<kind>-<stamp>` or `<kind>-<stamp>-<tag>`), if it is one.
+fn parse(name: &str) -> Option<ParsedName> {
     let (kind, rest) = [BackupKind::Backup, BackupKind::Manual, BackupKind::Safety]
         .into_iter()
         .find_map(|kind| Some((kind, name.strip_prefix(kind.prefix())?.strip_prefix('-')?)))?;
-    let shape = rest.len() == 19
-        && rest.bytes().enumerate().all(|(index, byte)| match index {
-            8 | 15 => byte == b'-',
-            _ => byte.is_ascii_digit(),
-        });
-    shape.then_some(kind)
+    let (stamp, tag) = match rest.split_at_checked(19)? {
+        (stamp, "") => (stamp, None),
+        (stamp, tag) => (stamp, Some(tag.strip_prefix('-')?)),
+    };
+    let shape = stamp.bytes().enumerate().all(|(index, byte)| match index {
+        8 | 15 => byte == b'-',
+        _ => byte.is_ascii_digit(),
+    });
+    let tag_ok = tag.is_none_or(|tag| {
+        !tag.is_empty()
+            && !tag.starts_with('-')
+            && !tag.ends_with('-')
+            && !tag.contains("--")
+            && tag.len() <= MAX_TAG
+            && tag
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    });
+    (shape && tag_ok).then(|| ParsedName {
+        kind,
+        tag: tag.map(str::to_owned),
+    })
+}
+
+/// The kind a folder name says it is, if it is a backup name at all.
+fn parse_name(name: &str) -> Option<BackupKind> {
+    parse(name).map(|parsed| parsed.kind)
+}
+
+/// Whether a backup tagged `tag` was made by another computer than the one running.
+fn is_other_computer(tag: Option<&str>) -> bool {
+    tag.is_some() && tag != computer_tag().as_deref()
 }
 
 /// The default backup folder.
@@ -209,11 +283,13 @@ pub fn list(folder: &Path) -> Vec<BackupInfo> {
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let name = entry.file_name().into_string().ok()?;
-            let kind = parse_name(&name)?;
+            let parsed = parse(&name)?;
             let manifest = snapshot::read_manifest(&entry.path()).ok()?;
             Some(BackupInfo {
                 name,
-                kind,
+                kind: parsed.kind,
+                other_computer: is_other_computer(parsed.tag.as_deref()),
+                computer: parsed.tag,
                 created_at: manifest.created_at.clone(),
                 size_bytes: manifest.size(),
             })
@@ -384,14 +460,17 @@ impl BackupService {
     }
 }
 
-/// Whether the newest backup is older than a day (or there is none).
+/// Whether the newest backup of this computer is older than a day (or there is none).
+/// A backup another computer made into a shared folder doesn't count.
 fn is_due(folder: &Path, now: OffsetDateTime) -> bool {
     let cutoff = crate::clock::format(now - INTERVAL);
     let present = crate::clock::format(now);
     list(folder)
         .iter()
         // A backup dated in the future (the clock was wrong once) must not stop new ones.
-        .find(|info| info.kind == BackupKind::Backup && info.created_at <= present)
+        .find(|info| {
+            info.kind == BackupKind::Backup && !info.other_computer && info.created_at <= present
+        })
         .is_none_or(|newest| newest.created_at < cutoff)
 }
 
@@ -423,7 +502,10 @@ fn create_with(
     prune: bool,
 ) -> AppResult<BackupInfo> {
     fs::create_dir_all(folder)?;
-    let name = format!("{}-{}", kind.prefix(), stamp(now));
+    let name = match computer_tag() {
+        Some(tag) => format!("{}-{}-{tag}", kind.prefix(), stamp(now)),
+        None => format!("{}-{}", kind.prefix(), stamp(now)),
+    };
     let finished = folder.join(&name);
     if finished.exists() {
         return Err(AppError::Invalid(
@@ -448,28 +530,37 @@ fn create_with(
     Ok(BackupInfo {
         name,
         kind,
+        computer: computer_tag(),
+        other_computer: false,
         size_bytes: manifest.size(),
         created_at: manifest.created_at,
     })
 }
 
-/// Deletes the oldest backups of `kind` beyond the limit, and temporary folders left by a
-/// crash. A failure to delete is not worth failing the backup that just succeeded.
+/// Deletes this computer's oldest backups of `kind` beyond the limit, and its temporary
+/// folders left by a crash. Backups and temporary folders of another computer sharing the
+/// folder are never touched, and neither are untagged ones from before tags existed (they
+/// can't be told apart). A failure to delete is not worth failing the backup that just
+/// succeeded.
 fn prune(folder: &Path, kind: BackupKind) {
     let Ok(entries) = fs::read_dir(folder) else {
         return;
     };
+    let own = computer_tag();
     let mut names: Vec<String> = Vec::new();
     for entry in entries.filter_map(Result::ok) {
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
-        if name.starts_with(".tmp-") {
-            let _ = fs::remove_dir_all(entry.path());
-        } else if parse_name(&name) == Some(kind) {
+        if let Some(building) = name.strip_prefix(".tmp-") {
+            if parse(building).is_some_and(|parsed| parsed.tag == own) {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        } else if parse(&name).is_some_and(|parsed| parsed.kind == kind && parsed.tag == own) {
             names.push(name);
         }
     }
+    // The stamp is the same length for every name and comes first, so names sort by time.
     names.sort();
     let excess = names.len().saturating_sub(kind.keep());
     for name in &names[..excess] {
@@ -535,6 +626,17 @@ mod tests {
     use super::*;
     use rusqlite::params;
     use time::macros::datetime;
+
+    thread_local! {
+        /// Overrides [`computer_tag`] for the current test: `Some(None)` is "no tag".
+        /// Without an override, tests make untagged backups.
+        pub(super) static TAG: std::cell::RefCell<Option<Option<String>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    fn as_computer(tag: &str) {
+        TAG.with(|current| *current.borrow_mut() = Some(Some(tag.to_owned())));
+    }
 
     struct Fixture {
         _dir: tempfile::TempDir,
@@ -1209,5 +1311,128 @@ mod tests {
         );
         assert_eq!(parse_name("backup-20261119-210000-12"), None);
         assert_eq!(parse_name(".tmp-backup-20261119-210000-123"), None);
+    }
+
+    #[test]
+    fn names_may_carry_a_computer_tag_and_old_untagged_names_still_read() {
+        let parsed = parse("manual-20261119-210000-123-desktop-a1").unwrap();
+        assert_eq!(parsed.kind, BackupKind::Manual);
+        assert_eq!(parsed.tag.as_deref(), Some("desktop-a1"));
+        assert_eq!(parse("backup-20261119-210000-123").unwrap().tag, None);
+        for bad in [
+            "backup-20261119-210000-123-",
+            "backup-20261119-210000-123--x",
+            "backup-20261119-210000-123-X",
+            "backup-20261119-210000-123-a-",
+            "backup-20261119-210000-123x",
+            "backup-20261119-210000-123-a_b",
+            "backup-20261119-210000-123-abcdefghijklmnopqrstuvwxyz",
+        ] {
+            assert_eq!(parse(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_tag_comes_from_the_host_name_as_a_plain_slug() {
+        assert_eq!(slug("DESKTOP-ABC12").as_deref(), Some("desktop-abc12"));
+        assert_eq!(
+            slug("  Mac_Book Pro (2)").as_deref(),
+            Some("mac-book-pro-2")
+        );
+        assert_eq!(slug("Máquina").as_deref(), Some("m-quina"));
+        assert_eq!(slug("a".repeat(40).as_str()).unwrap().len(), MAX_TAG);
+        assert_eq!(slug("---"), None);
+        assert_eq!(slug(""), None);
+        // Cut in the middle of a hyphen run: never ends in one.
+        assert_eq!(
+            slug(&format!("{}-b", "a".repeat(MAX_TAG - 1))),
+            Some("a".repeat(MAX_TAG - 1))
+        );
+        // Every slug is a name the parser accepts.
+        let tag = slug("Meu PC #1").unwrap();
+        assert!(parse(&format!("backup-20261119-210000-123-{tag}")).is_some());
+    }
+
+    #[test]
+    fn computers_sharing_one_folder_rotate_only_their_own_backups() {
+        let f = fixture();
+        let folder = default_folder(&f.paths);
+        as_computer("laptop");
+        for day in 1..=3 {
+            backup(&f, &format!("2026-11-{day:02}T09:00:00.000Z"));
+        }
+        // An unfinished backup of the laptop, and an old untagged one.
+        fs::create_dir_all(folder.join(".tmp-backup-20261101-000000-000-laptop")).unwrap();
+        fs::create_dir_all(folder.join(".tmp-backup-20261101-000000-000")).unwrap();
+        as_computer("desktop");
+        for day in 4..=12 {
+            backup(&f, &format!("2026-11-{day:02}T10:00:00.000Z"));
+        }
+        let all = list(&folder);
+        let by = |tag: &str| {
+            all.iter()
+                .filter(|b| b.computer.as_deref() == Some(tag))
+                .count()
+        };
+        assert_eq!(by("desktop"), 7, "the desktop keeps its own newest 7");
+        assert_eq!(by("laptop"), 3, "the laptop's backups are not touched");
+        assert!(
+            all.iter()
+                .filter(|b| b.computer.as_deref() == Some("laptop"))
+                .all(|b| b.other_computer)
+        );
+        assert!(
+            all.iter()
+                .filter(|b| b.computer.as_deref() == Some("desktop"))
+                .all(|b| !b.other_computer)
+        );
+        assert!(
+            folder
+                .join(".tmp-backup-20261101-000000-000-laptop")
+                .exists()
+        );
+        assert!(folder.join(".tmp-backup-20261101-000000-000").exists());
+        assert_eq!(all[0].name, "backup-20261112-100000-000-desktop");
+    }
+
+    #[test]
+    fn untagged_backups_from_before_tags_are_kept_and_listed() {
+        let f = fixture();
+        let folder = default_folder(&f.paths);
+        for day in 1..=8 {
+            backup(&f, &format!("2026-11-{day:02}T10:00:00.000Z"));
+        }
+        assert_eq!(list(&folder).len(), 7, "no tag: rotation as before");
+        as_computer("desktop");
+        backup(&f, "2026-11-09T10:00:00.000Z");
+        let all = list(&folder);
+        assert_eq!(all.len(), 8, "the untagged ones stay");
+        let old = all.iter().find(|b| b.computer.is_none()).unwrap();
+        assert!(!old.other_computer);
+    }
+
+    #[test]
+    fn another_computers_backup_does_not_make_this_one_not_due_and_can_be_restored() {
+        let f = fixture();
+        let folder = default_folder(&f.paths);
+        as_computer("laptop");
+        let theirs = backup(&f, "2026-11-19T10:00:00.000Z");
+        as_computer("desktop");
+        let service = BackupService::default();
+        let made = service
+            .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 11:00:00 UTC))
+            .unwrap();
+        assert_eq!(made.unwrap().computer.as_deref(), Some("desktop"));
+        assert!(
+            service
+                .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 12:00:00 UTC))
+                .unwrap()
+                .is_none(),
+            "its own backup now counts"
+        );
+        // The laptop's backup can be restored here; the safety backup is tagged with this
+        // computer.
+        restore(&f.db, &f.paths, &theirs.name, "2026-11-19T13:00:00.000Z").unwrap();
+        assert!(folder.join("safety-20261119-130000-000-desktop").is_dir());
     }
 }

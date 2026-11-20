@@ -8,4 +8,13 @@ export type BackupInfo = {
 /**
  * Folder name; identifies the backup in `backup_restore`.
  */
-name: string, kind: BackupKind, createdAt: string, sizeBytes: number, };
+name: string, kind: BackupKind, 
+/**
+ * The computer tag in the name (see [`computer_tag`]); none for backups made before tags.
+ */
+computer: string | null, 
+/**
+ * Whether the backup was made by another computer (a tagged one with another tag). Such
+ * backups can be restored but are never deleted by this computer's rotation.
+ */
+otherComputer: boolean, createdAt: string, sizeBytes: number, };

@@ -10,18 +10,24 @@ import { createBusy } from "./busy";
 const old = {
   name: "backup-20261118-100000-000",
   kind: "backup",
+  computer: null,
+  otherComputer: false,
   createdAt: "2026-11-18T10:00:00.000Z",
   sizeBytes: 3 * 1024 * 1024,
 } as const;
 const manual = {
   name: "manual-20261119-090000-000",
   kind: "manual",
+  computer: null,
+  otherComputer: false,
   createdAt: "2026-11-19T09:00:00.000Z",
   sizeBytes: 2 * 1024 * 1024,
 } as const;
 const safety = {
   name: "safety-20261119-120000-000",
   kind: "safety",
+  computer: null,
+  otherComputer: false,
   createdAt: "2026-11-19T12:00:00.000Z",
   sizeBytes: 1024 * 1024,
 } as const;
@@ -131,11 +137,26 @@ describe("BackupSection", () => {
     expect(screen.queryByRole("button", { name: "Usar a pasta padrão" })).not.toBeInTheDocument();
   });
 
-  it("warns not to share one folder between two computers", async () => {
+  it("says the two computers can share one folder, and marks the other one's backups", async () => {
     backend();
     render(() => <BackupSection busy={createBusy()} />);
 
-    expect(await screen.findByText(/Não use a mesma pasta nos dois computadores/)).toBeVisible();
+    expect(await screen.findByText(/Os dois computadores podem usar a mesma pasta/)).toBeVisible();
+  });
+
+  it("marks a backup made by another computer", async () => {
+    const theirs = {
+      ...old,
+      name: "backup-20261118-100000-000-notebook",
+      computer: "notebook",
+      otherComputer: true,
+    };
+    backend({ backups: [theirs, manual] });
+    render(() => <BackupSection busy={createBusy()} />);
+
+    expect(await screen.findByText("outro computador (notebook)")).toBeVisible();
+    expect(screen.getAllByText(/outro computador/)).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /Restaurar o backup de/ })).toHaveLength(2);
   });
 
   it("says what a folder change leaves behind, and lets the user dismiss it", async () => {

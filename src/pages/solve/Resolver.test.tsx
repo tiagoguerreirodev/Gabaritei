@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AttemptView } from "../../bindings/AttemptView";
 import type { FeedbackMode } from "../../bindings/FeedbackMode";
 import type { ResponseView } from "../../bindings/ResponseView";
+import type { RecheckView } from "../../bindings/RecheckView";
 import type { Reveal } from "../../bindings/Reveal";
 import Resolver from "./Resolver";
 
@@ -47,6 +48,17 @@ const revealOf = (q: ResponseView): Reveal => {
     outcome: q.choice === null ? "blank" : q.choice === answerId ? "correct" : "wrong",
   };
 };
+
+/** What the fake AI answers to "Pedir revisão à IA" (the key proposed is option D). */
+let recheckAnswer: RecheckView = {
+  verdict: "wrong",
+  correctedKey: "q0-o3",
+  reasoning: "O art. 37 estabelece outra regra.",
+  sources: ["CF/88, art. 37"],
+};
+
+/** Lets a test hold the AI's answer back; by default it answers at once. */
+let recheckGate: Promise<void> = Promise.resolve();
 
 /** A fake backend that applies the same rules as `attempts.rs`, recording each command. */
 function backend(mode: FeedbackMode) {
@@ -131,6 +143,13 @@ function backend(mode: FeedbackMode) {
             reveal: { ...reveal, annulled, outcome: annulled ? "annulled" : reveal.outcome },
           };
         });
+      case "recheck_ask":
+        return recheckGate.then(() => recheckAnswer);
+      case "recheck_apply":
+        keys[view.questions[position]!.questionId] = recheckAnswer.correctedKey!;
+        return update(position, (q) => ({ ...q, reveal: revealOf(q) }));
+      case "recheck_dismiss":
+        return null;
       case "abandon":
         return null;
     }
@@ -201,6 +220,91 @@ describe("Resolver", () => {
     await user.click(option("A"));
     const other = await screen.findByRole("region", { name: "Gabarito e explicação" });
     expect(other).not.toHaveTextContent("Gabarito contestado");
+  });
+
+  it("asks the AI to re-check a revealed question and applies the key only after confirming", async () => {
+    const { user, calls } = await open("study");
+    expect(screen.queryByRole("button", { name: "Pedir revisão à IA" })).not.toBeInTheDocument();
+    await user.click(option("A"));
+
+    await user.click(await screen.findByRole("button", { name: "Pedir revisão à IA" }));
+    const review = await screen.findByRole("region", { name: "Revisão da IA" });
+    expect(review).toHaveTextContent("A IA discorda do gabarito.");
+    expect(review).toHaveTextContent("Gabarito sugerido: D.");
+    expect(review).toHaveTextContent("O art. 37 estabelece outra regra.");
+    expect(review).toHaveTextContent("CF/88, art. 37");
+    // Nothing changed yet.
+    expect(calls.some((c) => c.command === "recheck_apply")).toBe(false);
+    expect(screen.getByRole("region", { name: "Gabarito e explicação" })).toHaveTextContent(
+      "Gabarito: B.",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Aplicar novo gabarito (D)" }));
+    await waitFor(() =>
+      expect(screen.getByRole("region", { name: "Gabarito e explicação" })).toHaveTextContent(
+        "Gabarito: D.",
+      ),
+    );
+    expect(calls.filter((c) => c.command === "recheck_apply")).toHaveLength(1);
+    expect(screen.queryByRole("region", { name: "Revisão da IA" })).not.toBeInTheDocument();
+    keys.q0 = "q0-o1";
+  });
+
+  it("keeps the current key when the user dismisses the AI's proposal", async () => {
+    const { user, calls } = await open("study");
+    await user.click(option("A"));
+    await user.click(await screen.findByRole("button", { name: "Pedir revisão à IA" }));
+    await user.click(await screen.findByRole("button", { name: "Manter o gabarito atual" }));
+
+    await waitFor(() => expect(calls.some((c) => c.command === "recheck_dismiss")).toBe(true));
+    expect(calls.some((c) => c.command === "recheck_apply")).toBe(false);
+    expect(screen.getByRole("region", { name: "Gabarito e explicação" })).toHaveTextContent(
+      "Gabarito: B.",
+    );
+  });
+
+  it("does not show a late re-check under another question", async () => {
+    let release = () => {};
+    const { user } = await open("study");
+    // Reveal questions 1 and 2, so the card stays mounted when moving between them.
+    await user.click(option("A"));
+    await user.keyboard("{ArrowRight}");
+    await screen.findByRole("article", { name: "Questão 2 de 3" });
+    await user.click(option("C"));
+    await screen.findByRole("region", { name: "Gabarito e explicação" });
+    await user.keyboard("{ArrowLeft}");
+    await screen.findByRole("article", { name: "Questão 1 de 3" });
+
+    recheckGate = new Promise<void>((resolve) => (release = resolve));
+    await user.click(await screen.findByRole("button", { name: "Pedir revisão à IA" }));
+    await user.keyboard("{ArrowRight}");
+    await screen.findByRole("article", { name: "Questão 2 de 3" });
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Question 1's verdict must not appear under question 2.
+    expect(screen.queryByRole("region", { name: "Revisão da IA" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pedir revisão à IA" })).toBeVisible();
+    recheckGate = Promise.resolve();
+  });
+
+  it("offers no key change when the AI confirms the key", async () => {
+    const { user } = await open("study");
+    recheckAnswer = {
+      verdict: "correct",
+      correctedKey: null,
+      reasoning: "Está certo.",
+      sources: [],
+    };
+    await user.click(option("A"));
+    await user.click(await screen.findByRole("button", { name: "Pedir revisão à IA" }));
+    expect(await screen.findByText("A IA confirmou o gabarito.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Aplicar novo gabarito/ })).not.toBeInTheDocument();
+    recheckAnswer = {
+      verdict: "wrong",
+      correctedKey: "q0-o3",
+      reasoning: "O art. 37 estabelece outra regra.",
+      sources: ["CF/88, art. 37"],
+    };
   });
 
   it("keeps everything hidden in Simulado until finishing, then shows the result", async () => {

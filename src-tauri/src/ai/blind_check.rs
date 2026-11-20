@@ -11,9 +11,10 @@ use super::draft::{self, Draft, DraftStatus, GenerationInfo};
 use super::generate::GenerateRequest;
 use super::prompts::{self, CheckerView, Objection};
 use super::roles::RoleConfig;
-use super::runner::{CancelToken, Progress, ProgressKind, run_job};
+use super::runner::{CancelToken, Progress, ProgressKind};
 use super::secrets::Secrets;
 use super::settings::{self, AiSettings, Sources};
+use super::task::{Task, ask};
 use crate::bank::PackageQuestion;
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
@@ -126,33 +127,6 @@ pub fn pending_record() -> serde_json::Value {
 
 fn invalid(message: &str) -> AppError {
     AppError::Invalid(message.to_owned())
-}
-
-/// What one structured job asks of a role.
-struct Task {
-    schema: serde_json::Value,
-    sources: Sources,
-    instructions: String,
-    prompt: String,
-    /// Files copied into the run folder for the agent to read.
-    attachments: Vec<std::path::PathBuf>,
-}
-
-/// Runs one structured job for `config`.
-fn ask<T: serde::de::DeserializeOwned>(
-    settings: &AiSettings,
-    secrets: &Secrets,
-    config: &RoleConfig,
-    task: Task,
-    cancel: &CancelToken,
-    progress: &mut dyn FnMut(Progress),
-) -> AppResult<(T, super::runner::JobOutput)> {
-    let mut spec = settings::job_spec(settings, secrets, config, task.schema, task.sources)?;
-    spec.instructions = task.instructions;
-    spec.prompt = task.prompt;
-    spec.attachments = task.attachments;
-    let output = run_job(&spec, cancel, progress)?;
-    Ok((output.parse()?, output))
 }
 
 /// Asks the checker about `questions` and checks that it answered each one, once, with an

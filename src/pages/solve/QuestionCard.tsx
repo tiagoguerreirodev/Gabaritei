@@ -1,9 +1,11 @@
 import { For, Show } from "solid-js";
 import type { Outcome } from "../../bindings/Outcome";
+import type { RecheckView } from "../../bindings/RecheckView";
 import type { ResponseView } from "../../bindings/ResponseView";
 import QuestionImage from "../../components/QuestionImage";
 import RichText from "../../components/RichText";
 import { optionLetters } from "./format";
+import RecheckPanel from "./RecheckPanel";
 
 const outcomeText: Record<Outcome, string> = {
   correct: "Você acertou.",
@@ -32,6 +34,11 @@ export default function QuestionCard(props: {
   onFlag: () => void;
   /** Annuls the revealed question, or restores it with `false`. */
   onAnnul: (annulled: boolean) => void;
+  /** Asks the AI to re-check the key; resolves with its proposal. */
+  onRecheck: () => Promise<RecheckView>;
+  onRecheckApply: () => void;
+  onRecheckDismiss: () => void;
+  onAiCancel: () => void;
 }) {
   const letters = () => optionLetters(props.question);
   const reveal = () => props.question.reveal;
@@ -142,6 +149,13 @@ export default function QuestionCard(props: {
                 <For each={revealed().refs}>{(ref) => <li>{ref}</li>}</For>
               </ul>
             </Show>
+            <RecheckPanel
+              question={props.question}
+              onAsk={props.onRecheck}
+              onApply={props.onRecheckApply}
+              onDismiss={props.onRecheckDismiss}
+              onCancel={props.onAiCancel}
+            />
             <div class="reveal-actions">
               <button type="button" onClick={() => props.onAnnul(!revealed().annulled)}>
                 {revealed().annulled ? "Desfazer anulação" : "Anular questão"}

@@ -750,6 +750,27 @@ pub fn set_annulled(
     load(conn, id)
 }
 
+/// The question at `position`, if the user has already seen its answer in this attempt. The
+/// on-demand AI features (re-check, explain) are only allowed after the reveal.
+pub fn revealed_question(conn: &Connection, id: &str, position: u32) -> AppResult<String> {
+    load_header(conn, id)?;
+    let (question_id, revealed) = conn
+        .query_row(
+            "SELECT question_id, revealed_at IS NOT NULL FROM responses
+             WHERE attempt_id = ?1 AND position = ?2",
+            params![id, position],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Invalid("Questão não encontrada nesta tentativa.".into()))?;
+    if !revealed {
+        return Err(AppError::Invalid(
+            "Só é possível usar a IA depois de ver o gabarito.".into(),
+        ));
+    }
+    Ok(question_id)
+}
+
 /// An unfinished attempt, for the "resume" list on the home page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]

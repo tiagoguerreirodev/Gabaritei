@@ -116,6 +116,29 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     });
   };
 
+  const recheck = () => {
+    const q = current();
+    const latest = view();
+    if (!q?.reveal || !latest) return Promise.reject(new Error("Questão não revelada."));
+    return api.recheckAsk(latest.id, q.position);
+  };
+
+  const applyRecheck = () => {
+    const q = current();
+    if (!q?.reveal) return;
+    enqueue(async (id) => {
+      const next = await api.recheckApply(id, q.position);
+      showToast("Gabarito atualizado. As pontuações foram recalculadas.");
+      return next;
+    });
+  };
+
+  const dismissRecheck = () => {
+    const q = current();
+    const latest = view();
+    if (q?.reveal && latest) void api.recheckDismiss(latest.id, q.position).catch(showError);
+  };
+
   const finish = async () => {
     await queue;
     const latest = view();
@@ -230,6 +253,10 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                   onEliminate={eliminate}
                   onFlag={flag}
                   onAnnul={annul}
+                  onRecheck={recheck}
+                  onRecheckApply={applyRecheck}
+                  onRecheckDismiss={dismissRecheck}
+                  onAiCancel={() => void api.aiRequestCancel().catch(showError)}
                 />
               )}
             </Show>

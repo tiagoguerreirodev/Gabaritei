@@ -28,6 +28,7 @@ import type { LegacyImportStatus } from "./bindings/LegacyImportStatus";
 import type { Performance } from "./bindings/Performance";
 import type { PerformanceQuery } from "./bindings/PerformanceQuery";
 import type { RemNoteTest } from "./bindings/RemNoteTest";
+import type { RecheckView } from "./bindings/RecheckView";
 import type { SessionStart } from "./bindings/SessionStart";
 import type { TopicTree } from "./bindings/TopicTree";
 
@@ -129,6 +130,17 @@ export const api = {
       return () => undefined;
     }
   },
+  /** Asks the AI whether the key of a revealed question is right. Waits for the answer. */
+  recheckAsk: (attemptId: string, position: number) =>
+    call<RecheckView>("recheck_ask", { attemptId, position }),
+  /** Applies the key the AI proposed (after the user confirmed); past attempts are re-scored. */
+  recheckApply: (attemptId: string, position: number) =>
+    call<AttemptView>("recheck_apply", { attemptId, position }),
+  /** Drops the AI's proposal and keeps the current key. */
+  recheckDismiss: (attemptId: string, position: number) =>
+    call<null>("recheck_dismiss", { attemptId, position }),
+  /** Cancels the on-demand AI request that is running. */
+  aiRequestCancel: () => call<boolean>("ai_request_cancel"),
   /** Runs the blind check again on a draft whose check failed (same background slot). */
   blindCheckStart: (draftId: string) => call<null>("blind_check_start", { draftId }),
   /** Stops the running generation. `false` if none was running. */

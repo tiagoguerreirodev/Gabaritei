@@ -6,12 +6,14 @@
  */
 import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 import type { AppInfo } from "./bindings/AppInfo";
+import type { AttemptView } from "./bindings/AttemptView";
 import type { CollectionDetail } from "./bindings/CollectionDetail";
 import type { CollectionPage } from "./bindings/CollectionPage";
 import type { CollectionQuery } from "./bindings/CollectionQuery";
 import type { ErrorPayload } from "./bindings/ErrorPayload";
 import type { LegacyImportOutcome } from "./bindings/LegacyImportOutcome";
 import type { LegacyImportStatus } from "./bindings/LegacyImportStatus";
+import type { SessionStart } from "./bindings/SessionStart";
 import type { TopicTree } from "./bindings/TopicTree";
 
 const FALLBACK_MESSAGE = "Ocorreu um erro inesperado. Tente novamente.";
@@ -51,4 +53,22 @@ export const api = {
   collections: (query: CollectionQuery) => call<CollectionPage>("collections", { query }),
   /** One collection with its attempts. */
   collection: (id: string) => call<CollectionDetail>("collection", { id }),
+  /** Starts a session; fails if the collection already has an unfinished attempt. */
+  sessionStart: (request: SessionStart) => call<AttemptView>("session_start", { request }),
+  /** An attempt; keys and explanations appear only for revealed questions. */
+  attempt: (id: string) => call<AttemptView>("attempt", { id }),
+  /** Chooses an option, or clears the choice with `null`. */
+  answer: (attemptId: string, position: number, optionId: string | null) =>
+    call<AttemptView>("answer", { attemptId, position, optionId }),
+  /** Toggles an option's elimination. */
+  eliminate: (attemptId: string, position: number, optionId: string) =>
+    call<AttemptView>("eliminate", { attemptId, position, optionId }),
+  /** Sets or clears a question's flag. */
+  flag: (attemptId: string, position: number, flagged: boolean) =>
+    call<AttemptView>("flag", { attemptId, position, flagged }),
+  /** Finishes the attempt; `revision` must be the latest one seen. */
+  finish: (attemptId: string, revision: number) =>
+    call<AttemptView>("finish", { attemptId, revision }),
+  /** Deletes an unfinished attempt. */
+  abandon: (attemptId: string) => call<null>("abandon", { attemptId }),
 };

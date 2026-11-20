@@ -47,6 +47,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::legacy_import_status,
             commands::import_legacy_bank,
             commands::home,
+            commands::learning_overview,
             commands::performance,
             commands::export_performance_csv,
             commands::session_start,
@@ -89,6 +90,8 @@ fn open_database<R: Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error:
         eprintln!("Gabaritei: {error} ({:?}: {error:?})", paths.database());
     })?;
     database.with(|conn| ai::blind_check::recover_interrupted(conn))?;
+    // Reviews are derived: history from before the feature, or a restored backup, gets its schedule.
+    database.transaction(|tx| learning::refresh_all(tx))?;
     app.manage(database);
     app.manage(paths);
     app.manage(ai::secrets::Secrets::keychain());

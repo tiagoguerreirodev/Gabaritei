@@ -475,7 +475,12 @@ fn topic_sessions_prefer_unseen_then_least_recent_and_skip_annulled() {
 #[test]
 fn empty_sources_are_a_pt_br_error() {
     let (db, _) = bank();
-    for source in [SessionSource::Errors, SessionSource::Reviews] {
+    for source in [
+        SessionSource::Errors {
+            include_blanks: true,
+        },
+        SessionSource::Reviews,
+    ] {
         let result = db.transaction(|tx| {
             start(
                 tx,

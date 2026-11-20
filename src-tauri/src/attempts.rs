@@ -65,9 +65,9 @@ pub enum SessionSource {
     Collection { collection_id: String },
     /// Up to `count` questions of a topic: unseen first, then least recently answered.
     Topic { topic_id: i64, count: u32 },
-    /// The error notebook (#21).
-    Errors,
-    /// Due spaced-repetition reviews (#21).
+    /// The error notebook, most recent errors first (up to 100). Blanks join when asked.
+    Errors { include_blanks: bool },
+    /// Due reviews (most overdue first), then recent errors (up to 100 in all).
     Reviews,
 }
 
@@ -412,8 +412,16 @@ pub fn start(conn: &Connection, request: &SessionStart, now: &str) -> AppResult<
             let ids = topic_questions(conn, *topic_id, *count)?;
             ("topic", Some(topic_id.to_string()), ids)
         }
-        SessionSource::Errors => ("errors", None, crate::learning::error_questions(conn)?),
-        SessionSource::Reviews => ("reviews", None, crate::learning::due_questions(conn, now)?),
+        SessionSource::Errors { include_blanks } => (
+            "errors",
+            None,
+            crate::learning::error_questions(conn, *include_blanks, crate::learning::MAX_SESSION)?,
+        ),
+        SessionSource::Reviews => (
+            "reviews",
+            None,
+            crate::learning::review_session(conn, now, crate::learning::MAX_SESSION)?,
+        ),
     };
     if questions.is_empty() {
         return Err(AppError::Invalid(
@@ -715,6 +723,7 @@ pub fn finish(conn: &Connection, id: &str, revision: u32, now: &str) -> AppResul
         "UPDATE attempts SET finished_at = ?2, revision = revision + 1 WHERE id = ?1",
         params![id, now],
     )?;
+    crate::learning::refresh_attempt(conn, id)?;
     load(conn, id)
 }
 
@@ -747,6 +756,7 @@ pub fn set_annulled(
         "UPDATE questions SET annulled = ?2, updated_at = ?3 WHERE id = ?1",
         params![question_id, annulled, now],
     )?;
+    crate::learning::refresh_question(conn, &question_id)?;
     load(conn, id)
 }
 

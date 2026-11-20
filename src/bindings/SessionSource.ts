@@ -3,4 +3,4 @@
 /**
  * Where a session's questions come from.
  */
-export type SessionSource = { "kind": "collection", collectionId: string, } | { "kind": "topic", topicId: number, count: number, } | { "kind": "errors" } | { "kind": "reviews" };
+export type SessionSource = { "kind": "collection", collectionId: string, } | { "kind": "topic", topicId: number, count: number, } | { "kind": "errors", includeBlanks: boolean, } | { "kind": "reviews" };

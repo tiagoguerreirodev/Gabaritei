@@ -30,4 +30,15 @@ describe("api", () => {
 
     await expect(api.appInfo()).rejects.toThrow("Ocorreu um erro inesperado. Tente novamente.");
   });
+
+  it("sends the include-blanks flag of the learning overview in camelCase", async () => {
+    const sent: unknown[] = [];
+    mockIPC((command, args) => {
+      sent.push([command, args]);
+      return { due: 0, upcoming: 0, errors: 0, items: [] };
+    });
+
+    await api.learningOverview(true);
+    expect(sent).toEqual([["learning_overview", { includeBlanks: true }]]);
+  });
 });

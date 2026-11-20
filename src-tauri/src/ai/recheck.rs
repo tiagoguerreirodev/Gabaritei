@@ -18,6 +18,7 @@ use crate::attempts;
 use crate::bank::store::load_question;
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
+use crate::learning;
 
 const MAX_REASONING: usize = 20_000;
 const MAX_SOURCES: usize = 20;
@@ -199,6 +200,8 @@ pub fn apply(
             now
         ],
     )?;
+    // Reviews are derived from the current key, so they follow the change.
+    learning::refresh_question(conn, &question_id)?;
     Ok(())
 }
 

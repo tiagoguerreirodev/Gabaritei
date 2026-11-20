@@ -5,6 +5,7 @@ use crate::attempts::{
 };
 use crate::bank::import_questions;
 use crate::bank::question::tests::multiple;
+use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -152,6 +153,28 @@ fn outcome_of(world: &World, attempt: &str) -> Outcome {
     view.questions[0].reveal.as_ref().unwrap().outcome
 }
 
+fn review_interval(world: &World) -> Option<i64> {
+    world
+        .db
+        .with(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT json_extract(state, '$.intervalDays') FROM review_state",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()?)
+        })
+        .unwrap()
+}
+
+fn errors_of(world: &World) -> Vec<String> {
+    world
+        .db
+        .with(|conn| crate::learning::error_questions(conn, false, 100))
+        .unwrap()
+}
+
 #[cfg(unix)]
 mod flow {
     use super::*;
@@ -169,10 +192,16 @@ mod flow {
     #[test]
     fn a_confirmed_correction_changes_the_key_and_rescores_past_attempts() {
         let w = world(wrong_answer);
+        // Two hits in a row put the review on the second rung.
+        let first = start(&w, FeedbackMode::Study);
+        answer_with(&w, &first, &w.old_key);
+        w.db.transaction(|tx| finish(tx, &first, 1, T0)).unwrap();
         let attempt = start(&w, FeedbackMode::Study);
         answer_with(&w, &attempt, &w.old_key);
         w.db.transaction(|tx| finish(tx, &attempt, 1, T0)).unwrap();
         assert_eq!(outcome_of(&w, &attempt), Outcome::Correct);
+        assert_eq!(review_interval(&w), Some(3), "two hits move the review up");
+        assert!(errors_of(&w).is_empty());
 
         let view = ask_it(&w, &attempt).unwrap();
         assert_eq!(view.verdict, RecheckVerdict::Wrong);
@@ -185,6 +214,9 @@ mod flow {
             .unwrap();
         // The attempt that was right under the old key is now wrong, without being redone.
         assert_eq!(outcome_of(&w, &attempt), Outcome::Wrong);
+        // Reviews and the error notebook follow the corrected key too (#50).
+        assert_eq!(review_interval(&w), Some(1), "both answers are now misses");
+        assert_eq!(errors_of(&w), std::slice::from_ref(&w.question_id));
         let (old, new, reason, source): (String, String, String, String) = w
             .db
             .with(|conn| {

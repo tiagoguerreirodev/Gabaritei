@@ -117,8 +117,8 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
 | pt-BR | Meaning | Code name |
 |---|---|---|
-| concurso | public exam / contest (optional tag) | `contest` |
-| banca | exam board, e.g. Cebraspe, FGV (optional tag; also a generation style) | `board` |
+| concurso | public exam / contest (optional tag on collections) | `contest` |
+| banca | exam board, e.g. Cebraspe, FGV (optional tag on collections; also a generation style) | `board` |
 | caderno | fixed list of questions | `collection` |
 | área › matéria › assunto | three-level taxonomy | `area`, `matter`, `topic` (a full path is a `TopicPath`) |
 | gabarito | answer key | `answer_id` / `key` |

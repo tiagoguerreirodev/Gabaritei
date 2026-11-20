@@ -95,19 +95,52 @@ fn copy_database(conn: &Connection, dest: &Path) -> AppResult<()> {
     Ok(())
 }
 
+/// Copies the database into `dest/gabaritei.sqlite` and returns its schema version.
+fn copy_with_version(conn: &Connection, dest: &Path) -> AppResult<u32> {
+    copy_database(conn, &dest.join(DATABASE_FILE))?;
+    db::user_version(conn)
+}
+
 /// Writes a snapshot of the database and images into `dest`, which must be an empty folder.
+/// The database lock is held only while the database is copied.
 pub fn write(
     database: &Database,
     images_dir: &Path,
     dest: &Path,
     created_at: &str,
 ) -> AppResult<Manifest> {
+    write_with(
+        |dest| database.with(|conn| copy_with_version(conn, dest)),
+        images_dir,
+        dest,
+        created_at,
+    )
+}
+
+/// Like [`write`], for a caller that already holds the database lock (see [`commit`]).
+pub fn write_locked(
+    conn: &Connection,
+    images_dir: &Path,
+    dest: &Path,
+    created_at: &str,
+) -> AppResult<Manifest> {
+    write_with(
+        |dest| copy_with_version(conn, dest),
+        images_dir,
+        dest,
+        created_at,
+    )
+}
+
+fn write_with(
+    copy_database: impl FnOnce(&Path) -> AppResult<u32>,
+    images_dir: &Path,
+    dest: &Path,
+    created_at: &str,
+) -> AppResult<Manifest> {
     fs::create_dir_all(dest.join(IMAGES_DIR))?;
     // The database first: every image it references already exists, and newer ones are harmless.
-    let schema_version = database.with(|conn| {
-        copy_database(conn, &dest.join(DATABASE_FILE))?;
-        db::user_version(conn)
-    })?;
+    let schema_version = copy_database(dest)?;
     let mut files = Vec::new();
     let (sha256, size) = hash_file(&dest.join(DATABASE_FILE))?;
     files.push(ManifestFile {
@@ -323,13 +356,17 @@ pub fn stage(dir: &Path) -> AppResult<Staged> {
 ///
 /// `keep_local` lists settings that describe this computer (folders, CLI paths): their current
 /// values survive the replacement, and a key this computer never set is removed again.
+///
+/// The caller holds the database lock (see [`Database::with`]) and passes the connection, so a
+/// safety backup of the old data can be made under the same lock.
 pub fn commit(
-    database: &Database,
+    conn: &mut Connection,
     images_dir: &Path,
     dir: &Path,
     staged: &Staged,
     keep_local: &[&str],
 ) -> AppResult<()> {
+    ensure_replaceable(conn, staged)?;
     fs::create_dir_all(images_dir)?;
     for file in &staged.manifest.files {
         let Some(name) = file.path.strip_prefix("images/") else {
@@ -348,7 +385,7 @@ pub fn commit(
         }
         fs::rename(&partial, &target)?;
     }
-    database.with(|conn| {
+    {
         let mut target = Connection::open(staged.database())?;
         for key in keep_local {
             let local = db::get_raw_setting(conn, key)?;
@@ -368,5 +405,23 @@ pub fn commit(
         Backup::new(&target, conn)?.run_to_completion(256, Duration::ZERO, None)?;
         // The pages came from a file with its own journal mode.
         db::prepare_restored(conn)
-    })
+    }
+}
+
+/// Fails, before anything is written, if the staged database can't be copied over the live
+/// one: SQLite refuses when the page sizes differ. Run before the safety backup, so a refused
+/// replacement changes nothing at all.
+pub fn ensure_replaceable(conn: &Connection, staged: &Staged) -> AppResult<()> {
+    let page_size = |conn: &Connection| -> AppResult<i64> {
+        Ok(conn.pragma_query_value(None, "page_size", |row| row.get(0))?)
+    };
+    let incoming = Connection::open_with_flags(staged.database(), OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|_| corrupt())?;
+    if page_size(conn)? != page_size(&incoming)? {
+        return Err(AppError::Invalid(
+            "Estes dados usam um formato de banco de dados diferente do deste Gabaritei e não podem ser restaurados. Nada foi alterado."
+                .into(),
+        ));
+    }
+    Ok(())
 }

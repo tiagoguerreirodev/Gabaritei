@@ -101,6 +101,24 @@ fn write_zip(dir: &Path, manifest: &snapshot::Manifest, target: &Path) -> AppRes
     Ok(())
 }
 
+/// Copies one zip entry to `out`. A failure to *read* the entry (a bad checksum, a truncated or
+/// damaged archive) means the file is not a good data file; only a failure to *write* is an
+/// unexpected error (a full disk, say).
+fn copy_entry(entry: &mut impl Read, out: &mut impl Write) -> AppResult<u64> {
+    let mut buffer = [0u8; 64 * 1024];
+    let mut copied = 0u64;
+    loop {
+        let read = match entry.read(&mut buffer) {
+            Ok(0) => return Ok(copied),
+            Ok(read) => read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => return Err(not_a_data_file()),
+        };
+        out.write_all(&buffer[..read])?;
+        copied += read as u64;
+    }
+}
+
 /// Unpacks a data file into the empty folder `into`, accepting only what a snapshot contains.
 pub fn unpack(file: &Path, into: &Path) -> AppResult<()> {
     unpack_within(file, into, LIMITS)
@@ -142,7 +160,7 @@ fn unpack_within(file: &Path, into: &Path, limits: Limits) -> AppResult<()> {
         let mut out = File::create(&target)?;
         // One byte more than allowed tells "exactly at the limit" from "over it".
         let limit = limit.min(remaining);
-        let copied = io::copy(&mut (&mut entry).take(limit + 1), &mut out)?;
+        let copied = copy_entry(&mut (&mut entry).take(limit + 1), &mut out)?;
         out.flush()?;
         if copied > limit {
             return Err(not_a_data_file());
@@ -436,6 +454,29 @@ mod tests {
             "no safety backup for a file that was rejected"
         );
         assert!(!target.paths.images_dir().join(IMAGE).exists());
+    }
+
+    #[test]
+    fn a_damaged_archive_is_not_a_data_file_and_not_an_internal_error() {
+        let source = profile();
+        add_question(&source.db, "from-source");
+        let out = tempfile::tempdir().unwrap();
+        let good = out.path().join("good.gabaritei");
+        export(&source.db, &source.paths, &good, NOW).unwrap();
+
+        // Flip a byte inside the compressed data: the archive still opens, but reading an
+        // entry fails (bad checksum or invalid compressed data).
+        let mut bytes = fs::read(&good).unwrap();
+        let middle = bytes.len() / 2;
+        bytes[middle] ^= 0xFF;
+        let damaged = out.path().join("damaged.gabaritei");
+        fs::write(&damaged, bytes).unwrap();
+
+        let target = profile();
+        add_question(&target.db, "local-only");
+        let error = import_into(&target, &damaged).unwrap_err();
+        assert_eq!(error.to_string(), NOT_A_DATA_FILE);
+        assert_eq!(questions(&target.db).len(), 1);
     }
 
     #[test]

@@ -259,11 +259,17 @@ mod tests {
             Some(PathBuf::from("/home/u")),
         );
         assert_eq!(list[0], Path::new("/custom/codex"));
-        let name = file_names(Agent::Codex).remove(0);
-        assert_eq!(list[1], Path::new("/a").join(&name));
-        assert_eq!(list[2], Path::new("/b").join(&name));
-        assert!(list.contains(&Path::new("/home/u/.local/bin").join(&name)));
-        assert!(list.contains(&Path::new("/opt/homebrew/bin").join(&name)));
+        // Every file name of a folder is tried (`.exe` before `.cmd` on Windows) before the
+        // next folder.
+        let names = file_names(Agent::Codex);
+        let first = names.len();
+        for (i, name) in names.iter().enumerate() {
+            assert_eq!(list[1 + i], Path::new("/a").join(name));
+            assert_eq!(list[1 + first + i], Path::new("/b").join(name));
+        }
+        let name = &names[0];
+        assert!(list.contains(&Path::new("/home/u/.local/bin").join(name)));
+        assert!(list.contains(&Path::new("/opt/homebrew/bin").join(name)));
     }
 
     #[test]

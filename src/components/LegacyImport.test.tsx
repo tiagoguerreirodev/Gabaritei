@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { LegacyImportReport } from "../bindings/LegacyImportReport";
 import type { LegacyImportStatus } from "../bindings/LegacyImportStatus";
 import Home from "../pages/Home";
+import { emptyHome } from "../test/fixtures";
 import Settings from "../pages/Settings";
 
 const report: LegacyImportReport = {
@@ -25,6 +26,7 @@ function backend(status: LegacyImportStatus, onImport: () => unknown = () => nul
   mockIPC((command) => {
     calls.push(command);
     if (command === "legacy_import_status") return status;
+    if (command === "home") return emptyHome;
     if (command === "import_legacy_bank") return onImport();
     throw new Error(`Unexpected command: ${command}`);
   });

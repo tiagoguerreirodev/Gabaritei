@@ -804,3 +804,166 @@ button {
   color: var(--text);
   cursor: pointer;
 }
+
+/* Desempenho and Início */
+.card.wide {
+  max-width: 56rem;
+}
+
+.export-button {
+  align-self: flex-end;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.export-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem;
+  max-width: 56rem;
+  margin: 1rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.9rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.stat-name {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.stat-value {
+  font-size: 1.6rem;
+}
+
+.stat-hint {
+  font-size: 0.8rem;
+}
+
+.weakest-list,
+.area-list,
+.attempt-list,
+.waiting-list {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+}
+
+.area-list,
+.attempt-list,
+.waiting-list {
+  padding-left: 0;
+  list-style: none;
+}
+
+.weakest-list li,
+.area-list li,
+.waiting-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.3rem 0;
+}
+
+.weak-name,
+.area-list li > span:first-child,
+.waiting-list li > a {
+  flex: 1;
+}
+
+.attempt-list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.15rem 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.attempt-list .primary {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: center;
+}
+
+.attempt-title {
+  font-weight: 600;
+}
+
+.trend-chart {
+  width: 100%;
+  height: auto;
+  max-width: 40rem;
+}
+
+.trend-chart .grid {
+  stroke: var(--border);
+}
+
+.trend-chart .axis {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.trend-chart .line {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.trend-chart .dot {
+  fill: var(--accent);
+}
+
+.chart-note {
+  font-size: 0.85rem;
+}
+
+.strength-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.strength-table th,
+.strength-table td {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  font-weight: normal;
+}
+
+.strength-table th:first-child {
+  text-align: left;
+}
+
+.strength-table thead th {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.strength-table .level-area th {
+  font-weight: 600;
+}
+
+.strength-table .level-matter th {
+  padding-left: 1.75rem;
+}
+
+.strength-table .level-topic th {
+  padding-left: 3rem;
+}

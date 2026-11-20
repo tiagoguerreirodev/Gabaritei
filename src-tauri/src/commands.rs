@@ -11,7 +11,7 @@ use crate::attempts::{self, AttemptView, SessionStart};
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
-use crate::metrics::{self, Performance, PerformanceQuery};
+use crate::metrics::{self, HomeSummary, Performance, PerformanceQuery};
 use crate::migrate::{self, LegacyImportOutcome, LegacyImportStatus};
 use crate::paths::AppPaths;
 
@@ -91,6 +91,12 @@ pub async fn import_legacy_bank<R: Runtime>(
 #[tauri::command]
 pub fn performance(db: State<'_, Database>, query: PerformanceQuery) -> AppResult<Performance> {
     db.with(|conn| metrics::performance(conn, &query))
+}
+
+/// The home page: summary cards, attempts to resume, due reviews and pending drafts.
+#[tauri::command]
+pub fn home(db: State<'_, Database>) -> AppResult<HomeSummary> {
+    db.with(|conn| metrics::home(conn, &crate::clock::now()))
 }
 
 /// Asks where to save the performance table as CSV (using the same filters) and writes it.

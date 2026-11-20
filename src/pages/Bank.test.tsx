@@ -21,8 +21,8 @@ const tree: TopicTree = {
           name: "Constitucional",
           questions: 300,
           topics: [
-            { id: 1, name: "Controle de constitucionalidade", questions: 120 },
-            { id: 2, name: "Direitos fundamentais", questions: 1 },
+            { id: 1, name: "Controle de constitucionalidade", questions: 120, accuracy: null },
+            { id: 2, name: "Direitos fundamentais", questions: 1, accuracy: null },
           ],
         },
       ],
@@ -152,6 +152,41 @@ describe("Banco", () => {
       const leaf = within(treeList).getByText("Direitos fundamentais").closest("li")!;
       expect(leaf).toHaveTextContent("1 questão");
       expect(within(treeList).getByText("Controle de constitucionalidade")).toBeVisible();
+    });
+
+    it("shows each answered topic's accuracy", async () => {
+      const [direito, informatica] = tree.areas;
+      const [constitucional] = direito!.matters;
+      const [controle, fundamentais] = constitucional!.topics;
+      backend({
+        tree: {
+          ...tree,
+          areas: [
+            {
+              ...direito!,
+              matters: [
+                {
+                  ...constitucional!,
+                  topics: [{ ...controle!, accuracy: 0.5 }, fundamentais!],
+                },
+              ],
+            },
+            informatica!,
+          ],
+        },
+      });
+      const user = userEvent.setup();
+      render(() => <Bank />);
+
+      const treeList = await screen.findByRole("list", { name: "Assuntos" });
+      await user.click(within(treeList).getByText("Direito"));
+      await user.click(within(treeList).getByText("Constitucional"));
+      expect(
+        within(treeList).getByText("Controle de constitucionalidade").closest("li"),
+      ).toHaveTextContent("acerto 50%");
+      expect(
+        within(treeList).getByText("Direitos fundamentais").closest("li"),
+      ).not.toHaveTextContent("acerto");
     });
 
     it("explains an empty bank", async () => {

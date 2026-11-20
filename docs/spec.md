@@ -149,7 +149,7 @@ The patterns below were **verified against the installed CLIs** (Claude Code 2.1
   - RemNote comes from your Codex config, so `--ignore-user-config` can't be used.
   - Still to confirm: whether web search needs a config switch, and the exact `-m` and effort keys.
 - **Working folder:** each run gets a fresh temporary folder. Attachments are copied into it and the agent reads them itself, so the app has no PDF parser.
-- **Tools:** read-only only, meaning file read, web search and fetch, and the RemNote read tools. No shell and no file edits. Sources and tool results are treated as data, never as instructions.
+- **Tools:** read-only only, meaning file read, web search and fetch, and the RemNote read tools. No file edits and no shell, except Codex's shell inside its read-only sandbox, which is kept only when a run has attachments (owner-approved, 2026-11-20). Sources and tool results are treated as data, never as instructions.
 - **Cancel and timeout:** SIGINT to the process group, then SIGKILL after a short grace period (on Windows the process tree is ended with `taskkill /T /F`).
 - **Policy:** the app never handles Claude or OpenAI credentials. It runs the CLI you logged into yourself. Anthropic doesn't allow third-party products to offer claude.ai login, and this app doesn't.
 

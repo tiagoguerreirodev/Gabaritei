@@ -116,6 +116,10 @@ export const api = {
   backupUseDefaultFolder: () => call<BackupStatus>("backup_use_default_folder"),
   /** Replaces the current data with a backup, after a safety backup of the current data. */
   backupRestore: (name: string) => call<null>("backup_restore", { name }),
+  /** Asks where to save the data file (`Gabaritei-<date>.gabaritei`) and writes it. `false` if cancelled. */
+  exportData: () => call<boolean>("export_data"),
+  /** Asks for a data file and replaces the local data with it, after a safety backup. `false` if cancelled. */
+  importData: () => call<boolean>("import_data"),
   /** CLI paths, role configuration and RemNote (never the token). Writes defaults on first use. */
   aiSettings: () => call<AiSettings>("ai_settings"),
   /** Validates and saves the AI settings; returns them as saved. */

@@ -30,8 +30,7 @@ pub const IMAGES_DIR: &str = "images";
 pub const FORMAT: u32 = 1;
 
 /// Shown whenever a snapshot can't be trusted. Nothing was changed.
-pub const CORRUPT_MESSAGE: &str =
-    "A cópia de segurança está corrompida ou incompleta. Nada foi alterado.";
+pub const CORRUPT_MESSAGE: &str = "Os dados estão corrompidos ou incompletos. Nada foi alterado.";
 
 /// One file of a snapshot, with the hash it must have.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

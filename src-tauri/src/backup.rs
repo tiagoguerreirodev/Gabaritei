@@ -7,6 +7,7 @@
 //! that looks complete. The newest 7 are kept. Before a restore replaces anything, a
 //! `safety-<UTC time>` backup of the current data is made; the newest 5 of those are kept.
 
+pub mod datafile;
 pub mod snapshot;
 
 use std::fs;
@@ -250,6 +251,19 @@ impl BackupService {
             });
             self.remember(&result);
             result
+        })
+    }
+
+    /// Writes the data file to `dest`. See [`datafile::export`].
+    pub fn export(&self, db: &Database, paths: &AppPaths, dest: &Path, now: &str) -> AppResult<()> {
+        self.exclusive(|| datafile::export(db, paths, dest, now))
+    }
+
+    /// Replaces the local data with a data file's. See [`datafile::import`].
+    pub fn import(&self, db: &Database, paths: &AppPaths, file: &Path, now: &str) -> AppResult<()> {
+        self.exclusive(|| {
+            let folder = db.with(|conn| folder(conn, paths))?;
+            datafile::import(db, paths, &folder, file, now)
         })
     }
 
@@ -498,7 +512,7 @@ mod tests {
         fs::write(&database, bytes).unwrap();
 
         let error = restore(&f.db, &f.paths, &info.name, "2026-11-19T11:00:00.000Z").unwrap_err();
-        assert!(error.to_string().contains("corrompida"), "{error}");
+        assert!(error.to_string().contains("corrompidos"), "{error}");
         assert_eq!(question_ids(&f.db), ["q-1", "q-2"]);
         assert!(
             list(&folder).iter().all(|b| b.kind == BackupKind::Backup),

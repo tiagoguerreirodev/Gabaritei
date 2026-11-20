@@ -153,7 +153,7 @@ describe("BackupSection", () => {
   it("keeps the dialog open and shows the error when the restore fails", async () => {
     backend(
       {},
-      { backup_restore: "A cópia de segurança está corrompida ou incompleta. Nada foi alterado." },
+      { backup_restore: "Os dados estão corrompidos ou incompletos. Nada foi alterado." },
     );
     const onRestored = vi.fn();
     const user = userEvent.setup();
@@ -169,7 +169,7 @@ describe("BackupSection", () => {
       within(await screen.findByRole("dialog")).getByRole("button", { name: "Restaurar" }),
     );
 
-    expect(await screen.findByText(/corrompida ou incompleta/)).toBeInTheDocument();
+    expect(await screen.findByText(/corrompidos ou incompletos/)).toBeInTheDocument();
     expect(onRestored).not.toHaveBeenCalled();
   });
 });

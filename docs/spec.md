@@ -26,7 +26,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 | 4 | Users | Only you. No onboarding, no public distribution concerns. |
 | 5 | History migration | **Bank only.** Import questions, collections, topics and images once from this repo's `biblioteca/`. There is no attempt history to carry over. |
 | 6 | Question formats | **5-option multiple choice** and **Certo/Errado**. No essays. |
-| 7 | Taxonomy | One **topic tree** (area › matter › topic). **Contest** and **board** become optional tags, not the top-level grouping. |
+| 7 | Taxonomy | One **topic tree** (area › matter › topic). **Contest** and **board** become optional tags, not the top-level grouping. Tags live on **collections**; a question's contests are those of the collections that contain it (decided 2026-11-19, because 389 legacy questions belong to both contests). |
 | 8 | Generation scope | **One topic per generation**, picked from the tree or typed as a new path. Every generated question gets exactly that topic. |
 | 9 | Generation form | Topic and count are required. Optional: **board style**, **format** (blank means the AI may mix both formats), **free-text instructions**. Sources: **RemNote**, **attached files**, **web**. The generator also gets **that topic's existing stems** so it avoids near-duplicates. |
 | 10 | No spoilers | **No screen shows a question's answer before you've answered it.** That includes the package preview. |
@@ -52,8 +52,8 @@ All UI text is in Portuguese. There are no accounts and no server.
 
 ### 3.1 Bank and taxonomy
 - **Topic tree:** area › matter › topic. Browse it with counts of questions, answered questions and accuracy.
-- **Question fields:** `type` (`multiple` or `boolean`), stem, options (5 for multiple choice, Certo/Errado for boolean), answer key, explanation, references, topics (one or more paths), image (migrated only), `annulled`, contest and board tags, provenance (agent, model, date, blind-check verdict).
-- **Collections** are fixed question lists: the 352 migrated *cadernos*, plus one collection per approved package.
+- **Question fields:** `type` (`multiple` or `boolean`), stem, options (5 for multiple choice, Certo/Errado for boolean), answer key, explanation, references, topics (one or more paths), image (migrated only) with alt text, `annulled`, provenance (agent, model, date, blind-check verdict). Questions carry no contest or board of their own; see Collections below.
+- **Collections** are fixed question lists with optional contest and board tags: the 352 migrated *cadernos*, plus one collection per approved package.
 - **Deduplication** works as today (`N-C5`): canonical option IDs plus a content fingerprint. An answer-key conflict blocks import.
 - **Dropped:** `difficulty`, generic `tags`, `objectives`, the versions table, syllabus, taxonomy merges and aliases (`U-C1`, `U-C2`, `U-C6`, `O-C3`).
 
@@ -100,7 +100,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 - **Scoring:** correct, wrong, blank or annulled (§3.4 of the analysis, without essays or pending grades).
 - **Topic strength** uses the latest answer per question, with achievement, accuracy and coverage by area › matter › topic. Weakest topics come first, with a small-sample warning.
 - **Trend:** weekly accuracy from all answers.
-- **Filters:** contest tag, board tag, feedback mode.
+- **Filters:** contest tag, board tag (both from the collections a question belongs to), feedback mode.
 - **Other views:** history per collection and per session, a home dashboard, and CSV export.
 - **All attempts are kept** (drops `U-E1`).
 
@@ -114,7 +114,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 - **Daily backup:** keeps 7. Restore validates the backup, then makes a safety copy before replacing anything.
 - **Export:** one file, a zip with a consistent DB copy and the images.
 - **Import:** replaces local data after a safety backup. There's no merging, so use one computer at a time.
-- **First-run migration:** imports the bank from `biblioteca/estado.json.gz` and `biblioteca/recursos/` of the old repo: questions, topics, collections, contest tags and images. Attempts, drafts and settings are skipped.
+- **First-run migration:** imports the bank from `biblioteca/estado.json.gz` and `biblioteca/recursos/` of the old repo: questions, topics, collections with their contest tags, and images. The legacy board value "Acervo autoral" isn't an exam board, so migrated collections get no board tag. Attempts, drafts and settings are skipped.
 
 ### 3.7 Settings (*Configurações*)
 - **CLI paths:** detected automatically, with manual override. Apps opened from the macOS Finder see a short PATH, so detection matters there. Includes a "Test" button per CLI that shows its version and login state.

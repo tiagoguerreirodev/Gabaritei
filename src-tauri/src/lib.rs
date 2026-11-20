@@ -8,6 +8,7 @@ pub mod ai;
 pub mod attempts;
 pub mod backup;
 pub mod bank;
+pub mod clock;
 pub mod commands;
 pub mod db;
 pub mod error;

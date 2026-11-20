@@ -22,7 +22,10 @@ pub const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Schema migrations, applied in order. `PRAGMA user_version` stores how many have run.
 ///
 /// Append-only: never edit or reorder a released migration; add a new file instead.
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001_initial.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/0001_initial.sql"),
+    include_str!("../migrations/0002_tags_on_collections_and_image_alt.sql"),
+];
 
 /// Schema version this build of the app expects.
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;
@@ -351,6 +354,41 @@ mod tests {
         assert!(migrate(&mut conn, &migrations).is_err());
         assert_eq!(user_version(&conn).unwrap(), 1);
         assert_eq!(tables(&conn), ["a"]);
+    }
+
+    fn columns(conn: &Connection, table: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid")
+            .unwrap();
+        stmt.query_map([table], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    #[test]
+    fn upgrade_from_version_1_keeps_questions_and_moves_tags_to_collections() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        migrate(&mut conn, &MIGRATIONS[..1]).unwrap();
+        insert_question(&conn, "q1").unwrap();
+        conn.execute("UPDATE questions SET contest = 'ALEPA' WHERE id = 'q1'", [])
+            .unwrap();
+
+        migrate(&mut conn, MIGRATIONS).unwrap();
+
+        assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
+        let question_columns = columns(&conn, "questions");
+        assert!(!question_columns.contains(&"contest".to_owned()));
+        assert!(!question_columns.contains(&"board".to_owned()));
+        assert!(question_columns.contains(&"image_alt".to_owned()));
+        assert!(columns(&conn, "collections").contains(&"contest".to_owned()));
+        let stem: String = conn
+            .query_row("SELECT stem FROM questions WHERE id = 'q1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(stem, "Enunciado");
     }
 
     #[test]

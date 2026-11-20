@@ -96,9 +96,11 @@ export default function BackupSection(props: {
                 : `${left().backups} backups, que não aparecem mais aqui.`}
               <Show when={left().safety > 0}>
                 {" "}
-                {left().safety === 1
-                  ? "Um deles é uma cópia feita antes de restaurar ou importar"
-                  : `${left().safety} deles são cópias feitas antes de restaurar ou importar`}
+                {left().backups === 1
+                  ? "Ele é uma cópia feita antes de restaurar ou importar"
+                  : left().safety === 1
+                    ? "Um deles é uma cópia feita antes de restaurar ou importar"
+                    : `${left().safety} deles são cópias feitas antes de restaurar ou importar`}
                 ; para voltar atrás, volte para aquela pasta.
               </Show>{" "}
               Nada foi movido nem apagado. Se quiser, copie os backups para a pasta nova.

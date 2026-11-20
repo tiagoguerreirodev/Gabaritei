@@ -254,24 +254,28 @@ impl BackupService {
         paths: &AppPaths,
         chosen: Option<&Path>,
     ) -> AppResult<BackupStatus> {
-        let old = db.with(|conn| folder(conn, paths))?;
-        db.with(|conn| set_folder(conn, paths, chosen))?;
-        let mut status = self.status(db, paths)?;
-        let new = PathBuf::from(&status.folder);
-        let left = if same_folder(&old, &new) {
-            Vec::new()
-        } else {
-            list(&old)
-        };
-        status.left_behind = (!left.is_empty()).then(|| LeftBehind {
-            folder: old.display().to_string(),
-            backups: left.len() as u32,
-            safety: left
-                .iter()
-                .filter(|info| info.kind == BackupKind::Safety)
-                .count() as u32,
-        });
-        Ok(status)
+        // Not while a backup is being written: it could land in the old folder after the
+        // count below.
+        self.exclusive(|| {
+            let old = db.with(|conn| folder(conn, paths))?;
+            db.with(|conn| set_folder(conn, paths, chosen))?;
+            let mut status = self.status(db, paths)?;
+            let new = PathBuf::from(&status.folder);
+            let left = if same_folder(&old, &new) {
+                Vec::new()
+            } else {
+                list(&old)
+            };
+            status.left_behind = (!left.is_empty()).then(|| LeftBehind {
+                folder: old.display().to_string(),
+                backups: left.len() as u32,
+                safety: left
+                    .iter()
+                    .filter(|info| info.kind == BackupKind::Safety)
+                    .count() as u32,
+            });
+            Ok(status)
+        })
     }
 
     /// Makes a backup now.

@@ -97,6 +97,21 @@ pub struct BackupStatus {
     pub backups: Vec<BackupInfo>,
     /// pt-BR reason the last automatic or manual backup failed, until one succeeds.
     pub last_error: Option<String>,
+    /// Set only by the call that changed the folder, when the old folder still holds backups.
+    pub left_behind: Option<LeftBehind>,
+}
+
+/// Backups that stay in the old folder after the backup folder was changed. They are not
+/// moved, so they no longer show in the list, and safety backups among them can no longer be
+/// used to undo an import or restore from here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LeftBehind {
+    pub folder: String,
+    pub backups: u32,
+    /// How many of them are safety backups ("antes de restaurar").
+    pub safety: u32,
 }
 
 /// `YYYYMMDD-HHMMSS-mmm` from a timestamp like `2026-11-19T21:00:00.123Z` (see [`crate::clock`]).
@@ -208,6 +223,11 @@ pub fn list(folder: &Path) -> Vec<BackupInfo> {
     found
 }
 
+/// Whether two paths are the same folder, even when one is spelled differently.
+fn same_folder(a: &Path, b: &Path) -> bool {
+    a == b || matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -249,6 +269,39 @@ impl BackupService {
             folder: folder.display().to_string(),
             is_default_folder,
             last_error: lock(&self.last_error).clone(),
+            left_behind: None,
+        })
+    }
+
+    /// Changes the backup folder (`None` goes back to the default). The answer says what stays
+    /// behind in the old folder: nothing is moved or deleted there.
+    pub fn change_folder(
+        &self,
+        db: &Database,
+        paths: &AppPaths,
+        chosen: Option<&Path>,
+    ) -> AppResult<BackupStatus> {
+        // Not while a backup is being written: it could land in the old folder after the
+        // count below.
+        self.exclusive(|| {
+            let old = db.with(|conn| folder(conn, paths))?;
+            db.with(|conn| set_folder(conn, paths, chosen))?;
+            let mut status = self.status(db, paths)?;
+            let new = PathBuf::from(&status.folder);
+            let left = if same_folder(&old, &new) {
+                Vec::new()
+            } else {
+                list(&old)
+            };
+            status.left_behind = (!left.is_empty()).then(|| LeftBehind {
+                folder: old.display().to_string(),
+                backups: left.len() as u32,
+                safety: left
+                    .iter()
+                    .filter(|info| info.kind == BackupKind::Safety)
+                    .count() as u32,
+            });
+            Ok(status)
         })
     }
 
@@ -640,6 +693,59 @@ mod tests {
             OpenableFolder::Backups
         );
         assert!(serde_json::from_str::<OpenableFolder>("\"/etc\"").is_err());
+    }
+
+    #[test]
+    fn changing_the_folder_reports_the_backups_left_in_the_old_one() {
+        let f = fixture();
+        let service = BackupService::default();
+        let old = default_folder(&f.paths);
+        create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T10:00:00.000Z",
+            true,
+        )
+        .unwrap();
+        create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Safety,
+            "2026-11-19T11:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        let elsewhere = f._dir.path().join("synced");
+
+        let status = service
+            .change_folder(&f.db, &f.paths, Some(&elsewhere))
+            .unwrap();
+
+        assert_eq!(status.folder, elsewhere.display().to_string());
+        assert!(status.backups.is_empty());
+        assert_eq!(
+            status.left_behind,
+            Some(LeftBehind {
+                folder: old.display().to_string(),
+                backups: 2,
+                safety: 1,
+            })
+        );
+        // Nothing was moved or deleted.
+        assert_eq!(list(&old).len(), 2);
+        // The plain status never carries the notice.
+        assert_eq!(service.status(&f.db, &f.paths).unwrap().left_behind, None);
+        // Choosing the same folder again, or an empty old folder, has nothing left behind.
+        let again = service
+            .change_folder(&f.db, &f.paths, Some(&elsewhere))
+            .unwrap();
+        assert_eq!(again.left_behind, None);
+        let back = service.change_folder(&f.db, &f.paths, None).unwrap();
+        assert_eq!(back.left_behind, None);
+        assert!(back.is_default_folder);
     }
 
     #[test]

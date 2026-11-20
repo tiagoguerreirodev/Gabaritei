@@ -33,6 +33,11 @@ export default defineConfig(
     extends: [tseslint.configs.recommended],
     languageOptions: { globals: globals.node },
   },
+  // Claude Code hook scripts run in Node.
+  {
+    files: [".claude/hooks/*.mjs"],
+    languageOptions: { globals: globals.node },
+  },
   // Must stay last: turns off rules that conflict with Prettier.
   prettier,
 );

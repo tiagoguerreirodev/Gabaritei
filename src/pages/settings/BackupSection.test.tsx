@@ -56,6 +56,8 @@ function backend(initial: Partial<BackupStatus> = {}, fail: Record<string, strin
       case "backup_use_default_folder":
         status = { ...status, folder: "/dados/backups", isDefaultFolder: true };
         return status;
+      case "open_folder":
+        return null;
       case "backup_restore":
         return null;
       default:
@@ -79,6 +81,17 @@ describe("BackupSection", () => {
     expect(within(third).queryByText("antes de restaurar")).not.toBeInTheDocument();
     expect(within(third).queryByText("manual")).not.toBeInTheDocument();
     expect(within(third).getByText(/3 MB/)).toBeInTheDocument();
+  });
+
+  it("opens the backup folder by name, never by path", async () => {
+    const calls = backend();
+    const user = userEvent.setup();
+    render(() => <BackupSection />);
+
+    await user.click(await screen.findByRole("button", { name: "Abrir pasta dos backups" }));
+
+    const open = calls.find((call) => call.command === "open_folder");
+    expect(open?.args).toEqual({ which: "backups" });
   });
 
   it("makes a backup now and shows it", async () => {

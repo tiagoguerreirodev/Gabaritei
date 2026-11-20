@@ -16,7 +16,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use ts_rs::TS;
 
@@ -121,6 +121,33 @@ fn parse_name(name: &str) -> Option<BackupKind> {
 /// The default backup folder.
 pub fn default_folder(paths: &AppPaths) -> PathBuf {
     paths.data_dir().join("backups")
+}
+
+/// A folder the user can open from Configurações → Dados. The frontend only picks one of
+/// these; it never sends a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum OpenableFolder {
+    /// The app data folder (database, images).
+    Data,
+    /// The backup folder.
+    Backups,
+}
+
+/// The folder to show the user for `which`. It is created if it doesn't exist yet (the backup
+/// folder has nothing in it until the first backup), so opening it never fails for that.
+pub fn folder_to_open(
+    db: &Database,
+    paths: &AppPaths,
+    which: OpenableFolder,
+) -> AppResult<PathBuf> {
+    let path = match which {
+        OpenableFolder::Data => paths.data_dir().to_path_buf(),
+        OpenableFolder::Backups => db.with(|conn| folder(conn, paths))?,
+    };
+    fs::create_dir_all(&path)?;
+    Ok(path)
 }
 
 /// The folder backups go to: the user's choice, or the default.
@@ -502,6 +529,37 @@ mod tests {
         .unwrap();
         // The database keeps working after the replacement.
         add_question(&f.db, "q-4");
+    }
+
+    #[test]
+    fn the_folders_to_open_are_the_data_folder_and_the_current_backup_folder() {
+        let f = fixture();
+
+        let data = folder_to_open(&f.db, &f.paths, OpenableFolder::Data).unwrap();
+        assert_eq!(data, f.paths.data_dir());
+
+        // The backup folder doesn't exist before the first backup: it is created, not an error.
+        let default = default_folder(&f.paths);
+        assert!(!default.exists());
+        let backups = folder_to_open(&f.db, &f.paths, OpenableFolder::Backups).unwrap();
+        assert_eq!(backups, default);
+        assert!(default.is_dir());
+
+        // After the user picks another folder, that is the one to open.
+        let chosen = f._dir.path().join("elsewhere");
+        f.db.with(|conn| set_folder(conn, &f.paths, Some(&chosen)))
+            .unwrap();
+        let backups = folder_to_open(&f.db, &f.paths, OpenableFolder::Backups).unwrap();
+        assert_eq!(backups, chosen);
+    }
+
+    #[test]
+    fn the_openable_folder_is_a_closed_choice_not_a_path() {
+        assert_eq!(
+            serde_json::from_str::<OpenableFolder>("\"backups\"").unwrap(),
+            OpenableFolder::Backups
+        );
+        assert!(serde_json::from_str::<OpenableFolder>("\"/etc\"").is_err());
     }
 
     #[test]

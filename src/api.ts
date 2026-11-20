@@ -28,6 +28,7 @@ import type { ImportMode } from "./bindings/ImportMode";
 import type { ImportResult } from "./bindings/ImportResult";
 import type { LegacyImportOutcome } from "./bindings/LegacyImportOutcome";
 import type { LegacyImportStatus } from "./bindings/LegacyImportStatus";
+import type { OpenableFolder } from "./bindings/OpenableFolder";
 import type { Performance } from "./bindings/Performance";
 import type { PerformanceQuery } from "./bindings/PerformanceQuery";
 import type { RemNoteTest } from "./bindings/RemNoteTest";
@@ -108,6 +109,10 @@ export const api = {
   abandon: (attemptId: string) => call<null>("abandon", { attemptId }),
   /** Backup folder, the backups that exist (newest first) and the last backup failure. */
   backupStatus: () => call<BackupStatus>("backup_status"),
+  /** The app data folder (database and images), to show in Configurações → Dados. */
+  dataFolder: () => call<string>("data_folder"),
+  /** Opens the app data folder or the backup folder in the system file manager. */
+  openFolder: (which: OpenableFolder) => call<null>("open_folder", { which }),
   /** Makes a backup now. */
   backupNow: () => call<BackupInfo>("backup_now"),
   /** Asks for a new backup folder and saves it. `null` if the user cancels. */

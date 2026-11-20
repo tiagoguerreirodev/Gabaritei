@@ -28,6 +28,8 @@ function backend(initial: AiSettings = defaults) {
           backups: [],
           lastError: null,
         };
+      case "data_folder":
+        return "/home/dados/gabaritei";
       case "legacy_import_status":
         return { report: null, bankEmpty: false };
       case "ai_settings":

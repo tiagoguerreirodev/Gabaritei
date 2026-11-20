@@ -9,6 +9,7 @@ import LegacyImport from "../components/LegacyImport";
 import { ErrorState, Loading } from "../components/states";
 import { showError, showToast } from "../components/toasts";
 import BackupSection from "./settings/BackupSection";
+import DataFolderSection from "./settings/DataFolderSection";
 import DataFileSection from "./settings/DataFileSection";
 import AgentsSection from "./settings/AgentsSection";
 import RemNoteSection from "./settings/RemNoteSection";
@@ -35,6 +36,7 @@ export default function Settings() {
       <h2>Dados</h2>
       <BackupSection />
       <DataFileSection />
+      <DataFolderSection />
       <Show when={legacy()} fallback={<Loading />}>
         {(current) => <LegacyImport initialReport={current().report} />}
       </Show>

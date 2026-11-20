@@ -190,31 +190,48 @@ mod tests {
 
     /// Like [`invoke`], with JSON arguments and the given database as managed state.
     fn invoke_with(cmd: &str, args: Value, db: Database) -> Result<Value, Value> {
-        let app = crate::register(mock_builder())
-            .build(mock_context(noop_assets()))
-            .expect("mock app builds");
-        app.manage(db);
-        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
-            .build()
-            .expect("mock webview builds");
-        let url = if cfg!(windows) {
-            "http://tauri.localhost"
-        } else {
-            "tauri://localhost"
-        };
-        get_ipc_response(
-            &webview,
-            InvokeRequest {
-                cmd: cmd.into(),
-                callback: CallbackFn(0),
-                error: CallbackFn(1),
-                url: url.parse().unwrap(),
-                body: InvokeBody::Json(args),
-                headers: Default::default(),
-                invoke_key: INVOKE_KEY.to_string(),
-            },
-        )
-        .map(|body| body.deserialize::<Value>().unwrap())
+        MockApp::new(db).call(cmd, args)
+    }
+
+    /// A mock app with a database, for tests that send several commands in a row.
+    struct MockApp {
+        _app: tauri::App<tauri::test::MockRuntime>,
+        webview: tauri::WebviewWindow<tauri::test::MockRuntime>,
+    }
+
+    impl MockApp {
+        fn new(db: Database) -> Self {
+            let app = crate::register(mock_builder())
+                .build(mock_context(noop_assets()))
+                .expect("mock app builds");
+            app.manage(db);
+            let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+                .build()
+                .expect("mock webview builds");
+            Self { _app: app, webview }
+        }
+
+        /// Sends `cmd` through Tauri's IPC layer and returns the JSON result.
+        fn call(&self, cmd: &str, args: Value) -> Result<Value, Value> {
+            let url = if cfg!(windows) {
+                "http://tauri.localhost"
+            } else {
+                "tauri://localhost"
+            };
+            get_ipc_response(
+                &self.webview,
+                InvokeRequest {
+                    cmd: cmd.into(),
+                    callback: CallbackFn(0),
+                    error: CallbackFn(1),
+                    url: url.parse().unwrap(),
+                    body: InvokeBody::Json(args),
+                    headers: Default::default(),
+                    invoke_key: INVOKE_KEY.to_string(),
+                },
+            )
+            .map(|body| body.deserialize::<Value>().unwrap())
+        }
     }
 
     #[test]
@@ -259,36 +276,132 @@ mod tests {
         assert_eq!(tree, Ok(json!({ "areas": [], "questions": 0 })));
     }
 
-    #[test]
-    fn session_commands_round_trip_without_spoilers() {
+    /// Two questions in collection `c1`, each with a distinctive explanation and reference.
+    fn solving_db() -> Database {
         let db = Database::open_in_memory().unwrap();
         db.transaction(|tx| {
-            let mut q = crate::bank::question::tests::boolean("q1", "Enunciado", true);
-            q.explanation = "SEGREDO".into();
-            let ids = crate::bank::import_questions(tx, vec![q], "2026-11-20T00:00:00.000Z")?
+            let mut inputs = vec![
+                crate::bank::question::tests::boolean("q1", "Primeira", true),
+                crate::bank::question::tests::boolean("q2", "Segunda", false),
+            ];
+            for input in &mut inputs {
+                input.explanation = format!("SEGREDO-{}", input.local_id);
+                input.refs = vec![format!("REF-{}", input.local_id)];
+            }
+            let ids = crate::bank::import_questions(tx, inputs, "2026-11-20T00:00:00.000Z")?
                 .ids_by_local_id;
             tx.execute_batch(&format!(
                 "INSERT INTO collections (id, title, kind, created_at)
                    VALUES ('c1', 'Caderno', 'imported', '2026-11-20T00:00:00.000Z');
-                 INSERT INTO collection_items VALUES ('c1', 0, '{}');",
-                ids["q1"]
+                 INSERT INTO collection_items VALUES ('c1', 0, '{}'), ('c1', 1, '{}');",
+                ids["q1"], ids["q2"]
             ))?;
             Ok(())
         })
         .unwrap();
-        let view = invoke_with(
+        db
+    }
+
+    fn start(app: &MockApp, mode: &str) -> Value {
+        app.call(
             "session_start",
             json!({ "request": {
                 "source": { "kind": "collection", "collectionId": "c1" },
-                "feedbackMode": "exam"
+                "feedbackMode": mode
             } }),
-            db,
         )
-        .expect("session starts");
+        .expect("session starts")
+    }
+
+    /// The question's answer, explanation and references are absent from the JSON.
+    fn assert_hidden(question: &Value) {
+        assert_eq!(question["reveal"], Value::Null, "{question}");
+        let text = question.to_string();
+        for secret in ["SEGREDO", "REF-", "answerId", "outcome"] {
+            assert!(!text.contains(secret), "{secret} leaked: {text}");
+        }
+    }
+
+    #[test]
+    fn exam_commands_reveal_nothing_until_finish() {
+        let app = MockApp::new(solving_db());
+        let view = start(&app, "exam");
         assert_eq!(view["title"], json!("Caderno"));
         assert_eq!(view["questions"][0]["type"], json!("boolean"));
-        assert_eq!(view["questions"][0]["reveal"], Value::Null);
-        assert!(!view.to_string().contains("SEGREDO"));
+        assert_eq!(view["score"], Value::Null);
+        let id = view["id"].clone();
+        let option = view["questions"][0]["options"][0]["id"].clone();
+
+        let answered = app
+            .call(
+                "answer",
+                json!({ "attemptId": id, "position": 0, "optionId": option }),
+            )
+            .expect("answer succeeds");
+        assert_eq!(answered["questions"][0]["choice"], option);
+        let reloaded = app
+            .call("attempt", json!({ "id": id }))
+            .expect("attempt loads");
+        for view in [&answered, &reloaded] {
+            assert_eq!(view["score"], Value::Null);
+            view["questions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .for_each(assert_hidden);
+        }
+
+        let finished = app
+            .call(
+                "finish",
+                json!({ "attemptId": id, "revision": reloaded["revision"] }),
+            )
+            .expect("finish succeeds");
+        assert!(
+            finished["questions"][0]["reveal"]["explanation"]
+                .as_str()
+                .unwrap()
+                .starts_with("SEGREDO")
+        );
+        assert_eq!(finished["score"]["evaluated"], json!(2));
+    }
+
+    #[test]
+    fn study_commands_reveal_only_the_answered_question() {
+        let app = MockApp::new(solving_db());
+        let view = start(&app, "study");
+        let id = view["id"].clone();
+        let option = view["questions"][0]["options"][0]["id"].clone();
+
+        app.call(
+            "answer",
+            json!({ "attemptId": id, "position": 0, "optionId": option }),
+        )
+        .expect("answer succeeds");
+        let reloaded = app
+            .call("attempt", json!({ "id": id }))
+            .expect("attempt loads");
+        let reveal = &reloaded["questions"][0]["reveal"];
+        assert!(reveal["answerId"].is_string());
+        assert!(
+            reveal["explanation"]
+                .as_str()
+                .unwrap()
+                .starts_with("SEGREDO")
+        );
+        assert_hidden(&reloaded["questions"][1]);
+        assert_eq!(reloaded["score"], Value::Null);
+
+        // The revealed choice is locked, also through IPC.
+        let other = view["questions"][0]["options"][1]["id"].clone();
+        let locked = app.call(
+            "answer",
+            json!({ "attemptId": id, "position": 0, "optionId": other }),
+        );
+        assert_eq!(
+            locked,
+            Err(json!({ "message": "A resposta desta questão já foi revelada e não pode mudar." }))
+        );
     }
 
     #[test]

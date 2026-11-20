@@ -77,11 +77,17 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
   const total = () => view()?.questions.length ?? 0;
   const answered = () => view()?.questions.filter((q) => q.choice !== null).length ?? 0;
 
+  // Any action other than the letter after `X` cancels the pending elimination.
+  const select = (i: number) => {
+    setEliminating(false);
+    setIndex(i);
+  };
   const move = (delta: number) =>
-    setIndex((i) => Math.min(Math.max(i + delta, 0), Math.max(total() - 1, 0)));
+    select(Math.min(Math.max(index() + delta, 0), Math.max(total() - 1, 0)));
 
   const answer = (optionId: string) => {
     const q = current();
+    setEliminating(false);
     if (!q || locked()) return;
     // In Simulado, choosing the selected option again clears it.
     const choice = q.choice === optionId && view()?.feedbackMode === "exam" ? null : optionId;
@@ -89,11 +95,13 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
   };
   const eliminate = (optionId: string) => {
     const q = current();
+    setEliminating(false);
     if (!q || locked()) return;
     enqueue((id) => api.eliminate(id, q.position, optionId));
   };
   const flag = () => {
     const q = current();
+    setEliminating(false);
     if (!q || finished()) return;
     enqueue((id) => api.flag(id, q.position, !q.flagged));
   };
@@ -137,10 +145,11 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     if (dialog() || event.ctrlKey || event.metaKey || event.altKey || typing(event.target)) return;
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
-      setEliminating(false);
       move(event.key === "ArrowLeft" ? -1 : 1);
       return;
     }
+    // A held key would answer, toggle or flag over and over.
+    if (event.repeat) return;
     const q = current();
     if (!q || finished()) return;
     const key = event.key.toUpperCase();
@@ -207,7 +216,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
               </div>
             </header>
             <Show when={attempt().score}>{(score) => <ScoreSummary score={score()} />}</Show>
-            <Navigator questions={attempt().questions} current={index()} onSelect={setIndex} />
+            <Navigator questions={attempt().questions} current={index()} onSelect={select} />
             <Show when={current()}>
               {(q) => (
                 <QuestionCard

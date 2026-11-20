@@ -245,6 +245,43 @@ describe("Resolver", () => {
     expect(screen.getByTestId("progress")).toHaveTextContent("1 de 3 respondidas");
   });
 
+  it("cancels a pending elimination when the user does something else", async () => {
+    const { user, calls } = await open("exam");
+
+    // X, then the question map: the next letter answers on the new question.
+    await user.keyboard("x");
+    expect(screen.getByRole("status")).toHaveTextContent("Escolha a letra");
+    await user.click(screen.getByRole("button", { name: "Questão 3" }));
+    await screen.findByRole("article", { name: "Questão 3 de 3" });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await user.keyboard("a");
+
+    // X, then a click on an option: that answers, and the next letter answers too.
+    await user.keyboard("x");
+    await user.click(option("B"));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await user.keyboard("c");
+
+    await waitFor(() => expect(calls.filter((c) => c.command !== "attempt")).toHaveLength(3));
+    expect(calls.map((c) => c.command).filter((c) => c !== "attempt")).toEqual([
+      "answer",
+      "answer",
+      "answer",
+    ]);
+  });
+
+  it("ignores a held key", async () => {
+    const { user, calls } = await open("exam");
+    await user.keyboard("{b>4/}");
+    await waitFor(() => expect(option("B")).toHaveAttribute("aria-pressed", "true"));
+    await user.keyboard("{f>4/}");
+    await waitFor(() => expect(screen.getByRole("button", { name: /Marcada/ })).toBeVisible());
+    expect(calls.filter((c) => c.command !== "attempt").map((c) => c.command)).toEqual([
+      "answer",
+      "flag",
+    ]);
+  });
+
   it("ignores shortcuts while a dialog is open", async () => {
     const { user, calls } = await open("exam");
     await user.click(screen.getByRole("button", { name: "Abandonar" }));

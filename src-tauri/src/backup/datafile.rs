@@ -464,11 +464,16 @@ mod tests {
         let good = out.path().join("good.gabaritei");
         export(&source.db, &source.paths, &good, NOW).unwrap();
 
-        // Flip a byte inside the compressed data: the archive still opens, but reading an
-        // entry fails (bad checksum or invalid compressed data).
+        // Flip a byte inside the database entry's compressed data (not a header): the archive
+        // still opens, but reading the entry fails (bad checksum or invalid compressed data).
         let mut bytes = fs::read(&good).unwrap();
-        let middle = bytes.len() / 2;
-        bytes[middle] ^= 0xFF;
+        let start = {
+            let mut archive = ZipArchive::new(File::open(&good).unwrap()).unwrap();
+            let entry = archive.by_name(DATABASE_FILE).unwrap();
+            assert!(entry.compressed_size() > 64, "the entry has data to damage");
+            entry.data_start().unwrap()
+        };
+        bytes[start as usize + 32] ^= 0xFF;
         let damaged = out.path().join("damaged.gabaritei");
         fs::write(&damaged, bytes).unwrap();
 

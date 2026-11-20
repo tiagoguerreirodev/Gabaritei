@@ -428,11 +428,14 @@ pub fn replace_data(
     now: &str,
 ) -> AppResult<()> {
     let staged = snapshot::stage(source)?;
+    // A replacement that SQLite would refuse is stopped here, before any image is added or a
+    // safety backup is made. The lock is only held for this quick look.
+    db.with(|conn| snapshot::ensure_replaceable(conn, &staged))?;
+    // Adding images is harmless to the current data, so it stays out of the lock.
+    snapshot::copy_images(&paths.images_dir(), source, &staged)?;
     // One lock around the safety backup and the replacement: a write in between would be in
-    // neither. The pre-check comes first, so a replacement that SQLite would refuse doesn't
-    // even leave a safety backup behind.
+    // neither.
     db.with(|conn| {
-        snapshot::ensure_replaceable(conn, &staged)?;
         // Pruned only afterwards, so a safety backup being restored is never deleted by this one.
         create_with(
             |building| snapshot::write_locked(conn, &paths.images_dir(), building, now),
@@ -441,7 +444,7 @@ pub fn replace_data(
             now,
             false,
         )?;
-        snapshot::commit(conn, &paths.images_dir(), source, &staged, LOCAL_SETTINGS)
+        snapshot::commit(conn, &staged, LOCAL_SETTINGS)
     })?;
     prune(folder, BackupKind::Safety);
     Ok(())

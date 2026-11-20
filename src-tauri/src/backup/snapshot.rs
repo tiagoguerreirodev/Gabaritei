@@ -345,28 +345,11 @@ pub fn stage(dir: &Path) -> AppResult<Staged> {
     Ok(staged)
 }
 
-/// Replaces the live database with a staged one, and adds the snapshot's images.
-///
-/// Images go first, each checked against its hash, so the restored database never points at a
-/// missing file; existing images stay (names are content hashes). Then, on the staged copy
-/// only, this computer's own settings are put back, what derives from the answers is rebuilt,
-/// and a blind check that was running in the replaced data is marked as interrupted. Last,
-/// SQLite copies the staged pages into the live connection inside one write transaction, so a
-/// failure leaves the old data and a reader never sees a half-restored database.
-///
-/// `keep_local` lists settings that describe this computer (folders, CLI paths): their current
-/// values survive the replacement, and a key this computer never set is removed again.
-///
-/// The caller holds the database lock (see [`Database::with`]) and passes the connection, so a
-/// safety backup of the old data can be made under the same lock.
-pub fn commit(
-    conn: &mut Connection,
-    images_dir: &Path,
-    dir: &Path,
-    staged: &Staged,
-    keep_local: &[&str],
-) -> AppResult<()> {
-    ensure_replaceable(conn, staged)?;
+/// Adds the snapshot's images to `images_dir`, each checked against its hash; existing images
+/// stay (names are content hashes). Adding images never hurts the current data, so this runs
+/// before the replacement and outside the database lock, so that a large image folder doesn't
+/// keep the app waiting for the lock.
+pub fn copy_images(images_dir: &Path, dir: &Path, staged: &Staged) -> AppResult<()> {
     fs::create_dir_all(images_dir)?;
     for file in &staged.manifest.files {
         let Some(name) = file.path.strip_prefix("images/") else {
@@ -385,6 +368,25 @@ pub fn commit(
         }
         fs::rename(&partial, &target)?;
     }
+    Ok(())
+}
+
+/// Replaces the live database with a staged one. The snapshot's images must already be in
+/// place (see [`copy_images`]), so the restored database never points at a missing file, and
+/// [`ensure_replaceable`] must have passed.
+///
+/// On the staged copy only, this computer's own settings are put back, what derives from the
+/// answers is rebuilt, and a blind check that was running in the replaced data is marked as
+/// interrupted. Last, SQLite copies the staged pages into the live connection inside one write
+/// transaction, so a failure leaves the old data and a reader never sees a half-restored
+/// database.
+///
+/// `keep_local` lists settings that describe this computer (folders, CLI paths): their current
+/// values survive the replacement, and a key this computer never set is removed again.
+///
+/// The caller holds the database lock (see [`Database::with`]) and passes the connection, so a
+/// safety backup of the old data can be made under the same lock.
+pub fn commit(conn: &mut Connection, staged: &Staged, keep_local: &[&str]) -> AppResult<()> {
     {
         let mut target = Connection::open(staged.database())?;
         for key in keep_local {
@@ -419,7 +421,7 @@ pub fn ensure_replaceable(conn: &Connection, staged: &Staged) -> AppResult<()> {
         .map_err(|_| corrupt())?;
     if page_size(conn)? != page_size(&incoming)? {
         return Err(AppError::Invalid(
-            "Estes dados usam um formato de banco de dados diferente do deste Gabaritei e não podem ser restaurados. Nada foi alterado."
+            "Estes dados usam um formato de banco de dados diferente do deste Gabaritei e não podem ser usados. Nada foi alterado."
                 .into(),
         ));
     }

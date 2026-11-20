@@ -7,9 +7,10 @@
 //! finished later can't override a newer result) and automatically right after an answer-key
 //! correction or an annulment, once the caller refreshes the affected question.
 //!
-//! The ladder is 1 → 3 → 7 → 14 → 30 → 60 days. A question starts on the first rung, a full
-//! hit moves it one rung up (staying at 60), and anything else, wrong or blank, drops it back
-//! to 1 day. Annulled questions have no review.
+//! The ladder is 1 → 3 → 7 → 14 → 30 → 60 days, as in the legacy app: the interval is the rung
+//! for the current streak of full hits (the first hit is 1 day, the second 3, ... capped at
+//! 60), and anything else, wrong or blank, resets the streak and schedules 1 day. Annulled
+//! questions have no review.
 //!
 //! **The error notebook** is read straight from the data: a question whose latest result in
 //! a finished attempt is wrong (or blank, when asked for).
@@ -26,6 +27,9 @@ use crate::error::AppResult;
 /// Review intervals in days.
 const LADDER: [u32; 6] = [1, 3, 7, 14, 30, 60];
 
+/// Upcoming reviews shown in the list.
+const MAX_UPCOMING_ROWS: usize = 50;
+
 /// Largest practice session built from errors or reviews.
 pub const MAX_SESSION: u32 = 100;
 
@@ -39,6 +43,9 @@ struct ReviewState {
 }
 
 /// Every answer to a question in a finished attempt, as `(timestamp, hit)`, oldest first.
+/// `hit` is `attempts::outcome` written in SQL (`choice = answer_id`; annulled questions are
+/// skipped by the callers), because replaying history row by row in Rust would be slower. The
+/// test `scoring_in_sql_agrees_with_attempts_outcome` keeps the two together.
 /// A response without an answer time (a blank) is dated by when its attempt finished.
 fn history(conn: &Connection, question_id: &str) -> AppResult<Vec<(String, bool)>> {
     let mut stmt = conn.prepare(
@@ -79,14 +86,10 @@ pub fn refresh_question(conn: &Connection, question_id: &str) -> AppResult<()> {
         )?;
         return Ok(());
     };
-    let rung = events.iter().fold(0usize, |rung, (_, hit)| {
-        if *hit {
-            (rung + 1).min(LADDER.len() - 1)
-        } else {
-            0
-        }
-    });
-    let interval = LADDER[rung];
+    let streak = events
+        .iter()
+        .fold(0usize, |streak, (_, hit)| if *hit { streak + 1 } else { 0 });
+    let interval = LADDER[streak.saturating_sub(1).min(LADDER.len() - 1)];
     let state = serde_json::to_string(&ReviewState {
         interval_days: interval,
         last_answered_at: last_at.clone(),
@@ -110,6 +113,23 @@ pub fn refresh_attempt(conn: &Connection, attempt_id: &str) -> AppResult<()> {
     for id in ids {
         refresh_question(conn, &id)?;
     }
+    Ok(())
+}
+
+/// Rebuilds every review from the data. Reviews are derived, so this is always safe; it runs
+/// at startup so history that predates the feature, or a restored backup, gets its schedule.
+pub fn refresh_all(conn: &Connection) -> AppResult<()> {
+    let mut stmt = conn.prepare("SELECT DISTINCT question_id FROM responses")?;
+    let ids = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for id in ids {
+        refresh_question(conn, &id)?;
+    }
+    conn.execute(
+        "DELETE FROM review_state WHERE question_id NOT IN (SELECT question_id FROM responses)",
+        [],
+    )?;
     Ok(())
 }
 
@@ -177,6 +197,21 @@ pub fn error_questions(
         .collect())
 }
 
+/// The questions of a reviews session: due reviews first (most overdue first), then the most
+/// recent errors that aren't due yet, up to `limit`.
+pub fn review_session(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<String>> {
+    let mut ids = due_questions(conn, now, limit)?;
+    for id in error_questions(conn, false, limit)? {
+        if ids.len() >= limit as usize {
+            break;
+        }
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
 /// Questions whose review is due at `now`, the most overdue first.
 pub fn due_questions(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<String>> {
     let mut stmt = conn.prepare(
@@ -219,6 +254,9 @@ pub struct LearningOverview {
     pub upcoming: u32,
     /// Questions in the error notebook.
     pub errors: u32,
+    /// How many questions "practice now" would take: due reviews, then recent errors (at most
+    /// [`MAX_SESSION`]).
+    pub practice: u32,
     /// Due reviews first (most overdue first), then upcoming ones, then errors with no review.
     pub items: Vec<LearningItem>,
 }
@@ -274,11 +312,22 @@ pub fn overview(conn: &Connection, now: &str, include_blanks: bool) -> AppResult
         (None, None) => std::cmp::Ordering::Equal,
     });
 
+    // Upcoming reviews of questions that are not errors can be thousands: the list keeps the
+    // soonest few (the count above stays whole).
+    let mut upcoming_only = 0;
+    items.retain(|i| {
+        let only_upcoming = i.due_at.as_deref().is_some_and(|d| d > now) && !i.is_error;
+        if only_upcoming {
+            upcoming_only += 1;
+        }
+        !only_upcoming || upcoming_only <= MAX_UPCOMING_ROWS
+    });
     let due = due_dates.values().filter(|d| d.as_str() <= now).count() as u32;
     Ok(LearningOverview {
         due,
         upcoming: due_dates.len() as u32 - due,
         errors: items.iter().filter(|i| i.is_error).count() as u32,
+        practice: review_session(conn, now, MAX_SESSION)?.len() as u32,
         items,
     })
 }

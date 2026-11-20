@@ -74,9 +74,9 @@ codex exec - --output-schema schema.json -o saida.json --json
   (`item.type`: `agent_message`, `reasoning`, `command_execution`, `web_search`, `mcp_tool_call`),
   `turn.completed` (with `usage`), `turn.failed` and `error` (with a message). Codex reports no cost.
 - **Models:** `codex debug models` lists them. The app defaults to **`gpt-6.2-sol`** with **`xhigh`**.
-- **Web search:** `-c web_search=live` or `disabled`. It is forced to `disabled` whenever the shell is
-  on (a run with attachments): a shell that can read any local file plus web access would let a
-  prompt-injected attachment send files out.
+- **Web search:** `-c web_search=live` or `disabled`, as the generation form asks. It can be
+  combined with attachments and RemNote (owner decision, 2026-11-20: nothing in the notes is
+  secret).
 - **`--strict-config`:** makes Codex fail on an unknown `-c` key instead of ignoring it (verified:
   `mcp_servers.<name>.enabled_tools` is accepted, a made-up key is rejected). The RemNote tool
   allowlist uses `enabled_tools`.
@@ -85,10 +85,10 @@ codex exec - --output-schema schema.json -o saida.json --json
 - **User config:** `--ignore-user-config` skips `~/.codex/config.toml` (hooks, MCP servers,
   instructions); auth still comes from `CODEX_HOME`. It is omitted only when the user chose
   "use my Codex config" for RemNote.
-- **Shell (decision to confirm):** Codex reads files through its shell, and `--disable shell_tool
+- **Shell (owner-approved, 2026-11-20):** Codex reads files through its shell, and `--disable shell_tool
   --disable unified_exec` leaves it unable to read attachments (verified: it answered "can't read").
   So the shell is disabled when a run has no attachments, and kept, inside `--sandbox read-only`
-  (no writes), when it has. AGENTS.md rule 2 says "no shell"; this is the closest Codex allows.
+  (no writes), when it has. Codex has no other way to read attachments.
 - **RemNote token:** passed in the child's environment (`GABARITEI_REMNOTE_TOKEN`), never as an argument.
 
 ## Web search is never combined with private sources

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BackupStatus } from "../../bindings/BackupStatus";
 import { Toaster } from "../../components/toasts";
 import BackupSection from "./BackupSection";
+import { createBusy } from "./busy";
 
 const old = {
   name: "backup-20261118-100000-000",
@@ -70,7 +71,7 @@ function backend(initial: Partial<BackupStatus> = {}, fail: Record<string, strin
 describe("BackupSection", () => {
   it("lists the backups with the safety ones marked", async () => {
     backend();
-    render(() => <BackupSection />);
+    render(() => <BackupSection busy={createBusy()} />);
 
     expect(await screen.findByTestId("backup-folder")).toHaveTextContent("/dados/backups");
     const items = screen.getAllByRole("listitem");
@@ -86,7 +87,7 @@ describe("BackupSection", () => {
   it("opens the backup folder by name, never by path", async () => {
     const calls = backend();
     const user = userEvent.setup();
-    render(() => <BackupSection />);
+    render(() => <BackupSection busy={createBusy()} />);
 
     await user.click(await screen.findByRole("button", { name: "Abrir pasta dos backups" }));
 
@@ -99,7 +100,7 @@ describe("BackupSection", () => {
     const user = userEvent.setup();
     render(() => (
       <>
-        <BackupSection />
+        <BackupSection busy={createBusy()} />
         <Toaster />
       </>
     ));
@@ -114,7 +115,7 @@ describe("BackupSection", () => {
   it("changes the folder and goes back to the default one", async () => {
     backend();
     const user = userEvent.setup();
-    render(() => <BackupSection />);
+    render(() => <BackupSection busy={createBusy()} />);
 
     await user.click(await screen.findByRole("button", { name: "Escolher pasta…" }));
     expect(await screen.findByTestId("backup-folder")).toHaveTextContent("/outra");
@@ -130,7 +131,7 @@ describe("BackupSection", () => {
     const user = userEvent.setup();
     render(() => (
       <>
-        <BackupSection onRestored={onRestored} />
+        <BackupSection busy={createBusy()} onRestored={onRestored} />
         <Toaster />
       </>
     ));
@@ -149,7 +150,7 @@ describe("BackupSection", () => {
   it("does not restore when the dialog is cancelled", async () => {
     const calls = backend();
     const user = userEvent.setup();
-    render(() => <BackupSection />);
+    render(() => <BackupSection busy={createBusy()} />);
 
     await user.click(await screen.findByRole("button", { name: /Restaurar o backup de 18\/11/ }));
     await user.click(
@@ -162,7 +163,7 @@ describe("BackupSection", () => {
 
   it("shows the last backup failure and an empty folder", async () => {
     backend({ backups: [], lastError: "Não foi possível gravar na pasta." });
-    render(() => <BackupSection />);
+    render(() => <BackupSection busy={createBusy()} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "O último backup falhou: Não foi possível gravar na pasta.",
@@ -179,7 +180,7 @@ describe("BackupSection", () => {
     const user = userEvent.setup();
     render(() => (
       <>
-        <BackupSection onRestored={onRestored} />
+        <BackupSection busy={createBusy()} onRestored={onRestored} />
         <Toaster />
       </>
     ));

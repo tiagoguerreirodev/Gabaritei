@@ -11,6 +11,7 @@ import { showError, showToast } from "../components/toasts";
 import BackupSection from "./settings/BackupSection";
 import DataFolderSection from "./settings/DataFolderSection";
 import DataFileSection from "./settings/DataFileSection";
+import { createBusy } from "./settings/busy";
 import AgentsSection from "./settings/AgentsSection";
 import RemNoteSection from "./settings/RemNoteSection";
 import RolesSection from "./settings/RolesSection";
@@ -24,6 +25,8 @@ function clone<T>(value: T): T {
 export default function Settings() {
   const [loaded, { refetch }] = createResource(() => api.aiSettings());
   const [legacy] = createResource(() => api.legacyImportStatus());
+  // One flag for both sections of Dados: a restore and an import must never overlap.
+  const busy = createBusy();
 
   return (
     <section class="page">
@@ -34,8 +37,8 @@ export default function Settings() {
         </Show>
       </Show>
       <h2>Dados</h2>
-      <BackupSection />
-      <DataFileSection />
+      <BackupSection busy={busy} />
+      <DataFileSection busy={busy} />
       <DataFolderSection />
       <Show when={legacy()} fallback={<Loading />}>
         {(current) => <LegacyImport initialReport={current().report} />}

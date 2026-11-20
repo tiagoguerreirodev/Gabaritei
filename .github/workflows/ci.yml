@@ -108,6 +108,9 @@ jobs:
           cache-on-failure: true
 
       - name: cargo test
+        # The manifest makes the test executable start (see src-tauri/build.rs).
+        env:
+          GABARITEI_TEST_MANIFEST: "1"
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
   frontend:

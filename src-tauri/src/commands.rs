@@ -129,7 +129,10 @@ pub fn open_folder<R: Runtime>(
     let path = crate::backup::folder_to_open(&db, &paths, which)?;
     tauri_plugin_opener::OpenerExt::opener(&app)
         .open_path(path.to_string_lossy(), None::<&str>)
-        .map_err(|_| AppError::Invalid("Não foi possível abrir a pasta.".into()))
+        .map_err(|error| {
+            eprintln!("Gabaritei: could not open the folder: {error}");
+            AppError::Invalid("Não foi possível abrir a pasta.".into())
+        })
 }
 
 /// Makes a backup now.

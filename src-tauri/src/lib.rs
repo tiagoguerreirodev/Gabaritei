@@ -181,7 +181,12 @@ fn start_backup_schedule<R: Runtime>(app: tauri::AppHandle<R>) {
 pub fn run() {
     register(tauri::Builder::default())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        // Only used from Rust (`open_folder`); the page gets no click handler for links.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .setup(open_database)
         .run(tauri::generate_context!())
         .expect("error while running the Gabaritei application");

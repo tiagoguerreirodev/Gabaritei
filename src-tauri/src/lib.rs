@@ -58,6 +58,11 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::abandon,
             commands::annul,
             commands::unannul,
+            commands::ai_settings,
+            commands::save_ai_settings,
+            commands::set_remnote_token,
+            commands::cli_test,
+            commands::remnote_test,
         ])
 }
 
@@ -70,6 +75,7 @@ fn open_database<R: Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error:
     })?;
     app.manage(database);
     app.manage(paths);
+    app.manage(ai::secrets::Secrets::keychain());
     Ok(())
 }
 

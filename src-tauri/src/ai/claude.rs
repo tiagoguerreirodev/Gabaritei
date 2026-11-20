@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 use super::runner::{
     JobSpec, Parser, Plan, Progress, ProgressKind, RemNoteAccess, RunError, Workdir,
+    read_only_tools,
 };
 
 /// Built-in tools the agent may use: read-only, no shell, no edits.
@@ -44,8 +45,8 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         && let Some(RemNoteAccess::Server { tools, .. }) = &spec.remnote
     {
         allowed.extend(
-            tools
-                .iter()
+            read_only_tools(tools)
+                .into_iter()
                 .map(|tool| format!("mcp__{REMNOTE_SERVER}__{tool}")),
         );
     }

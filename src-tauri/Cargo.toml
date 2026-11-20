@@ -30,6 +30,8 @@ tauri-plugin-dialog = "2"
 unicode-normalization = "0.1"
 rand = "0.9"
 tempfile = "3"
+keyring = "4"
+ureq = "3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

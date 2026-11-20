@@ -495,6 +495,53 @@ mod arguments {
     }
 
     #[test]
+    fn write_like_tool_names_are_recognised_by_whole_words() {
+        for name in [
+            "create_note",
+            "createNote",
+            "update-rem",
+            "delete",
+            "set_title",
+            "AddTag",
+        ] {
+            assert!(is_write_like(name), "{name}");
+        }
+        for name in [
+            "search",
+            "read_note",
+            "get_rem",
+            "dataset_search",
+            "list_tags",
+            "offset",
+        ] {
+            assert!(!is_write_like(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn write_like_tools_are_dropped_from_the_plan_for_both_agents() {
+        let remnote = Some(RemNoteAccess::Server {
+            url: "https://remnote.example/mcp".into(),
+            token: "t".into(),
+            tools: vec!["search".into(), "create_note".into()],
+        });
+        let mut claude_job = spec(Agent::Claude, "claude".into());
+        claude_job.remnote = remnote.clone();
+        let (args, _) = plan_for(&claude_job);
+        assert!(args.iter().any(|a| a.ends_with("mcp__remnote__search")));
+        assert!(!args.iter().any(|a| a.contains("create_note")));
+
+        let mut codex_job = spec(Agent::Codex, "codex".into());
+        codex_job.remnote = remnote;
+        let (args, _) = plan_for(&codex_job);
+        assert!(has_pair(
+            &args,
+            "-c",
+            r#"mcp_servers.remnote.enabled_tools=["search"]"#
+        ));
+    }
+
+    #[test]
     fn attachment_names_are_made_safe() {
         assert_eq!(sanitize("../../etc/passwd"), "_.._etc_passwd");
         assert_eq!(sanitize(".bashrc"), "bashrc");

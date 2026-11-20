@@ -8,6 +8,7 @@
   --border: #dde1e7;
   --accent: #2f5fd0;
   --accent-soft: #e6edfb;
+  --danger: #b42318;
   --radius: 8px;
   --sidebar-width: 220px;
   font-family:
@@ -31,6 +32,7 @@
     --border: #2c323b;
     --accent: #7ea2f2;
     --accent-soft: #24304a;
+    --danger: #f97066;
   }
 }
 
@@ -123,4 +125,42 @@ a {
   border-radius: 999px;
   font-size: 0.8rem;
   color: var(--muted);
+}
+
+.card {
+  margin: 1.5rem 0;
+  padding: 1.25rem 1.5rem;
+  max-width: 48rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.card h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+}
+
+button {
+  font: inherit;
+}
+
+.primary {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--surface);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.error {
+  color: var(--danger);
+  white-space: pre-line;
 }

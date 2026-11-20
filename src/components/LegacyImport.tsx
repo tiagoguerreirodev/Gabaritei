@@ -1,0 +1,73 @@
+import { Match, Show, Switch, createSignal } from "solid-js";
+import { api } from "../api";
+import type { LegacyImportReport } from "../bindings/LegacyImportReport";
+
+const number = (n: number) => n.toLocaleString("pt-BR");
+const date = (iso: string) => new Date(iso).toLocaleDateString("pt-BR");
+
+export function reportSummary(report: LegacyImportReport) {
+  return (
+    `${number(report.questions)} questões, ${number(report.collections)} cadernos, ` +
+    `${number(report.topics)} assuntos e ${number(report.images)} imagens`
+  );
+}
+
+/**
+ * Imports the legacy Caderno Local bank. Shows the import button until it has run,
+ * then the summary.
+ */
+export default function LegacyImport(props: {
+  /** Report of a previous import; the component tracks later imports itself. */
+  initialReport: LegacyImportReport | null;
+  onImported?: (report: LegacyImportReport) => void;
+}) {
+  const [report, setReport] = createSignal(props.initialReport);
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal("");
+
+  const start = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const outcome = await api.importLegacyBank();
+      if (outcome) {
+        setReport(outcome.report);
+        props.onImported?.(outcome.report);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section class="card" aria-labelledby="legacy-import-title">
+      <h2 id="legacy-import-title">Banco do Caderno Local</h2>
+      <Switch>
+        <Match when={report()}>
+          {(done) => (
+            <p data-testid="legacy-import-summary">
+              Importado em {date(done().importedAt)}: {reportSummary(done())}.
+            </p>
+          )}
+        </Match>
+        <Match when={!report()}>
+          <p class="muted">
+            Traga as questões, os cadernos e as imagens do aplicativo antigo. Escolha a pasta do
+            repositório Simulados-Concursos neste computador. Os arquivos são conferidos antes de
+            qualquer alteração, e a importação acontece uma única vez.
+          </p>
+          <button type="button" class="primary" disabled={busy()} onClick={() => void start()}>
+            {busy() ? "Importando…" : "Escolher pasta e importar"}
+          </button>
+        </Match>
+      </Switch>
+      <Show when={error()}>
+        <p class="error" role="alert">
+          {error()}
+        </p>
+      </Show>
+    </section>
+  );
+}

@@ -15,6 +15,7 @@ pub mod error;
 pub mod learning;
 pub mod metrics;
 pub mod migrate;
+pub mod paths;
 
 use tauri::{App, Builder, Manager, Runtime};
 
@@ -22,22 +23,29 @@ use tauri::{App, Builder, Manager, Runtime};
 ///
 /// Shared by [`run`] and by the IPC tests, which use Tauri's mock runtime.
 pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
-    builder.invoke_handler(tauri::generate_handler![commands::app_info])
+    builder.invoke_handler(tauri::generate_handler![
+        commands::app_info,
+        commands::legacy_import_status,
+        commands::import_legacy_bank,
+    ])
 }
 
-/// Opens the database in the OS app data directory and makes it available to commands.
+/// Opens the database in the OS app data directory and makes it and the app's paths
+/// available to commands.
 fn open_database<R: Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error::Error>> {
-    let path = db::database_path(&app.path().app_data_dir()?);
-    let database = db::Database::open(&path).inspect_err(|error| {
-        eprintln!("Gabaritei: {error} ({path:?}: {error:?})");
+    let paths = paths::AppPaths::new(app.path().app_data_dir()?);
+    let database = db::Database::open(&paths.database()).inspect_err(|error| {
+        eprintln!("Gabaritei: {error} ({:?}: {error:?})", paths.database());
     })?;
     app.manage(database);
+    app.manage(paths);
     Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     register(tauri::Builder::default())
+        .plugin(tauri_plugin_dialog::init())
         .setup(open_database)
         .run(tauri::generate_context!())
         .expect("error while running the Gabaritei application");

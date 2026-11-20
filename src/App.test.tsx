@@ -16,6 +16,7 @@ describe("App shell", () => {
   beforeEach(() => {
     mockIPC((command) => {
       if (command === "app_info") return { name: "Gabaritei", version: "9.9.9" };
+      if (command === "legacy_import_status") return { report: null, bankEmpty: false };
       throw new Error(`Unexpected command: ${command}`);
     });
   });

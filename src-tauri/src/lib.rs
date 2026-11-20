@@ -12,6 +12,7 @@ pub mod clock;
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod images;
 pub mod learning;
 pub mod metrics;
 pub mod migrate;
@@ -23,11 +24,26 @@ use tauri::{App, Builder, Manager, Runtime};
 ///
 /// Shared by [`run`] and by the IPC tests, which use Tauri's mock runtime.
 pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
-    builder.invoke_handler(tauri::generate_handler![
-        commands::app_info,
-        commands::legacy_import_status,
-        commands::import_legacy_bank,
-    ])
+    builder
+        .register_asynchronous_uri_scheme_protocol(images::SCHEME, |ctx, request, responder| {
+            let images_dir = ctx
+                .app_handle()
+                .try_state::<paths::AppPaths>()
+                .map(|paths| paths.images_dir());
+            tauri::async_runtime::spawn_blocking(move || {
+                let response = match images_dir {
+                    Some(dir) => images::respond(&dir, &request),
+                    // Without the app's folders there is nothing to serve.
+                    None => images::not_found(),
+                };
+                responder.respond(response);
+            });
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::app_info,
+            commands::legacy_import_status,
+            commands::import_legacy_bank,
+        ])
 }
 
 /// Opens the database in the OS app data directory and makes it and the app's paths

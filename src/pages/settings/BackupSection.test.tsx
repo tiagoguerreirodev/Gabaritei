@@ -25,12 +25,17 @@ const safety = {
   sizeBytes: 1024 * 1024,
 } as const;
 
-function backend(initial: Partial<BackupStatus> = {}, fail: Record<string, string> = {}) {
+function backend(
+  initial: Partial<BackupStatus> = {},
+  fail: Record<string, string> = {},
+  leftBehindOnChange: BackupStatus["leftBehind"] = null,
+) {
   let status: BackupStatus = {
     folder: "/dados/backups",
     isDefaultFolder: true,
     backups: [safety, manual, old],
     lastError: null,
+    leftBehind: null,
     ...initial,
   };
   const calls: { command: string; args: unknown }[] = [];
@@ -52,7 +57,8 @@ function backend(initial: Partial<BackupStatus> = {}, fail: Record<string, strin
       }
       case "backup_choose_folder":
         status = { ...status, folder: "/outra", isDefaultFolder: false };
-        return status;
+        // Only the call that changes the folder reports what stays behind.
+        return { ...status, leftBehind: leftBehindOnChange };
       case "backup_use_default_folder":
         status = { ...status, folder: "/dados/backups", isDefaultFolder: true };
         return status;
@@ -109,6 +115,42 @@ describe("BackupSection", () => {
     await user.click(screen.getByRole("button", { name: "Usar a pasta padrão" }));
     expect(await screen.findByText("(padrão)")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Usar a pasta padrão" })).not.toBeInTheDocument();
+  });
+
+  it("warns not to share one folder between two computers", async () => {
+    backend();
+    render(() => <BackupSection />);
+
+    expect(await screen.findByText(/Não use a mesma pasta nos dois computadores/)).toBeVisible();
+  });
+
+  it("says what a folder change leaves behind, and lets the user dismiss it", async () => {
+    backend({}, {}, { folder: "/dados/backups", backups: 3, safety: 1 });
+    const user = userEvent.setup();
+    render(() => <BackupSection />);
+
+    expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Escolher pasta…" }));
+
+    const notice = await screen.findByTestId("left-behind");
+    expect(notice).toHaveTextContent("/dados/backups");
+    expect(notice).toHaveTextContent("3 backups, que não aparecem mais aqui");
+    expect(notice).toHaveTextContent("Um deles é uma cópia feita antes de restaurar ou importar");
+    expect(notice).toHaveTextContent("Nada foi movido nem apagado");
+
+    await user.click(within(notice).getByRole("button", { name: "Entendi" }));
+    expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument();
+  });
+
+  it("shows no notice when the old folder had no backups", async () => {
+    backend();
+    const user = userEvent.setup();
+    render(() => <BackupSection />);
+
+    await user.click(await screen.findByRole("button", { name: "Escolher pasta…" }));
+
+    expect(await screen.findByTestId("backup-folder")).toHaveTextContent("/outra");
+    expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument();
   });
 
   it("asks before restoring, then restores and reports it", async () => {

@@ -2,6 +2,7 @@ import { For, Show, createResource, createSignal } from "solid-js";
 import { api } from "../../api";
 import type { BackupInfo } from "../../bindings/BackupInfo";
 import type { BackupStatus } from "../../bindings/BackupStatus";
+import type { LeftBehind } from "../../bindings/LeftBehind";
 import Modal from "../../components/Modal";
 import { ErrorState, Loading } from "../../components/states";
 import { showError, showToast } from "../../components/toasts";
@@ -23,6 +24,8 @@ export default function BackupSection(props: {
   const [status, { mutate, refetch }] = createResource(() => api.backupStatus());
   const [busy, setBusy] = createSignal(false);
   const [restoring, setRestoring] = createSignal<BackupInfo | null>(null);
+  // What the last folder change left in the old folder; kept until dismissed or changed again.
+  const [leftBehind, setLeftBehind] = createSignal<LeftBehind | null>(null);
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -49,13 +52,16 @@ export default function BackupSection(props: {
       const chosen = await api.backupChooseFolder();
       if (chosen) {
         mutate(chosen);
+        setLeftBehind(chosen.leftBehind);
         showToast("Pasta dos backups salva.");
       }
     });
 
   const useDefaultFolder = () =>
     run(async () => {
-      mutate(await api.backupUseDefaultFolder());
+      const status = await api.backupUseDefaultFolder();
+      mutate(status);
+      setLeftBehind(status.leftBehind);
       showToast("Voltou para a pasta padrão.");
     });
 
@@ -75,6 +81,34 @@ export default function BackupSection(props: {
         O Gabaritei faz um backup por dia enquanto está aberto e guarda os 7 mais recentes. Os
         backups feitos por você ficam à parte e não tomam o lugar dos diários.
       </p>
+      <p class="muted">
+        <strong>Não use a mesma pasta nos dois computadores</strong> (por exemplo, uma pasta
+        sincronizada na nuvem): cada computador apaga os backups mais antigos além do limite, e os
+        do outro computador entram nessa conta e se misturam na lista.
+      </p>
+      <Show when={leftBehind()}>
+        {(left) => (
+          <div class="notice" role="status" data-testid="left-behind">
+            <p>
+              A pasta anterior (<code>{left().folder}</code>) ainda tem{" "}
+              {left().backups === 1
+                ? "1 backup, que não aparece mais aqui."
+                : `${left().backups} backups, que não aparecem mais aqui.`}
+              <Show when={left().safety > 0}>
+                {" "}
+                {left().safety === 1
+                  ? "Um deles é uma cópia feita antes de restaurar ou importar"
+                  : `${left().safety} deles são cópias feitas antes de restaurar ou importar`}
+                ; para voltar atrás, volte para aquela pasta.
+              </Show>{" "}
+              Nada foi movido nem apagado. Se quiser, copie os backups para a pasta nova.
+            </p>
+            <button type="button" onClick={() => setLeftBehind(null)}>
+              Entendi
+            </button>
+          </div>
+        )}
+      </Show>
       <Show when={!status.error} fallback={<ErrorState error={status.error as unknown} />}>
         <Show when={status()} fallback={<Loading />}>
           {(current) => (

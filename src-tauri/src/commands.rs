@@ -141,8 +141,7 @@ pub async fn backup_choose_folder<R: Runtime>(
         let db = app.state::<Database>();
         let paths = app.state::<AppPaths>();
         let service = app.state::<BackupService>();
-        db.with(|conn| crate::backup::set_folder(conn, &paths, Some(&chosen)))?;
-        service.status(&db, &paths).map(Some)
+        service.change_folder(&db, &paths, Some(&chosen)).map(Some)
     })
     .await
     .map_err(|error| AppError::Internal(error.to_string()))?
@@ -155,8 +154,7 @@ pub fn backup_use_default_folder(
     paths: State<'_, AppPaths>,
     service: State<'_, BackupService>,
 ) -> AppResult<BackupStatus> {
-    db.with(|conn| crate::backup::set_folder(conn, &paths, None))?;
-    service.status(&db, &paths)
+    service.change_folder(&db, &paths, None)
 }
 
 /// Replaces the current data with a backup, after a safety backup. Not while a generation runs.

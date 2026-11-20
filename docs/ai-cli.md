@@ -91,10 +91,22 @@ codex exec - --output-schema schema.json -o saida.json --json
   (no writes), when it has. AGENTS.md rule 2 says "no shell"; this is the closest Codex allows.
 - **RemNote token:** passed in the child's environment (`GABARITEI_REMNOTE_TOKEN`), never as an argument.
 
+## Windows (not verified)
+
+Nothing here was run on Windows yet. Known risks to check on the Windows machine: npm installs give
+`claude.cmd` / `codex.cmd`, and Rust's batch-file argument escaping can refuse some arguments (the
+discovery order tries `.exe` first); `cmd.exe` limits a command line to 8191 characters, and Claude
+gets the JSON schema and the role instructions as arguments; Codex's read-only sandbox on Windows
+is untested; `taskkill /T /F` is the only cancel path (no SIGINT).
+
 ## Failures
 
 - A login problem shows up as a non-zero exit with a message such as "Not logged in" or an
   `error`/`turn.failed` event (Codex), or an `is_error` result (Claude). The runner maps those to
   `NotLoggedIn`; any other non-zero exit becomes `Failed` with the exit code and the last error line.
+- The CLI's own error text is **never** shown to the user (after a generation it could contain a
+  question or its key); only the exit code and a fixed hint for known cases (usage limit,
+  overloaded service) are kept.
+- Models are passed as `--model=<m>` so a value can never be read as another flag.
 - Not checked: the exact wording of every login failure (both CLIs were logged in during
   verification). The runner matches several phrases; tests cover them with fakes.

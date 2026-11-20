@@ -34,8 +34,6 @@ const SCRUBBED_ENV: &[&str] = &[
 
 /// How much of the CLI's stderr we keep for error messages.
 const STDERR_KEEP: usize = 8 * 1024;
-/// Longest excerpt of a CLI error shown to the user.
-const DETAIL_MAX: usize = 300;
 const POLL: Duration = Duration::from_millis(50);
 
 /// How a RemNote MCP server is made available to a run.
@@ -455,19 +453,30 @@ fn read_stderr(mut stderr: impl Read) -> String {
     text
 }
 
-fn excerpt(text: &str) -> String {
-    let line = text
-        .lines()
-        .map(str::trim)
-        .rev()
-        .find(|line| !line.is_empty())
-        .unwrap_or("");
-    let short: String = line.chars().take(DETAIL_MAX).collect();
-    if short.is_empty() {
-        String::new()
+/// A short pt-BR hint for failures we recognize. The CLI's own text is never shown: after a
+/// generation it can contain question text or a key, and it would reach the banner.
+fn known_failure(text: &str) -> String {
+    let lower = text.to_lowercase();
+    let hint = if [
+        "rate limit",
+        "usage limit",
+        "quota",
+        "too many requests",
+        "429",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+    {
+        " O limite de uso da conta foi atingido; tente mais tarde."
+    } else if ["overloaded", "503", "529", "unavailable"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+    {
+        " O serviço de IA está sobrecarregado; tente mais tarde."
     } else {
-        format!(" Detalhe: {short}")
-    }
+        ""
+    };
+    hint.to_owned()
 }
 
 /// Runs the job and waits for it. Blocking: call it from a worker thread.
@@ -568,11 +577,7 @@ pub fn run_job(
         if looks_like_login_problem(&reported) || looks_like_login_problem(&stderr_text) {
             return Err(RunError::NotLoggedIn);
         }
-        let detail = if reported.is_empty() {
-            excerpt(&stderr_text)
-        } else {
-            excerpt(&reported)
-        };
+        let detail = known_failure(&format!("{reported}\n{stderr_text}"));
         return Err(RunError::Failed {
             code: status
                 .code()
@@ -581,7 +586,6 @@ pub fn run_job(
         });
     }
     let (value, cost_usd) = parser.finish(&work)?;
-    on_progress(Progress::new(ProgressKind::Done, "Concluído."));
     Ok(JobOutput {
         value,
         cost_usd,

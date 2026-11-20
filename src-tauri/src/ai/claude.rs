@@ -58,8 +58,7 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         "--verbose".into(),
         "--json-schema".into(),
         spec.schema.to_string(),
-        "--model".into(),
-        spec.model.clone(),
+        format!("--model={}", spec.model),
         "--effort".into(),
         spec.effort.as_str().into(),
         // Load no user, project or local settings: no hooks, plugins or CLAUDE.md of the user.

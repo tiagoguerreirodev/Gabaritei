@@ -4,6 +4,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import { beforeEach, describe, expect, it } from "vitest";
 import App from "./App";
 import { routes } from "./routes";
+import { emptyHome, emptyPerformance } from "./test/fixtures";
 
 function linkLabels(navName: string) {
   const nav = screen.getByRole("navigation", { name: navName });
@@ -17,6 +18,8 @@ describe("App shell", () => {
     mockIPC((command) => {
       if (command === "app_info") return { name: "Gabaritei", version: "9.9.9" };
       if (command === "legacy_import_status") return { report: null, bankEmpty: false };
+      if (command === "home") return emptyHome;
+      if (command === "performance") return emptyPerformance;
       if (command === "topics_tree") return { areas: [], questions: 0 };
       if (command === "collections")
         return { items: [], total: 0, page: 0, pageSize: 20, contests: [], boards: [] };

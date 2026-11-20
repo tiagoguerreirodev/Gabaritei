@@ -154,6 +154,41 @@ describe("Banco", () => {
       expect(within(treeList).getByText("Controle de constitucionalidade")).toBeVisible();
     });
 
+    it("shows each answered topic's accuracy", async () => {
+      const [direito, informatica] = tree.areas;
+      const [constitucional] = direito!.matters;
+      const [controle, fundamentais] = constitucional!.topics;
+      backend({
+        tree: {
+          ...tree,
+          areas: [
+            {
+              ...direito!,
+              matters: [
+                {
+                  ...constitucional!,
+                  topics: [{ ...controle!, accuracy: 0.5 }, fundamentais!],
+                },
+              ],
+            },
+            informatica!,
+          ],
+        },
+      });
+      const user = userEvent.setup();
+      render(() => <Bank />);
+
+      const treeList = await screen.findByRole("list", { name: "Assuntos" });
+      await user.click(within(treeList).getByText("Direito"));
+      await user.click(within(treeList).getByText("Constitucional"));
+      expect(
+        within(treeList).getByText("Controle de constitucionalidade").closest("li"),
+      ).toHaveTextContent("acerto 50%");
+      expect(
+        within(treeList).getByText("Direitos fundamentais").closest("li"),
+      ).not.toHaveTextContent("acerto");
+    });
+
     it("explains an empty bank", async () => {
       backend({ tree: { areas: [], questions: 0 } });
       render(() => <Bank />);

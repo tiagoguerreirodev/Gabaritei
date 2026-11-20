@@ -11,8 +11,11 @@ import type { CollectionDetail } from "./bindings/CollectionDetail";
 import type { CollectionPage } from "./bindings/CollectionPage";
 import type { CollectionQuery } from "./bindings/CollectionQuery";
 import type { ErrorPayload } from "./bindings/ErrorPayload";
+import type { HomeSummary } from "./bindings/HomeSummary";
 import type { LegacyImportOutcome } from "./bindings/LegacyImportOutcome";
 import type { LegacyImportStatus } from "./bindings/LegacyImportStatus";
+import type { Performance } from "./bindings/Performance";
+import type { PerformanceQuery } from "./bindings/PerformanceQuery";
 import type { SessionStart } from "./bindings/SessionStart";
 import type { TopicTree } from "./bindings/TopicTree";
 
@@ -53,6 +56,13 @@ export const api = {
   collections: (query: CollectionQuery) => call<CollectionPage>("collections", { query }),
   /** One collection with its attempts. */
   collection: (id: string) => call<CollectionDetail>("collection", { id }),
+  /** Home page: summary numbers, attempts to resume, due reviews and pending drafts. */
+  home: () => call<HomeSummary>("home"),
+  /** Topic strength, weekly trend and filter options. */
+  performance: (query: PerformanceQuery) => call<Performance>("performance", { query }),
+  /** Asks where to save the performance table as CSV and writes it. `false` if cancelled. */
+  exportPerformanceCsv: (query: PerformanceQuery) =>
+    call<boolean>("export_performance_csv", { query }),
   /** Starts a session; fails if the collection already has an unfinished attempt. */
   sessionStart: (request: SessionStart) => call<AttemptView>("session_start", { request }),
   /** An attempt; keys and explanations appear only for revealed questions. */

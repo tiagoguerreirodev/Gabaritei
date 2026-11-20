@@ -11,7 +11,7 @@ use crate::attempts::{self, AttemptView, SessionStart};
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
-use crate::metrics::{self, Performance, PerformanceQuery};
+use crate::metrics::{self, HomeSummary, Performance, PerformanceQuery};
 use crate::migrate::{self, LegacyImportOutcome, LegacyImportStatus};
 use crate::paths::AppPaths;
 
@@ -91,6 +91,12 @@ pub async fn import_legacy_bank<R: Runtime>(
 #[tauri::command(async)]
 pub fn performance(db: State<'_, Database>, query: PerformanceQuery) -> AppResult<Performance> {
     db.with(|conn| metrics::performance(conn, &query))
+}
+
+/// The home page: summary cards, attempts to resume, due reviews and pending drafts.
+#[tauri::command(async)]
+pub fn home(db: State<'_, Database>) -> AppResult<HomeSummary> {
+    db.with(|conn| metrics::home(conn, &crate::clock::now()))
 }
 
 /// Asks where to save the performance table as CSV (using the same filters) and writes it.
@@ -357,6 +363,32 @@ mod tests {
         assert_eq!(question["reveal"], Value::Null, "{question}");
         let text = question.to_string();
         for secret in ["SEGREDO", "REF-", "answerId", "outcome"] {
+            assert!(!text.contains(secret), "{secret} leaked: {text}");
+        }
+    }
+
+    #[test]
+    fn home_shows_active_attempts_without_any_question_content() {
+        let app = MockApp::new(solving_db());
+        start(&app, "exam");
+        let home = app.call("home", json!({})).expect("home succeeds");
+        let attempts = home["activeAttempts"].as_array().expect("a list");
+        assert_eq!(attempts.len(), 1, "{home}");
+        assert_eq!(attempts[0]["title"], json!("Caderno"));
+        assert_eq!(attempts[0]["total"], json!(2));
+        assert_eq!(attempts[0]["answered"], json!(0));
+        let text = home.to_string();
+        for secret in [
+            "SEGREDO",
+            "REF-",
+            "answerId",
+            "explanation",
+            "stem",
+            "options",
+            "Primeira",
+            "Segunda",
+            "reveal",
+        ] {
             assert!(!text.contains(secret), "{secret} leaked: {text}");
         }
     }

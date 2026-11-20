@@ -2,6 +2,7 @@ import { For, Match, Show, Switch, createResource, createSignal } from "solid-js
 import { api } from "../../api";
 import { EmptyState, ErrorState, Loading } from "../../components/states";
 import type { TopicNode } from "../../bindings/TopicNode";
+import { formatPercent } from "../solve/format";
 import StartSessionModal from "../solve/StartSessionModal";
 import { questionCount } from "./format";
 
@@ -65,6 +66,11 @@ export default function TopicTreeView() {
                                           <span class="count">
                                             {questionCount(topic.questions)}
                                           </span>
+                                          <Show when={topic.accuracy !== null}>
+                                            <span class="count" title="Acerto entre respondidas">
+                                              acerto {formatPercent(topic.accuracy)}
+                                            </span>
+                                          </Show>
                                           <button
                                             type="button"
                                             class="link-button"

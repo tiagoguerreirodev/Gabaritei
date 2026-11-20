@@ -21,7 +21,7 @@ use rusqlite::{Connection, named_params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::attempts::{FeedbackMode, Outcome, Score, outcome};
+use crate::attempts::{self, ActiveAttempt, FeedbackMode, Outcome, Score, outcome};
 use crate::bank::catalog::cmp_pt;
 use crate::error::AppResult;
 
@@ -420,6 +420,60 @@ fn filter_options(conn: &Connection) -> AppResult<FilterOptions> {
     Ok(FilterOptions {
         contests: column("contest")?,
         boards: column("board")?,
+    })
+}
+
+// ---- Home ------------------------------------------------------------------------------------
+
+/// An area's headline numbers on the home page.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AreaSummary {
+    pub name: String,
+    pub stats: GroupStats,
+}
+
+/// The home page: numbers and what is waiting for the user.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct HomeSummary {
+    /// Questions in the bank.
+    pub questions: u32,
+    pub overall: GroupStats,
+    /// Weakest first.
+    pub areas: Vec<AreaSummary>,
+    /// Unfinished attempts to resume, newest first.
+    pub active_attempts: Vec<ActiveAttempt>,
+    /// Spaced-repetition reviews due at `now` (counts rows of `review_state`, filled by #21).
+    pub due_reviews: u32,
+    /// Generated packages waiting for review.
+    pub drafts_waiting: u32,
+}
+
+/// The home summary at `now` (an RFC 3339 UTC timestamp).
+pub fn home(conn: &Connection, now: &str) -> AppResult<HomeSummary> {
+    let (overall, areas, _) = strength(conn, &PerformanceQuery::default())?;
+    let count = |sql: &str, params: &[&dyn rusqlite::ToSql]| -> AppResult<u32> {
+        Ok(conn.query_row(sql, params, |r| r.get(0))?)
+    };
+    Ok(HomeSummary {
+        questions: count("SELECT COUNT(*) FROM questions", &[])?,
+        overall,
+        areas: areas
+            .into_iter()
+            .map(|a| AreaSummary {
+                name: a.name,
+                stats: a.stats,
+            })
+            .collect(),
+        active_attempts: attempts::active(conn)?,
+        due_reviews: count(
+            "SELECT COUNT(*) FROM review_state WHERE due_at <= ?1",
+            &[&now],
+        )?,
+        drafts_waiting: count("SELECT COUNT(*) FROM drafts WHERE status = 'review'", &[])?,
     })
 }
 

@@ -744,6 +744,64 @@ pub fn set_annulled(
     load(conn, id)
 }
 
+/// An unfinished attempt, for the "resume" list on the home page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ActiveAttempt {
+    pub id: String,
+    pub title: String,
+    pub source_kind: SourceKind,
+    pub feedback_mode: FeedbackMode,
+    pub started_at: String,
+    /// Questions answered so far.
+    pub answered: u32,
+    pub total: u32,
+}
+
+/// Columns of the unfinished-attempts query.
+type ActiveRow = (String, String, Option<String>, String, String, u32, u32);
+
+/// Every unfinished attempt, newest first. Carries counts only, never questions or keys.
+pub fn active(conn: &Connection) -> AppResult<Vec<ActiveAttempt>> {
+    let rows: Vec<ActiveRow> = conn
+        .prepare(
+            "SELECT a.id, a.source_kind, a.source_ref, a.feedback_mode, a.started_at,
+                    COALESCE(SUM(r.choice IS NOT NULL), 0), COUNT(r.position)
+             FROM attempts a LEFT JOIN responses r ON r.attempt_id = a.id
+             WHERE a.finished_at IS NULL
+             GROUP BY a.id ORDER BY a.started_at DESC, a.id",
+        )?
+        .query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+            ))
+        })?
+        .collect::<Result<_, _>>()?;
+    rows.into_iter()
+        .map(
+            |(id, kind, source_ref, mode, started_at, answered, total)| {
+                let source_kind = source_kind(&kind)?;
+                Ok(ActiveAttempt {
+                    title: title(conn, source_kind, source_ref.as_deref())?,
+                    id,
+                    source_kind,
+                    feedback_mode: FeedbackMode::parse(&mode)?,
+                    started_at,
+                    answered,
+                    total,
+                })
+            },
+        )
+        .collect()
+}
+
 /// Deletes an unfinished attempt. Finished attempts are history and are kept forever.
 pub fn abandon(conn: &Connection, id: &str) -> AppResult<()> {
     let header = load_header(conn, id)?;

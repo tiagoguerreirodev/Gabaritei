@@ -664,3 +664,54 @@ fn absurd_time_zone_offsets_are_clamped() {
     assert_eq!(week(i32::MIN), "2026-10-26", "clamped to UTC-12");
     assert_eq!(week(-12 * 60), "2026-10-26");
 }
+
+#[test]
+fn home_summarizes_the_bank_and_what_is_waiting() {
+    let f = fixture(&[("q1", &[D]), ("q2", &[P])]);
+    f.collection("c1", None, None, &["q1", "q2"]);
+    f.attempt(
+        "done",
+        "study",
+        Some("2026-11-02T10:00:00.000Z"),
+        &[("q1", Some("o0"))],
+    );
+    f.db.transaction(|tx| {
+        tx.execute(
+            "INSERT INTO attempts (id, source_kind, source_ref, feedback_mode, started_at)
+             VALUES ('open', 'collection', 'c1', 'exam', '2026-11-05T09:00:00.000Z')",
+            [],
+        )?;
+        for (i, local) in ["q1", "q2"].iter().enumerate() {
+            tx.execute(
+                "INSERT INTO responses (attempt_id, position, question_id, snapshot, choice)
+                 VALUES ('open', ?1, ?2, '{}', ?3)",
+                params![i as i64, f.id(local), (i == 0).then_some("x")],
+            )?;
+        }
+        tx.execute(
+            "INSERT INTO review_state (question_id, due_at, state) VALUES
+               (?1, '2026-11-10T00:00:00.000Z', '{}'), (?2, '2026-12-10T00:00:00.000Z', '{}')",
+            params![f.id("q1"), f.id("q2")],
+        )?;
+        tx.execute(
+            "INSERT INTO drafts (id, created_at, status, request, package) VALUES
+               ('d1', ?1, 'review', '{}', '{}'), ('d2', ?1, 'discarded', '{}', '{}')",
+            params![T0],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    let home = f.db.with(|c| home(c, "2026-11-20T00:00:00.000Z")).unwrap();
+    assert_eq!(home.questions, 2);
+    assert_eq!(home.overall.score.correct, 1);
+    assert_eq!(home.areas.len(), 2);
+    assert_eq!(home.due_reviews, 1);
+    assert_eq!(home.drafts_waiting, 1);
+    assert_eq!(home.active_attempts.len(), 1);
+    let open = &home.active_attempts[0];
+    assert_eq!(
+        (open.id.as_str(), open.answered, open.total),
+        ("open", 1, 2)
+    );
+    assert_eq!(open.title, "c1", "falls back to the collection's title");
+}

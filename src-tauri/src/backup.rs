@@ -1,11 +1,13 @@
 //! Daily automatic backups and restore (spec §3.6); the export/import data file (#24) builds on
 //! the same snapshots.
 //!
-//! A backup is a folder `backup-<UTC time>` in the backup folder, holding a consistent copy of
+//! A backup is a folder `backup-<UTC time>-<computer tag>` (see [`computer_tag`]; the tag is
+//! missing in names made before tags existed, or when the host name gives none) in the backup folder, holding a consistent copy of
 //! the database, the images and a manifest of sha256 hashes (see [`snapshot`]). It is written
 //! to a hidden temporary folder and renamed, so a crash never leaves a half-written backup
 //! that looks complete. The newest 7 are kept. Before a restore replaces anything, a
-//! `safety-<UTC time>` backup of the current data is made; the newest 5 of those are kept.
+//! `safety-<UTC time>-<tag>` backup of the current data is made; the newest 5 of those are
+//! kept. Each computer rotates only the backups with its own tag.
 
 pub mod datafile;
 pub mod snapshot;
@@ -147,9 +149,11 @@ pub fn computer_tag() -> Option<String> {
 }
 
 /// `Desktop_ABC 12` → `desktop-abc-12`: ASCII letters and digits, other runs become one hyphen.
+/// Only the part before the first dot is used: a host name often gets a network domain
+/// (`mac.local`, `mac.lan`) that changes with the network, and the tag must not.
 fn slug(text: &str) -> Option<String> {
     let mut out = String::new();
-    for c in text.chars() {
+    for c in text.split('.').next().unwrap_or_default().chars() {
         if c.is_ascii_alphanumeric() {
             out.push(c.to_ascii_lowercase());
         } else if !out.is_empty() && !out.ends_with('-') {
@@ -537,6 +541,15 @@ fn create_with(
     })
 }
 
+/// Whether a temporary folder was last changed more than a day ago: no build takes that long.
+fn is_stale(path: &Path) -> bool {
+    fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|modified| modified.elapsed().ok())
+        .is_some_and(|age| age > INTERVAL)
+}
+
 /// Deletes this computer's oldest backups of `kind` beyond the limit, and its temporary
 /// folders left by a crash. Backups and temporary folders of another computer sharing the
 /// folder are never touched, and neither are untagged ones from before tags existed (they
@@ -553,7 +566,15 @@ fn prune(folder: &Path, kind: BackupKind) {
             continue;
         };
         if let Some(building) = name.strip_prefix(".tmp-") {
-            if parse(building).is_some_and(|parsed| parsed.tag == own) {
+            // Another computer's in-progress build is left alone. This computer's own are
+            // removed at once (it is the one running); untagged or unreadable ones, left by a
+            // crash before tags existed, once they are too old to be in progress.
+            let parsed = parse(building);
+            let theirs = parsed
+                .as_ref()
+                .is_some_and(|parsed| parsed.tag.is_some() && parsed.tag != own);
+            let mine = parsed.is_some_and(|parsed| parsed.tag == own);
+            if mine || (!theirs && is_stale(&entry.path())) {
                 let _ = fs::remove_dir_all(entry.path());
             }
         } else if parse(&name).is_some_and(|parsed| parsed.kind == kind && parsed.tag == own) {
@@ -1335,6 +1356,9 @@ mod tests {
     #[test]
     fn the_tag_comes_from_the_host_name_as_a_plain_slug() {
         assert_eq!(slug("DESKTOP-ABC12").as_deref(), Some("desktop-abc12"));
+        // A network domain is not part of the name: it changes with the network.
+        assert_eq!(slug("MacBook-Pro.local").as_deref(), Some("macbook-pro"));
+        assert_eq!(slug("macbook-pro.lan").as_deref(), Some("macbook-pro"));
         assert_eq!(
             slug("  Mac_Book Pro (2)").as_deref(),
             Some("mac-book-pro-2")
@@ -1393,6 +1417,39 @@ mod tests {
         );
         assert!(folder.join(".tmp-backup-20261101-000000-000").exists());
         assert_eq!(all[0].name, "backup-20261112-100000-000-desktop");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn old_untagged_and_garbage_temporary_folders_are_cleaned_but_other_computers_are_not() {
+        let f = fixture();
+        let folder = default_folder(&f.paths);
+        fs::create_dir_all(&folder).unwrap();
+        let long_ago = std::time::SystemTime::now() - Duration::from_secs(3 * 24 * 60 * 60);
+        let make = |name: &str, old: bool| {
+            let path = folder.join(name);
+            fs::create_dir_all(&path).unwrap();
+            if old {
+                fs::File::open(&path)
+                    .unwrap()
+                    .set_modified(long_ago)
+                    .unwrap();
+            }
+            path
+        };
+        let stale_untagged = make(".tmp-backup-20261101-000000-000", true);
+        let stale_garbage = make(".tmp-whatever", true);
+        let fresh_untagged = make(".tmp-backup-20261102-000000-000", false);
+        let stale_other = make(".tmp-backup-20261101-000000-000-laptop", true);
+        as_computer("desktop");
+        backup(&f, "2026-11-19T10:00:00.000Z");
+        assert!(!stale_untagged.exists());
+        assert!(!stale_garbage.exists());
+        assert!(fresh_untagged.exists(), "could be a build in progress");
+        assert!(
+            stale_other.exists(),
+            "the other computer's is never touched"
+        );
     }
 
     #[test]

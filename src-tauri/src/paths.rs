@@ -24,6 +24,11 @@ impl AppPaths {
         crate::db::database_path(&self.data_dir)
     }
 
+    /// Attachments kept for drafts still waiting for review, one folder per draft.
+    pub fn draft_files_dir(&self) -> PathBuf {
+        self.data_dir.join("draft-files")
+    }
+
     /// Question images, named by content hash.
     pub fn images_dir(&self) -> PathBuf {
         self.data_dir.join("images")
@@ -39,5 +44,6 @@ mod tests {
         let paths = AppPaths::new("/data/app");
         assert_eq!(paths.database(), Path::new("/data/app/gabaritei.sqlite"));
         assert_eq!(paths.images_dir(), Path::new("/data/app/images"));
+        assert_eq!(paths.draft_files_dir(), Path::new("/data/app/draft-files"));
     }
 }

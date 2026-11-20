@@ -102,6 +102,10 @@ struct Setup {
     draft_id: String,
 }
 
+fn files_dir(s: &Setup) -> PathBuf {
+    s.dir.path().join("draft-files")
+}
+
 #[cfg(unix)]
 fn setup(package: Package, replies: &[Value]) -> Setup {
     let dir = tempfile::tempdir().unwrap();
@@ -368,6 +372,7 @@ mod flow {
         let error = recheck_draft(
             &s.db,
             &s.secrets,
+            &files_dir(&s),
             &s.draft_id,
             &CancelToken::new(),
             &mut |_| {},
@@ -385,6 +390,7 @@ mod flow {
         recheck_draft(
             &s.db,
             &s.secrets,
+            &files_dir(&s),
             &s.draft_id,
             &CancelToken::new(),
             &mut |_| {},
@@ -469,6 +475,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &files_dir(&s),
             request(1),
             &CancelToken::new(),
             &mut |p| {
@@ -508,6 +515,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &files_dir(&s),
             request(1),
             &CancelToken::new(),
             &mut |_| {},
@@ -531,15 +539,67 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &files_dir(&s),
             request(1),
             &CancelToken::new(),
             &mut |_| {},
         )
         .unwrap();
-        recheck_draft(&s.db, &s.secrets, &id, &CancelToken::new(), &mut |_| {}).unwrap();
+        recheck_draft(
+            &s.db,
+            &s.secrets,
+            &files_dir(&s),
+            &id,
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
         let check = stored(&only_draft(&s.db)).unwrap().unwrap();
         assert!(check.failed.is_none());
         assert_eq!(states(&check), [("q1", VerdictState::Agreed)]);
+    }
+
+    #[test]
+    fn a_retry_gives_the_dispute_round_the_attachments_kept_for_the_draft() {
+        let s = setup_pipeline(&[
+            generated(vec![question("q1", "c")]),
+            answers(vec![]),
+            answers(vec![answer("q1", "a")]),
+            resolutions(vec![resolution("q1", None)]),
+        ]);
+        let original = s.dir.path().join("Lei.md");
+        std::fs::write(&original, "texto").unwrap();
+        let mut job = request(1);
+        job.sources.attachments = vec![original.to_string_lossy().into_owned()];
+        let id = generate_and_check(
+            &s.db,
+            &s.secrets,
+            &files_dir(&s),
+            job,
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(draft_files::load(&files_dir(&s), &id).unwrap().len(), 1);
+        // The user may move or delete the file; the retry uses the kept copy.
+        std::fs::remove_file(&original).unwrap();
+        recheck_draft(
+            &s.db,
+            &s.secrets,
+            &files_dir(&s),
+            &id,
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+        assert!(files(s.dir.path(), 4).contains(&"anexos".to_owned()));
+        assert!(
+            stored(&only_draft(&s.db))
+                .unwrap()
+                .unwrap()
+                .failed
+                .is_none()
+        );
     }
 
     #[test]
@@ -584,8 +644,15 @@ if [ "$n" = 1 ]; then cp "$dir/answer-1.json" "$out"; else sleep 60; fi"#,
             std::thread::sleep(std::time::Duration::from_millis(1500));
             canceller.cancel();
         });
-        let error =
-            generate_and_check(&s.db, &s.secrets, request(1), &token, &mut |_| {}).unwrap_err();
+        let error = generate_and_check(
+            &s.db,
+            &s.secrets,
+            &files_dir(&s),
+            request(1),
+            &token,
+            &mut |_| {},
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("cancelada"));
         assert_eq!(only_draft(&s.db).status, DraftStatus::Discarded);
     }

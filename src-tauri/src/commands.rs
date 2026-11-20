@@ -38,7 +38,7 @@ pub fn app_info() -> AppResult<AppInfo> {
 }
 
 /// Area › matter › topic with question counts.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn topics_tree(db: State<'_, Database>) -> AppResult<TopicTree> {
     db.with(|conn| catalog::topic_tree(conn))
 }
@@ -88,7 +88,7 @@ pub async fn import_legacy_bank<R: Runtime>(
 }
 
 /// Topic strength, weekly trend and filter options under the given filters.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn performance(db: State<'_, Database>, query: PerformanceQuery) -> AppResult<Performance> {
     db.with(|conn| metrics::performance(conn, &query))
 }
@@ -117,9 +117,8 @@ pub async fn export_performance_csv<R: Runtime>(
         let path = file
             .into_path()
             .map_err(|_| AppError::Invalid("Escolha um local deste computador.".into()))?;
-        std::fs::write(&path, csv).map_err(|error| {
-            AppError::Invalid(format!("Não foi possível salvar o arquivo: {error}"))
-        })?;
+        std::fs::write(&path, csv)
+            .map_err(|_| AppError::Invalid("Não foi possível salvar o arquivo.".into()))?;
         Ok(true)
     })
     .await

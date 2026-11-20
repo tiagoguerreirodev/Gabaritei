@@ -295,8 +295,18 @@ fn contest_and_board_filters_use_the_collections_a_question_belongs_to() {
         ..Default::default()
     });
     assert_eq!(
+        both.overall.score.evaluated, 0,
+        "q1 is in a TRT collection and in an FGV one, but never in a TRT collection by FGV"
+    );
+    f.collection("c4", Some("TRT"), Some("FGV"), &["q3"]);
+    let both = f.query(&PerformanceQuery {
+        contest: Some("TRT".into()),
+        board: Some("FGV".into()),
+        ..Default::default()
+    });
+    assert_eq!(
         both.overall.score.evaluated, 1,
-        "q1 is in a TRT and an FGV collection"
+        "q3 is in a TRT collection by FGV"
     );
     // Empty strings mean "no filter".
     let none = f.query(&PerformanceQuery {
@@ -474,8 +484,9 @@ fn csv_is_semicolon_separated_with_bom_and_guards_formulas() {
     assert!(lines[0].starts_with("\u{feff}Nível;Área;Matéria;Assunto;"));
     assert_eq!(lines[1], "Geral;;;;1;0;0;0;1;100,0;100,0;1;100,0");
     assert!(
-        lines[2].starts_with("Área;'=HYPERLINK(\"\"x\"\")")
-            || lines[2].starts_with("Área;\"'=HYPERLINK(\"\"x\"\")\"")
+        lines[2].starts_with("Área;\"'=HYPERLINK(\"\"x\"\")\";"),
+        "guarded with an apostrophe, then quoted because it contains quotes: {}",
+        lines[2]
     );
     assert!(lines[3].contains("\"Mat;éria\""));
     assert!(lines[4].contains(";'-Assunto;"));
@@ -581,4 +592,66 @@ fn topic_accuracy_feeds_the_bank_tree() {
     };
     assert_eq!(accuracy("Controle"), Some(0.5));
     assert_eq!(accuracy("Crase"), None, "never answered");
+}
+
+#[test]
+fn a_blank_in_a_newer_attempt_does_not_hide_an_earlier_answer() {
+    let f = fixture(&[("q1", &[D]), ("q2", &[D])]);
+    f.attempt(
+        "a1",
+        "exam",
+        Some("2026-11-02T10:00:00.000Z"),
+        &[("q1", Some("o0")), ("q2", None)],
+    );
+    // A later Simulado leaves both blank.
+    f.attempt(
+        "a2",
+        "exam",
+        Some("2026-11-03T10:00:00.000Z"),
+        &[("q1", None), ("q2", None)],
+    );
+    let s = f.all().overall;
+    assert_eq!(s.score.correct, 1, "q1 keeps its earlier correct answer");
+    assert_eq!(
+        s.score.blank, 1,
+        "q2 was never answered, so it counts as blank"
+    );
+    assert_eq!(s.answered, 1);
+    assert_eq!(s.coverage, Some(0.5), "coverage means ever answered");
+}
+
+#[test]
+fn tags_are_compared_without_surrounding_whitespace() {
+    let f = fixture(&[("q1", &[D])]);
+    f.collection("c1", Some("TRT "), Some(" FGV"), &["q1"]);
+    f.attempt(
+        "a1",
+        "study",
+        Some("2026-11-02T10:00:00.000Z"),
+        &[("q1", Some("o0"))],
+    );
+    assert_eq!(f.all().filters.contests, ["TRT"]);
+    assert_eq!(f.all().filters.boards, ["FGV"]);
+    let p = f.query(&PerformanceQuery {
+        contest: Some("TRT".into()),
+        board: Some("FGV".into()),
+        ..Default::default()
+    });
+    assert_eq!(p.overall.score.evaluated, 1);
+}
+
+#[test]
+fn absurd_time_zone_offsets_are_clamped() {
+    let f = fixture(&[("q1", &[D])]);
+    f.attempt(
+        "a1",
+        "study",
+        Some("2026-11-02T10:00:00.000Z"),
+        &[("q1", Some("o0"))],
+    );
+    let p = f.query(&PerformanceQuery {
+        utc_offset_minutes: i32::MAX,
+        ..Default::default()
+    });
+    assert_eq!(p.trend.len(), 1, "still produces a week instead of failing");
 }

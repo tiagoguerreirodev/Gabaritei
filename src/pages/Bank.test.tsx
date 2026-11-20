@@ -21,8 +21,8 @@ const tree: TopicTree = {
           name: "Constitucional",
           questions: 300,
           topics: [
-            { id: 1, name: "Controle de constitucionalidade", questions: 120 },
-            { id: 2, name: "Direitos fundamentais", questions: 1 },
+            { id: 1, name: "Controle de constitucionalidade", questions: 120, accuracy: null },
+            { id: 2, name: "Direitos fundamentais", questions: 1, accuracy: null },
           ],
         },
       ],

@@ -15,7 +15,7 @@
   "description": "The re-checker's structured answer.",
   "properties": {
     "correctedKey": {
-      "description": "ID of the correct option when `verdict` is `wrong`; empty otherwise.",
+      "description": "The correct option when `verdict` is `wrong`: its letter (A–E) or Certo/Errado; empty\notherwise.",
       "type": "string"
     },
     "reasoning": {

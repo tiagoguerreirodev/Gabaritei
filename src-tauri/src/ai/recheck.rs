@@ -39,7 +39,8 @@ pub enum RecheckVerdict {
 #[schemars(title = "Revisão de gabarito")]
 pub struct RecheckAnswer {
     pub verdict: RecheckVerdict,
-    /// ID of the correct option when `verdict` is `wrong`; empty otherwise.
+    /// The correct option when `verdict` is `wrong`: its letter (A–E) or Certo/Errado; empty
+    /// otherwise.
     pub corrected_key: String,
     pub reasoning: String,
     /// Verifiable sources. Never invented.
@@ -54,6 +55,8 @@ pub struct Proposal {
     pub reasoning: String,
     pub sources: Vec<String>,
     pub by: RoleConfig,
+    /// The key the AI judged. A change of key in the meantime makes the proposal stale.
+    pub based_on_key: String,
 }
 
 /// What the Resolver shows. Only produced after the question was revealed.
@@ -132,15 +135,14 @@ pub fn ask_recheck(
         return Err(invalid("A IA devolveu fontes inválidas. Tente de novo."));
     }
     let corrected_key = match answer.verdict {
-        RecheckVerdict::Wrong => {
-            let key = answer.corrected_key.trim();
-            if key == question.answer_id || !question.options.iter().any(|o| o.id == key) {
+        RecheckVerdict::Wrong => match prompts::option_by_label(&question, &answer.corrected_key) {
+            Some(option) if option.id != question.answer_id => Some(option.id.clone()),
+            _ => {
                 return Err(invalid(
                     "A IA disse que o gabarito está errado, mas não indicou uma alternativa válida.",
                 ));
             }
-            Some(key.to_owned())
-        }
+        },
         _ => None,
     };
     let proposal = Proposal {
@@ -149,6 +151,7 @@ pub fn ask_recheck(
         reasoning: answer.reasoning.trim().to_owned(),
         sources: answer.sources.iter().map(|s| s.trim().to_owned()).collect(),
         by: role,
+        based_on_key: question.answer_id.clone(),
     };
     let view = RecheckView::from(&proposal);
     jobs.keep(&question.id, proposal);
@@ -177,6 +180,9 @@ pub fn apply(
         params![question_id],
         |row| row.get(0),
     )?;
+    if old_key != proposal.based_on_key {
+        return Err(invalid("O gabarito mudou desde a revisão. Peça de novo."));
+    }
     conn.execute(
         "UPDATE questions SET answer_id = ?2, updated_at = ?3 WHERE id = ?1",
         params![question_id, new_key, now],

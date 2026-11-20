@@ -243,12 +243,54 @@ Responda somente com o JSON pedido, no esquema fornecido."
     )
 }
 
+/// How an option is named to the AI: a letter for multiple choice, the word itself for
+/// Certo/Errado. Canonical option IDs are 24-hex hashes the user never sees, and the display
+/// order is shuffled per attempt, so neither IDs nor positions may appear in anything saved.
+pub fn option_label(question: &crate::bank::Question, index: usize) -> String {
+    match question.kind {
+        QuestionType::Boolean => question.options[index].text.clone(),
+        QuestionType::Multiple => char::from(b'A' + u8::try_from(index).unwrap_or(0)).to_string(),
+    }
+}
+
+/// The option an AI answer names by label (`B`, `(b)`, `Certo`), if there is one.
+pub fn option_by_label<'a>(
+    question: &'a crate::bank::Question,
+    label: &str,
+) -> Option<&'a crate::bank::QuestionOption> {
+    let wanted = label
+        .trim()
+        .trim_matches(|c| c == '(' || c == ')')
+        .trim()
+        .to_lowercase();
+    (0..question.options.len())
+        .find(|index| option_label(question, *index).to_lowercase() == wanted)
+        .map(|index| &question.options[index])
+}
+
 fn render_question(question: &crate::bank::Question) -> String {
     let mut text = format!("{}\n", question.stem);
-    for option in &question.options {
-        text.push_str(&format!("({}) {}\n", option.id, option.text));
+    for (index, option) in question.options.iter().enumerate() {
+        match question.kind {
+            QuestionType::Multiple => {
+                text.push_str(&format!(
+                    "({}) {}\n",
+                    option_label(question, index),
+                    option.text
+                ));
+            }
+            QuestionType::Boolean => text.push_str(&format!("- {}\n", option.text)),
+        }
     }
     text
+}
+
+fn current_key_label(question: &crate::bank::Question) -> String {
+    question
+        .options
+        .iter()
+        .position(|o| o.id == question.answer_id)
+        .map_or_else(String::new, |index| option_label(question, index))
 }
 
 /// The task for the re-check role: is the key of this question right?
@@ -257,13 +299,14 @@ pub fn recheck_prompt(question: &crate::bank::Question) -> String {
         "REVISÃO DE GABARITO\n\nO usuário desconfia do gabarito da questão abaixo. Resolva-a por \
 conta própria, confira o gabarito e o comentário e devolva: `verdict` (\"correct\" se o gabarito \
 está certo; \"wrong\" se outra alternativa é a correta; \"ambiguous\" se a questão é ambígua, \
-tem mais de uma resposta defensável ou nenhuma), `correctedKey` (o id da alternativa correta \
-quando `verdict` for \"wrong\"; vazio nos demais casos), `reasoning` (justificativa objetiva) e \
+tem mais de uma resposta defensável ou nenhuma), `correctedKey` (a alternativa correta quando \
+`verdict` for \"wrong\": a letra, A a E, ou \"Certo\"/\"Errado\"; vazio nos demais casos), \
+`reasoning` (justificativa objetiva; cite o conteúdo da alternativa, nunca só a letra) e \
 `sources` (fontes verificáveis: lei e artigo, página oficial, obra; NUNCA invente uma fonte, e \
 deixe vazio se não tiver certeza).\n\n--- Questão ---\n{}Gabarito atual: ({})\nComentário atual: \
 {}\nReferências atuais: {}\n",
         render_question(question),
-        question.answer_id,
+        current_key_label(question),
         question.explanation,
         question.refs.join("; ")
     )

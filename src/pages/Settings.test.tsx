@@ -15,7 +15,11 @@ const defaults: AiSettings = {
   hasRemnoteToken: false,
 };
 
-function backend(initial: AiSettings = defaults, importing?: Promise<boolean>) {
+function backend(
+  initial: AiSettings = defaults,
+  importing?: Promise<boolean>,
+  backingUp?: Promise<unknown>,
+) {
   const calls: { command: string; args: unknown }[] = [];
   let stored = initial;
   mockIPC((command, args) => {
@@ -25,9 +29,18 @@ function backend(initial: AiSettings = defaults, importing?: Promise<boolean>) {
         return {
           folder: "/dados/backups",
           isDefaultFolder: true,
-          backups: [],
+          backups: [
+            {
+              name: "backup-20261118-100000-000",
+              kind: "backup",
+              createdAt: "2026-11-18T10:00:00.000Z",
+              sizeBytes: 1024,
+            },
+          ],
           lastError: null,
         };
+      case "backup_now":
+        return backingUp;
       case "import_data":
         return importing ?? false;
       case "legacy_import_status":
@@ -178,6 +191,8 @@ describe("Configurações", () => {
     await user.click(screen.getByRole("button", { name: "Escolher arquivo e importar" }));
 
     expect(backupNow).toBeDisabled();
+    // The case the issue names: a restore can't be started behind a running import.
+    expect(screen.getByRole("button", { name: /^Restaurar o backup de/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Escolher pasta…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Exportar dados…" })).toBeDisabled();
 
@@ -185,6 +200,28 @@ describe("Configurações", () => {
     finish(false);
     await vi.waitFor(() => expect(backupNow).toBeEnabled());
     expect(screen.getByRole("button", { name: "Exportar dados…" })).toBeEnabled();
+  });
+
+  it("blocks the data file actions while a backup runs", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    backend(
+      defaults,
+      undefined,
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    render(() => <Settings />);
+
+    await user.click(await screen.findByRole("button", { name: "Fazer backup agora" }));
+
+    expect(screen.getByRole("button", { name: "Importar dados…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Exportar dados…" })).toBeDisabled();
+    finish(null);
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "Importar dados…" })).toBeEnabled(),
+    );
   });
 
   it("warns that the Codex config mode cannot limit RemNote tools", async () => {

@@ -22,6 +22,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::attempts::RESPONSE_TIME_SQL;
 use crate::bank::TopicPath;
 use crate::error::AppResult;
 
@@ -49,15 +50,15 @@ struct ReviewState {
 /// test `scoring_in_sql_agrees_with_attempts_outcome` keeps the two together.
 /// A response without an answer time (a blank) is dated by when its attempt finished.
 fn history(conn: &Connection, question_id: &str) -> AppResult<Vec<(String, bool)>> {
-    let mut stmt = conn.prepare(
-        "SELECT COALESCE(r.answered_at, a.finished_at) AS at,
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {RESPONSE_TIME_SQL} AS at,
                 r.choice IS NOT NULL AND r.choice = q.answer_id
          FROM responses r
          JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NOT NULL
          JOIN questions q ON q.id = r.question_id
          WHERE r.question_id = ?1
-         ORDER BY at, a.id, r.position",
-    )?;
+         ORDER BY at, a.id, r.position"
+    ))?;
     let rows = stmt
         .query_map(params![question_id], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -151,10 +152,10 @@ struct Latest {
 /// Desempenho). When the question is wrong, `at` and `attempt_id` point at that wrong answer,
 /// so the page links to the attempt that shows it.
 fn latest_results(conn: &Connection) -> AppResult<Vec<Latest>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "WITH base AS (
            SELECT r.question_id, a.id AS attempt_id, r.choice, q.answer_id, r.position,
-                  COALESCE(r.answered_at, a.finished_at) AS at
+                  {RESPONSE_TIME_SQL} AS at
            FROM responses r
            JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NOT NULL
            JOIN questions q ON q.id = r.question_id AND q.annulled = 0
@@ -178,8 +179,8 @@ fn latest_results(conn: &Connection) -> AppResult<Vec<Latest>> {
          FROM ranked l
          LEFT JOIN answered w ON w.question_id = l.question_id AND w.rank = 1
          WHERE l.rank = 1
-         ORDER BY 2 DESC, l.question_id",
-    )?;
+         ORDER BY 2 DESC, l.question_id"
+    ))?;
     let rows = stmt
         .query_map([], |r| {
             Ok(Latest {

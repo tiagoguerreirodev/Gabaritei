@@ -26,7 +26,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
    - **Never** implement OAuth.
    - **Never** call the Anthropic or OpenAI APIs directly.
    - **Never** read, copy, log or store their credential files.
-   - Agents get **read-only** tools only: no shell and no file edits.
+   - Agents get **read-only** tools only: no file edits and no shell, except Codex's own shell inside its read-only sandbox, which it needs to read attachments (owner-approved).
    - The **blind check never receives the answer key or explanation.**
 3. **Study data never goes into git.** No databases, exports, backups or real question banks in the repo. Tests build small synthetic fixtures in code.
 4. **History is never capped or deleted.** Every attempt is kept. Only *abandoning* an unfinished attempt deletes it.

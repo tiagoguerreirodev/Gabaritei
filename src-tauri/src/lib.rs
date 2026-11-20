@@ -151,23 +151,57 @@ fn open_database<R: Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-/// Checks for a due backup at start and then every hour while the app is open (spec §3.6).
-/// A failure is kept in [`backup::BackupService`] and shown in Configurações → Dados.
+/// How often the schedule looks at the wall clock. Short, because a long sleep may not count
+/// the time the computer was asleep on every OS; whether a backup is due is decided from the
+/// clock and the newest backup, never from how many sleeps went by.
+const BACKUP_POLL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// After a failed backup the schedule waits this long before trying again, so a lasting
+/// problem (a full disk, a missing drive) doesn't repeat the whole copy every few minutes.
+const BACKUP_RETRY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Makes the daily backup if one is due. A failure is kept in [`backup::BackupService`] for
+/// Configurações → Dados, which only has the pt-BR message; the detail goes to the log.
+/// Returns whether the attempt failed.
+fn run_scheduled_backup(
+    service: &backup::BackupService,
+    db: &db::Database,
+    paths: &paths::AppPaths,
+    now: time::OffsetDateTime,
+) -> bool {
+    match service.backup_if_due(db, paths, now) {
+        Ok(_) => false,
+        Err(error) => {
+            eprintln!("Gabaritei: the scheduled backup failed: {error:?}");
+            true
+        }
+    }
+}
+
+/// Checks for a due backup at start and then every few minutes while the app is open
+/// (spec §3.6).
 fn start_backup_schedule<R: Runtime>(app: tauri::AppHandle<R>) {
-    const EVERY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
     let spawned = std::thread::Builder::new()
         .name("backup-schedule".into())
         .spawn(move || {
+            let mut retry_at: Option<std::time::Instant> = None;
             loop {
-                if let (Some(db), Some(paths), Some(service)) = (
+                let waiting = retry_at.is_some_and(|at| std::time::Instant::now() < at);
+                if let (false, Some(db), Some(paths), Some(service)) = (
+                    waiting,
                     app.try_state::<db::Database>(),
                     app.try_state::<paths::AppPaths>(),
                     app.try_state::<backup::BackupService>(),
                 ) {
-                    // The error is recorded by the service; there is no one to show it to here.
-                    let _ = service.backup_if_due(&db, &paths, time::OffsetDateTime::now_utc());
+                    let failed = run_scheduled_backup(
+                        &service,
+                        &db,
+                        &paths,
+                        time::OffsetDateTime::now_utc(),
+                    );
+                    retry_at = failed.then(|| std::time::Instant::now() + BACKUP_RETRY);
                 }
-                std::thread::sleep(EVERY);
+                std::thread::sleep(BACKUP_POLL);
             }
         });
     if let Err(error) = spawned {
@@ -216,5 +250,54 @@ mod tests {
         assert!(matches!(error, AppError::Internal(_)));
         let message = startup_message(&error);
         assert!(message.contains("pasta de dados"));
+    }
+
+    fn scheduler_fixture() -> (tempfile::TempDir, paths::AppPaths, db::Database) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths::AppPaths::new(dir.path().join("data"));
+        let database = db::Database::open(&paths.database()).unwrap();
+        (dir, paths, database)
+    }
+
+    #[test]
+    fn the_scheduled_backup_follows_the_wall_clock_not_the_number_of_polls() {
+        use time::macros::datetime;
+        let (_dir, paths, database) = scheduler_fixture();
+        let service = backup::BackupService::default();
+        let count = || backup::list(&backup::default_folder(&paths)).len();
+
+        run_scheduled_backup(&service, &database, &paths, datetime!(2026-11-19 10:00 UTC));
+        assert_eq!(count(), 1);
+        // A poll a few minutes later finds nothing due.
+        run_scheduled_backup(&service, &database, &paths, datetime!(2026-11-19 10:05 UTC));
+        assert_eq!(count(), 1);
+        // The computer slept for a day: the very next poll makes the backup.
+        run_scheduled_backup(&service, &database, &paths, datetime!(2026-11-20 10:06 UTC));
+        assert_eq!(count(), 2);
+    }
+
+    #[test]
+    fn a_failed_scheduled_backup_is_kept_for_the_data_page() {
+        let (dir, paths, database) = scheduler_fixture();
+        let file = dir.path().join("not-a-folder");
+        std::fs::write(&file, "x").unwrap();
+        database
+            .with(|conn| {
+                db::set_setting(conn, "backup.folder", &file.join("sub").to_str().unwrap())
+            })
+            .unwrap();
+        let service = backup::BackupService::default();
+
+        let failed = run_scheduled_backup(
+            &service,
+            &database,
+            &paths,
+            time::macros::datetime!(2026-11-19 10:00 UTC),
+        );
+
+        // The schedule is told, so it can wait before the next try.
+        assert!(failed);
+        let status = service.status(&database, &paths).unwrap();
+        assert!(status.last_error.is_some());
     }
 }

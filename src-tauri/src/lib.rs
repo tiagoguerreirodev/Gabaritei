@@ -156,16 +156,25 @@ fn open_database<R: Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error:
 /// clock and the newest backup, never from how many sleeps went by.
 const BACKUP_POLL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
+/// After a failed backup the schedule waits this long before trying again, so a lasting
+/// problem (a full disk, a missing drive) doesn't repeat the whole copy every few minutes.
+const BACKUP_RETRY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
 /// Makes the daily backup if one is due. A failure is kept in [`backup::BackupService`] for
 /// Configurações → Dados, which only has the pt-BR message; the detail goes to the log.
+/// Returns whether the attempt failed.
 fn run_scheduled_backup(
     service: &backup::BackupService,
     db: &db::Database,
     paths: &paths::AppPaths,
     now: time::OffsetDateTime,
-) {
-    if let Err(error) = service.backup_if_due(db, paths, now) {
-        eprintln!("Gabaritei: the scheduled backup failed: {error:?}");
+) -> bool {
+    match service.backup_if_due(db, paths, now) {
+        Ok(_) => false,
+        Err(error) => {
+            eprintln!("Gabaritei: the scheduled backup failed: {error:?}");
+            true
+        }
     }
 }
 
@@ -175,13 +184,22 @@ fn start_backup_schedule<R: Runtime>(app: tauri::AppHandle<R>) {
     let spawned = std::thread::Builder::new()
         .name("backup-schedule".into())
         .spawn(move || {
+            let mut retry_at: Option<std::time::Instant> = None;
             loop {
-                if let (Some(db), Some(paths), Some(service)) = (
+                let waiting = retry_at.is_some_and(|at| std::time::Instant::now() < at);
+                if let (false, Some(db), Some(paths), Some(service)) = (
+                    waiting,
                     app.try_state::<db::Database>(),
                     app.try_state::<paths::AppPaths>(),
                     app.try_state::<backup::BackupService>(),
                 ) {
-                    run_scheduled_backup(&service, &db, &paths, time::OffsetDateTime::now_utc());
+                    let failed = run_scheduled_backup(
+                        &service,
+                        &db,
+                        &paths,
+                        time::OffsetDateTime::now_utc(),
+                    );
+                    retry_at = failed.then(|| std::time::Instant::now() + BACKUP_RETRY);
                 }
                 std::thread::sleep(BACKUP_POLL);
             }
@@ -270,13 +288,15 @@ mod tests {
             .unwrap();
         let service = backup::BackupService::default();
 
-        run_scheduled_backup(
+        let failed = run_scheduled_backup(
             &service,
             &database,
             &paths,
             time::macros::datetime!(2026-11-19 10:00 UTC),
         );
 
+        // The schedule is told, so it can wait before the next try.
+        assert!(failed);
         let status = service.status(&database, &paths).unwrap();
         assert!(status.last_error.is_some());
     }

@@ -236,7 +236,7 @@ impl BackupService {
         })
     }
 
-    /// Makes a backup if the newest one is older than a day. Called at start and every hour.
+    /// Makes a backup if the newest one is older than a day. Called at start and every few minutes.
     pub fn backup_if_due(
         &self,
         db: &Database,

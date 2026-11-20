@@ -114,22 +114,68 @@ pub fn write(
         images_dir,
         dest,
         created_at,
+        Vec::new(),
     )
 }
 
+/// Copies the images found now into `dest/images` and returns their manifest entries. Meant to
+/// run *before* the database lock is taken, so a large image folder never freezes the app:
+/// images are append-only and named by their content hash, so copying them early is safe.
+/// Pass the result to [`write_locked`], which adds any image that appeared since.
+pub fn copy_images_ahead(images_dir: &Path, dest: &Path) -> AppResult<Vec<ManifestFile>> {
+    fs::create_dir_all(dest.join(IMAGES_DIR))?;
+    copy_new_images(images_dir, dest, &[])
+}
+
 /// Like [`write`], for a caller that already holds the database lock (see [`commit`]).
+/// `ahead` is what [`copy_images_ahead`] already copied; only newer images are copied here.
 pub fn write_locked(
     conn: &Connection,
     images_dir: &Path,
     dest: &Path,
     created_at: &str,
+    ahead: Vec<ManifestFile>,
 ) -> AppResult<Manifest> {
     write_with(
         |dest| copy_with_version(conn, dest),
         images_dir,
         dest,
         created_at,
+        ahead,
     )
+}
+
+/// Copies into `dest/images` the images in `images_dir` that are not in `done`, and returns
+/// their manifest entries.
+fn copy_new_images(
+    images_dir: &Path,
+    dest: &Path,
+    done: &[ManifestFile],
+) -> AppResult<Vec<ManifestFile>> {
+    let done: HashSet<&str> = done.iter().map(|file| file.path.as_str()).collect();
+    let mut images = match fs::read_dir(images_dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| is_valid_image_name(name))
+            .filter(|name| !done.contains(format!("{IMAGES_DIR}/{name}").as_str()))
+            .collect::<Vec<_>>(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(error.into()),
+    };
+    images.sort();
+    let mut files = Vec::new();
+    for name in images {
+        let target = dest.join(IMAGES_DIR).join(&name);
+        fs::copy(images_dir.join(&name), &target)?;
+        let (sha256, size) = hash_file(&target)?;
+        files.push(ManifestFile {
+            path: format!("{IMAGES_DIR}/{name}"),
+            sha256,
+            size,
+        });
+    }
+    Ok(files)
 }
 
 fn write_with(
@@ -137,6 +183,7 @@ fn write_with(
     images_dir: &Path,
     dest: &Path,
     created_at: &str,
+    ahead: Vec<ManifestFile>,
 ) -> AppResult<Manifest> {
     fs::create_dir_all(dest.join(IMAGES_DIR))?;
     // The database first: every image it references already exists, and newer ones are harmless.
@@ -148,26 +195,12 @@ fn write_with(
         sha256,
         size,
     });
-    let mut images = match fs::read_dir(images_dir) {
-        Ok(entries) => entries
-            .filter_map(Result::ok)
-            .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|name| is_valid_image_name(name))
-            .collect::<Vec<_>>(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => return Err(error.into()),
-    };
-    images.sort();
-    for name in images {
-        let target = dest.join(IMAGES_DIR).join(&name);
-        fs::copy(images_dir.join(&name), &target)?;
-        let (sha256, size) = hash_file(&target)?;
-        files.push(ManifestFile {
-            path: format!("{IMAGES_DIR}/{name}"),
-            sha256,
-            size,
-        });
-    }
+    // An image the database references may have been added after the early copy: look again,
+    // now that the database is copied.
+    let mut images = copy_new_images(images_dir, dest, &ahead)?;
+    images.extend(ahead);
+    images.sort_by(|a, b| a.path.cmp(&b.path));
+    files.extend(images);
     let manifest = Manifest {
         format: FORMAT,
         app_version: env!("CARGO_PKG_VERSION").to_owned(),

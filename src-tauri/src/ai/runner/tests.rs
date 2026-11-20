@@ -337,6 +337,12 @@ mod arguments {
     fn claude_is_read_only_isolated_and_never_bare() {
         let (args, env) = plan_for(&spec(Agent::Claude, "claude".into()));
         assert!(has_pair(&args, "--tools", "Read,Grep,Glob"));
+        // File tools are scoped to the run folder.
+        assert!(has_pair(
+            &args,
+            "--allowedTools",
+            "Read(./**),Grep(./**),Glob(./**)"
+        ));
         assert!(has_pair(&args, "--permission-mode", "dontAsk"));
         assert!(has_pair(&args, "--setting-sources", ""));
         assert!(has_pair(&args, "--model", "modelo-x"));
@@ -372,6 +378,7 @@ mod arguments {
         job.remnote = Some(RemNoteAccess::Server {
             url: "https://remnote.example/mcp".into(),
             token: "TOKEN-SECRETO".into(),
+            tools: vec!["search".into(), "read_note".into()],
         });
         let work = Workdir::prepare(&job).unwrap();
         let plan = claude::plan(&job, &work);
@@ -384,12 +391,13 @@ mod arguments {
         assert!(plan.env.iter().all(|(_, v)| v != "TOKEN-SECRETO"));
         let file = std::fs::read_to_string(work.mcp_config.as_ref().unwrap()).unwrap();
         assert!(file.contains("TOKEN-SECRETO"));
+        // Only the exact tools the user approved, never the whole server.
         assert!(has_pair(
             &args,
             "--allowedTools",
-            "Read,Grep,Glob,mcp__remnote"
+            "Read(./**),Grep(./**),Glob(./**),mcp__remnote__search,mcp__remnote__read_note"
         ));
-        assert!(args.iter().any(|a| a.contains("mcp__remnote__*delete*")));
+        assert!(!args.iter().any(|a| a.contains("--disallowedTools")));
     }
 
     #[test]
@@ -401,6 +409,7 @@ mod arguments {
         assert!(has_pair(&args, "-c", "web_search=disabled"));
         assert!(has_pair(&args, "--disable", "shell_tool"));
         assert!(args.contains(&"--ignore-user-config".to_owned()));
+        assert!(args.contains(&"--strict-config".to_owned()));
         assert!(args.contains(&"--ephemeral".to_owned()));
         assert!(!args.iter().any(|a| a.contains("dangerously")));
         assert_eq!(args[..2], ["exec".to_owned(), "-".to_owned()]);
@@ -417,7 +426,30 @@ mod arguments {
         let (args, _) = plan_for(&job);
         assert!(!args.contains(&"shell_tool".to_owned()));
         assert!(has_pair(&args, "--sandbox", "read-only"));
+        // A shell that can read local files never runs together with web access.
+        assert!(has_pair(&args, "-c", "web_search=disabled"));
+    }
+
+    #[test]
+    fn codex_gets_web_search_only_without_attachments() {
+        let mut job = spec(Agent::Codex, "codex".into());
+        job.web = true;
+        let (args, _) = plan_for(&job);
         assert!(has_pair(&args, "-c", "web_search=live"));
+        assert!(has_pair(&args, "--disable", "shell_tool"));
+    }
+
+    #[test]
+    fn remnote_with_no_approved_tools_gives_codex_no_server() {
+        let mut job = spec(Agent::Codex, "codex".into());
+        job.remnote = Some(RemNoteAccess::Server {
+            url: "https://remnote.example/mcp".into(),
+            token: "t".into(),
+            tools: Vec::new(),
+        });
+        let (args, env) = plan_for(&job);
+        assert!(!args.iter().any(|a| a.contains("mcp_servers")));
+        assert!(env.is_empty());
     }
 
     #[test]
@@ -426,6 +458,7 @@ mod arguments {
         job.remnote = Some(RemNoteAccess::Server {
             url: "https://remnote.example/mcp".into(),
             token: "TOKEN-SECRETO".into(),
+            tools: vec!["search".into()],
         });
         let (args, env) = plan_for(&job);
         assert!(!args.iter().any(|a| a.contains("TOKEN-SECRETO")));
@@ -455,6 +488,7 @@ mod arguments {
         job.remnote = Some(RemNoteAccess::Server {
             url: "https://x".into(),
             token: "TOKEN-SECRETO".into(),
+            tools: Vec::new(),
         });
         let shown = format!("{job:?}");
         assert!(!shown.contains("GABARITO-SECRETO") && !shown.contains("TOKEN-SECRETO"));

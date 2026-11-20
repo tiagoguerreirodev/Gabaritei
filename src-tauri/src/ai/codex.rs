@@ -15,6 +15,9 @@ fn toml_string(value: &str) -> String {
 }
 
 pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
+    // Web search and a file-reading shell are never on together: a prompt-injected attachment
+    // could otherwise read local files and send them out through a web request.
+    let web = spec.web && !work.has_attachments;
     let mut args: Vec<String> = vec![
         "exec".into(),
         // The prompt is on stdin.
@@ -33,8 +36,10 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         spec.model.clone(),
         "-c".into(),
         format!("model_reasoning_effort={}", spec.effort.as_str()),
+        // Fail on a config key this version doesn't know, instead of silently ignoring it.
+        "--strict-config".into(),
         "-c".into(),
-        format!("web_search={}", if spec.web { "live" } else { "disabled" }),
+        format!("web_search={}", if web { "live" } else { "disabled" }),
     ];
     // The user's own Codex config (hooks, MCP servers, instructions) is ignored, except when the
     // user chose to reuse it for RemNote.
@@ -50,13 +55,20 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         }
     }
     let mut env = Vec::new();
-    if let Some(RemNoteAccess::Server { url, token }) = &spec.remnote {
+    if let Some(RemNoteAccess::Server { url, token, tools }) = &spec.remnote
+        && !tools.is_empty()
+    {
         args.push("-c".into());
         args.push(format!("mcp_servers.remnote.url={}", toml_string(url)));
         args.push("-c".into());
         args.push(format!(
             "mcp_servers.remnote.bearer_token_env_var={}",
             toml_string(TOKEN_ENV)
+        ));
+        args.push("-c".into());
+        args.push(format!(
+            "mcp_servers.remnote.enabled_tools={}",
+            serde_json::to_string(tools).expect("a list of strings serializes")
         ));
         env.push((TOKEN_ENV.to_owned(), token.clone()));
     }

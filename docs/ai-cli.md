@@ -30,9 +30,10 @@ against the installed CLIs with real runs, not only `--help`.
 claude -p --output-format stream-json --verbose --json-schema '<schema>'
   --model <m> --effort <low|medium|high|xhigh|max>
   --setting-sources "" --strict-mcp-config
-  --tools "Read,Grep,Glob[,WebSearch,WebFetch]" --allowedTools "<same>[,mcp__remnote]"
+  --tools "Read,Grep,Glob[,WebSearch,WebFetch]"
+  --allowedTools "Read(./**),Grep(./**),Glob(./**)[,WebSearch,WebFetch][,mcp__remnote__<tool>...]"
   --permission-mode dontAsk --no-session-persistence --disable-slash-commands
-  [--mcp-config mcp.json --disallowedTools "mcp__remnote__*create*,..."]
+  [--mcp-config mcp.json]
   [--append-system-prompt "<role instructions>"]            # prompt on stdin
 ```
 
@@ -46,18 +47,21 @@ claude -p --output-format stream-json --verbose --json-schema '<schema>'
 - **Events used:** `system`/`init`, `assistant` (`tool_use` names), `result`.
 - **RemNote:** `mcp.json` with an `http` server and an `Authorization: Bearer` header, written in the
   temp folder and deleted with it. The token is never an argument.
-- **Unverified:** RemNote's real tool names. Write-like tools are denied by name pattern as a
-  precaution (`create`, `update`, `delete`, `edit`, `write`, `move`, `remove`, `append`, `replace`,
-  `insert`). Check them when RemNote is first connected.
+- **File scope (verified):** `Read(./**)` lets the agent read inside the run folder only. A read of a
+  file outside it is denied (`permission_denials` lists it).
+- **RemNote tools are an allowlist:** only the exact tool names the user approved in Configurações
+  are allowed (`mcp__remnote__<tool>`), never the whole server and never a name-pattern denylist.
+  With no approved tools the agent gets no RemNote tools.
 
 ## Codex (`codex exec`)
 
 ```
 codex exec - --output-schema schema.json -o saida.json --json
-  --sandbox read-only --skip-git-repo-check --ephemeral --ignore-rules
+  --sandbox read-only --skip-git-repo-check --ephemeral --ignore-rules --strict-config
   -m <model> -c model_reasoning_effort=<e> -c web_search=<live|disabled>
   [--ignore-user-config] [--disable shell_tool --disable unified_exec]
-  [-c mcp_servers.remnote.url="<url>" -c mcp_servers.remnote.bearer_token_env_var="GABARITEI_REMNOTE_TOKEN"]
+  [-c mcp_servers.remnote.url="<url>" -c mcp_servers.remnote.bearer_token_env_var="GABARITEI_REMNOTE_TOKEN"
+   -c mcp_servers.remnote.enabled_tools='["<tool>",...]']
 ```
 
 - **Stdin matters:** `codex exec` prints "Reading additional input from stdin..." and **waits for
@@ -68,7 +72,14 @@ codex exec - --output-schema schema.json -o saida.json --json
   (`item.type`: `agent_message`, `reasoning`, `command_execution`, `web_search`, `mcp_tool_call`),
   `turn.completed` (with `usage`), `turn.failed` and `error` (with a message). Codex reports no cost.
 - **Models:** `codex debug models` lists them. The app defaults to **`gpt-6.2-sol`** with **`xhigh`**.
-- **Web search:** `-c web_search=live` or `disabled`.
+- **Web search:** `-c web_search=live` or `disabled`. It is forced to `disabled` whenever the shell is
+  on (a run with attachments): a shell that can read any local file plus web access would let a
+  prompt-injected attachment send files out.
+- **`--strict-config`:** makes Codex fail on an unknown `-c` key instead of ignoring it (verified:
+  `mcp_servers.<name>.enabled_tools` is accepted, a made-up key is rejected). The RemNote tool
+  allowlist uses `enabled_tools`.
+- **"Use my Codex config" cannot be restricted by the app:** the user's own RemNote server may
+  expose write tools. Configurações warns about it.
 - **User config:** `--ignore-user-config` skips `~/.codex/config.toml` (hooks, MCP servers,
   instructions); auth still comes from `CODEX_HOME`. It is omitted only when the user chose
   "use my Codex config" for RemNote.

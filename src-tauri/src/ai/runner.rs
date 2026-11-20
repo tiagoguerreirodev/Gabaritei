@@ -41,8 +41,14 @@ const POLL: Duration = Duration::from_millis(50);
 /// How a RemNote MCP server is made available to a run.
 #[derive(Clone, PartialEq, Eq)]
 pub enum RemNoteAccess {
-    /// The app passes the server's URL and token to the CLI.
-    Server { url: String, token: String },
+    /// The app passes the server's URL and token to the CLI. Only the named tools may be used:
+    /// an allowlist of exact read-only tool names, so a write tool can never run. With no
+    /// names, the agent gets no RemNote tools at all.
+    Server {
+        url: String,
+        token: String,
+        tools: Vec<String>,
+    },
     /// Codex only: use the RemNote server already in the user's own Codex config.
     CodexConfig,
 }
@@ -50,9 +56,10 @@ pub enum RemNoteAccess {
 impl std::fmt::Debug for RemNoteAccess {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Server { url, .. } => f
+            Self::Server { url, tools, .. } => f
                 .debug_struct("Server")
                 .field("url", url)
+                .field("tools", tools)
                 .field("token", &"<redacted>")
                 .finish(),
             Self::CodexConfig => f.write_str("CodexConfig"),
@@ -259,7 +266,7 @@ impl Workdir {
         }
 
         let mcp_config = match (&spec.agent, &spec.remnote) {
-            (Agent::Claude, Some(RemNoteAccess::Server { url, token })) => {
+            (Agent::Claude, Some(RemNoteAccess::Server { url, token, .. })) => {
                 let path = dir.path().join("mcp.json");
                 std::fs::write(&path, claude::mcp_config(url, token)).map_err(workspace)?;
                 Some(path)

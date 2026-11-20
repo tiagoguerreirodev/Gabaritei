@@ -3,17 +3,15 @@
 
 use serde_json::{Value, json};
 
-use super::runner::{JobSpec, Parser, Plan, Progress, ProgressKind, RunError, Workdir};
+use super::runner::{
+    JobSpec, Parser, Plan, Progress, ProgressKind, RemNoteAccess, RunError, Workdir,
+};
 
 /// Built-in tools the agent may use: read-only, no shell, no edits.
 const READ_TOOLS: &[&str] = &["Read", "Grep", "Glob"];
 const WEB_TOOLS: &[&str] = &["WebSearch", "WebFetch"];
 /// Name the RemNote server gets in the MCP config.
 const REMNOTE_SERVER: &str = "remnote";
-/// Tool-name fragments of RemNote write operations, denied even if the server offers them.
-const REMNOTE_WRITE_PATTERNS: &[&str] = &[
-    "create", "update", "delete", "edit", "write", "move", "remove", "append", "replace", "insert",
-];
 
 /// The MCP config file for the RemNote server.
 pub(super) fn mcp_config(url: &str, token: &str) -> String {
@@ -30,21 +28,28 @@ pub(super) fn mcp_config(url: &str, token: &str) -> String {
 }
 
 pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
-    let mut allowed: Vec<String> = READ_TOOLS.iter().map(|t| (*t).to_owned()).collect();
+    // `--tools` limits which built-ins exist at all.
+    let mut builtin: Vec<String> = READ_TOOLS.iter().map(|t| (*t).to_owned()).collect();
+    if spec.web {
+        builtin.extend(WEB_TOOLS.iter().map(|t| (*t).to_owned()));
+    }
+    // `--allowedTools` is what dontAsk mode lets run. File tools are scoped to the run folder
+    // (the working directory), so the agent can't read the user's other files.
+    let mut allowed: Vec<String> = READ_TOOLS.iter().map(|t| format!("{t}(./**)")).collect();
     if spec.web {
         allowed.extend(WEB_TOOLS.iter().map(|t| (*t).to_owned()));
     }
-    // `--tools` limits the built-ins that exist at all; MCP tools are allowed separately.
-    let builtin = allowed.join(",");
-    let mut denied: Vec<String> = Vec::new();
-    if work.mcp_config.is_some() {
-        allowed.push(format!("mcp__{REMNOTE_SERVER}"));
-        denied.extend(
-            REMNOTE_WRITE_PATTERNS
+    // RemNote: only the exact read-only tools the user approved, never the whole server.
+    if work.mcp_config.is_some()
+        && let Some(RemNoteAccess::Server { tools, .. }) = &spec.remnote
+    {
+        allowed.extend(
+            tools
                 .iter()
-                .map(|p| format!("mcp__{REMNOTE_SERVER}__*{p}*")),
+                .map(|tool| format!("mcp__{REMNOTE_SERVER}__{tool}")),
         );
     }
+    let builtin = builtin.join(",");
 
     let mut args: Vec<String> = vec![
         "-p".into(),
@@ -70,10 +75,6 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         "--no-session-persistence".into(),
         "--disable-slash-commands".into(),
     ];
-    if !denied.is_empty() {
-        args.push("--disallowedTools".into());
-        args.push(denied.join(","));
-    }
     if let Some(config) = &work.mcp_config {
         args.push("--mcp-config".into());
         args.push(config.to_string_lossy().into_owned());

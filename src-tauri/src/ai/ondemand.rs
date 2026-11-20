@@ -45,6 +45,16 @@ impl OnDemand {
         work(&token)
     }
 
+    /// Whether a job is running now.
+    pub fn is_running(&self) -> bool {
+        lock(&self.current).is_some()
+    }
+
+    /// Forgets every re-check proposal, because the data they were computed from was replaced.
+    pub fn clear_proposals(&self) {
+        lock(&self.proposals).clear();
+    }
+
     /// Stops the running job. Returns whether there was one.
     pub fn cancel(&self) -> bool {
         lock(&self.current)

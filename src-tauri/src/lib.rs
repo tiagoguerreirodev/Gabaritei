@@ -41,6 +41,11 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
+            commands::backup_status,
+            commands::backup_now,
+            commands::backup_choose_folder,
+            commands::backup_use_default_folder,
+            commands::backup_restore,
             commands::topics_tree,
             commands::collections,
             commands::collection,
@@ -94,10 +99,36 @@ fn open_database<R: Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error:
     database.transaction(|tx| learning::refresh_all(tx))?;
     app.manage(database);
     app.manage(paths);
+    app.manage(backup::BackupService::default());
+    start_backup_schedule(app.handle().clone());
     app.manage(ai::secrets::Secrets::keychain());
     app.manage(ai::jobs::GenerationManager::default());
     app.manage(ai::ondemand::OnDemand::default());
     Ok(())
+}
+
+/// Checks for a due backup at start and then every hour while the app is open (spec §3.6).
+/// A failure is kept in [`backup::BackupService`] and shown in Configurações → Dados.
+fn start_backup_schedule<R: Runtime>(app: tauri::AppHandle<R>) {
+    const EVERY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+    let spawned = std::thread::Builder::new()
+        .name("backup-schedule".into())
+        .spawn(move || {
+            loop {
+                if let (Some(db), Some(paths), Some(service)) = (
+                    app.try_state::<db::Database>(),
+                    app.try_state::<paths::AppPaths>(),
+                    app.try_state::<backup::BackupService>(),
+                ) {
+                    // The error is recorded by the service; there is no one to show it to here.
+                    let _ = service.backup_if_due(&db, &paths, time::OffsetDateTime::now_utc());
+                }
+                std::thread::sleep(EVERY);
+            }
+        });
+    if let Err(error) = spawned {
+        eprintln!("Gabaritei: could not start the backup schedule: {error}");
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

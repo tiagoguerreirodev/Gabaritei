@@ -19,6 +19,7 @@ use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportRes
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, RemNoteTest};
 use crate::attempts::{self, AttemptView, SessionStart};
+use crate::backup::{BackupInfo, BackupService, BackupStatus};
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
@@ -97,6 +98,106 @@ pub async fn import_legacy_bank<R: Runtime>(
     })
     .await
     .map_err(|error| AppError::Internal(error.to_string()))?
+}
+
+/// Where backups go, the ones that exist and the last backup failure.
+#[tauri::command(async)]
+pub fn backup_status(
+    db: State<'_, Database>,
+    paths: State<'_, AppPaths>,
+    service: State<'_, BackupService>,
+) -> AppResult<BackupStatus> {
+    service.status(&db, &paths)
+}
+
+/// Makes a backup now.
+#[tauri::command(async)]
+pub fn backup_now(
+    db: State<'_, Database>,
+    paths: State<'_, AppPaths>,
+    service: State<'_, BackupService>,
+) -> AppResult<BackupInfo> {
+    service.backup_now(&db, &paths, &crate::clock::now())
+}
+
+/// Asks for a new backup folder and saves it. `None` if the user cancels.
+#[tauri::command]
+pub async fn backup_choose_folder<R: Runtime>(
+    app: AppHandle<R>,
+) -> AppResult<Option<BackupStatus>> {
+    let Some(folder) = app
+        .dialog()
+        .file()
+        .set_title("Escolha a pasta dos backups")
+        .blocking_pick_folder()
+    else {
+        return Ok(None);
+    };
+    let chosen = folder
+        .into_path()
+        .map_err(|_| AppError::Invalid("Escolha uma pasta deste computador.".into()))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let paths = app.state::<AppPaths>();
+        let service = app.state::<BackupService>();
+        db.with(|conn| crate::backup::set_folder(conn, &paths, Some(&chosen)))?;
+        service.status(&db, &paths).map(Some)
+    })
+    .await
+    .map_err(|error| AppError::Internal(error.to_string()))?
+}
+
+/// Goes back to the default backup folder.
+#[tauri::command(async)]
+pub fn backup_use_default_folder(
+    db: State<'_, Database>,
+    paths: State<'_, AppPaths>,
+    service: State<'_, BackupService>,
+) -> AppResult<BackupStatus> {
+    db.with(|conn| crate::backup::set_folder(conn, &paths, None))?;
+    service.status(&db, &paths)
+}
+
+/// Replaces the current data with a backup, after a safety backup. Not while a generation runs.
+#[tauri::command(async)]
+pub fn backup_restore(
+    db: State<'_, Database>,
+    paths: State<'_, AppPaths>,
+    service: State<'_, BackupService>,
+    generation: State<'_, GenerationManager>,
+    on_demand: State<'_, OnDemand>,
+    name: String,
+) -> AppResult<()> {
+    service.restore(&db, &paths, &name, &crate::clock::now(), || {
+        ensure_no_ai_job(&generation, &on_demand, "restaurar")
+    })?;
+    on_demand.clear_proposals();
+    Ok(())
+}
+
+/// Replacing the data under a running AI job would lose what the job writes.
+fn ensure_no_ai_job(
+    generation: &GenerationManager,
+    on_demand: &OnDemand,
+    action: &str,
+) -> AppResult<()> {
+    if generation.status().running || on_demand.is_running() {
+        return Err(AppError::Invalid(format!(
+            "Há uma consulta à IA em andamento. Espere ou cancele antes de {action}."
+        )));
+    }
+    Ok(())
+}
+
+/// Backups, restores and imports replace the data, so no AI job starts meanwhile.
+fn ensure_not_backing_up(service: &BackupService) -> AppResult<()> {
+    if service.is_busy() {
+        return Err(AppError::Invalid(
+            "Um backup, restauração ou importação está em andamento. Tente de novo em instantes."
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Topic strength, weekly trend and filter options under the given filters.
@@ -299,8 +400,10 @@ pub const GENERATION_EVENT: &str = "generation-status";
 pub fn generation_start<R: Runtime>(
     app: AppHandle<R>,
     manager: State<'_, GenerationManager>,
+    service: State<'_, BackupService>,
     mut request: GenerateRequest,
 ) -> AppResult<()> {
+    ensure_not_backing_up(&service)?;
     request.validate()?;
     let worker = app.clone();
     manager.start(
@@ -321,8 +424,10 @@ pub fn generation_start<R: Runtime>(
 pub fn blind_check_start<R: Runtime>(
     app: AppHandle<R>,
     manager: State<'_, GenerationManager>,
+    service: State<'_, BackupService>,
     draft_id: String,
 ) -> AppResult<()> {
+    ensure_not_backing_up(&service)?;
     let worker = app.clone();
     manager.start(
         move |cancel, progress| {
@@ -493,6 +598,7 @@ mod tests {
 
     /// A mock app with a database, for tests that send several commands in a row.
     struct MockApp {
+        _data: tempfile::TempDir,
         _app: tauri::App<tauri::test::MockRuntime>,
         webview: tauri::WebviewWindow<tauri::test::MockRuntime>,
     }
@@ -504,12 +610,19 @@ mod tests {
                 .expect("mock app builds");
             app.manage(db);
             app.manage(Secrets::memory());
+            app.manage(BackupService::default());
+            let data = tempfile::tempdir().unwrap();
+            app.manage(AppPaths::new(data.path()));
             app.manage(GenerationManager::default());
             app.manage(OnDemand::default());
             let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
                 .build()
                 .expect("mock webview builds");
-            Self { _app: app, webview }
+            Self {
+                _data: data,
+                _app: app,
+                webview,
+            }
         }
 
         /// Sends `cmd` through Tauri's IPC layer and returns the JSON result.
@@ -819,6 +932,33 @@ mod tests {
         assert_eq!(performance["overall"]["smallSample"], json!(true));
         assert_eq!(performance["trend"], json!([]));
         assert_eq!(performance["filters"]["contests"], json!([]));
+    }
+
+    #[test]
+    fn backup_commands_make_list_and_restore_a_backup() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
+        let status = app.call("backup_status", json!({})).expect("status");
+        assert_eq!(status["isDefaultFolder"], json!(true));
+        assert_eq!(status["backups"], json!([]));
+
+        // The in-memory database has no file to back up from, but the online backup copies it.
+        let made = app.call("backup_now", json!({})).expect("backs up");
+        let name = made["name"].as_str().unwrap().to_owned();
+        assert_eq!(made["kind"], json!("manual"));
+        let status = app.call("backup_status", json!({})).expect("status");
+        assert_eq!(status["backups"][0]["name"], json!(name));
+        assert_eq!(status["lastError"], json!(null));
+
+        app.call("backup_restore", json!({ "name": name }))
+            .expect("restores");
+        let status = app.call("backup_status", json!({})).expect("status");
+        assert_eq!(status["backups"].as_array().unwrap().len(), 2);
+        assert_eq!(status["backups"][0]["kind"], json!("safety"));
+
+        let error = app
+            .call("backup_restore", json!({ "name": "../escape" }))
+            .unwrap_err();
+        assert_eq!(error["message"], json!("Backup não encontrado."));
     }
 
     #[test]

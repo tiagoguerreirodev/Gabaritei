@@ -21,6 +21,13 @@ function backend(initial: AiSettings = defaults) {
   mockIPC((command, args) => {
     calls.push({ command, args });
     switch (command) {
+      case "backup_status":
+        return {
+          folder: "/dados/backups",
+          isDefaultFolder: true,
+          backups: [],
+          lastError: null,
+        };
       case "legacy_import_status":
         return { report: null, bankEmpty: false };
       case "ai_settings":

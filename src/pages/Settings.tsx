@@ -8,6 +8,7 @@ import type { RoleSettings } from "../bindings/RoleSettings";
 import LegacyImport from "../components/LegacyImport";
 import { ErrorState, Loading } from "../components/states";
 import { showError, showToast } from "../components/toasts";
+import BackupSection from "./settings/BackupSection";
 import AgentsSection from "./settings/AgentsSection";
 import RemNoteSection from "./settings/RemNoteSection";
 import RolesSection from "./settings/RolesSection";
@@ -31,6 +32,7 @@ export default function Settings() {
         </Show>
       </Show>
       <h2>Dados</h2>
+      <BackupSection />
       <Show when={legacy()} fallback={<Loading />}>
         {(current) => <LegacyImport initialReport={current().report} />}
       </Show>

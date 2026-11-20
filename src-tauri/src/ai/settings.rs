@@ -19,7 +19,8 @@ use crate::db::{get_setting, set_setting};
 use crate::error::{AppError, AppResult};
 
 const KEY_ROLES: &str = "ai.roles";
-const KEY_CLI_PATHS: &str = "ai.cliPaths";
+/// Where the CLIs are on this computer. Kept when data from another computer is restored.
+pub const KEY_CLI_PATHS: &str = "ai.cliPaths";
 const KEY_REMNOTE: &str = "ai.remnote";
 
 const MAX_MODEL: usize = 200;

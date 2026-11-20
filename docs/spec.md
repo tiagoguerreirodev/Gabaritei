@@ -112,7 +112,8 @@ All UI text is in Portuguese. There are no accounts and no server.
 
 ### 3.6 Data
 - **Storage:** SQLite in the OS app-data folder.
-- **Daily backup:** keeps 7. Restore validates the backup, then makes a safety copy before replacing anything.
+- **Daily backup:** a folder with an online copy of the database, the images and a manifest of sha256 hashes, written to a temporary folder and renamed. Checked at start and hourly while the app is open; made when the newest is over 24 hours old. Keeps 7, in a configurable folder (default `<app data>/backups`).
+- **Restore:** validates the hashes, `integrity_check` and the schema version first (a bad backup changes nothing), then makes a safety backup (the newest 5 are kept), then replaces the database and adds the images. This computer's own settings (backup folder, CLI paths) are kept, and reviews are rebuilt.
 - **Export:** one file, a zip with a consistent DB copy and the images.
 - **Import:** replaces local data after a safety backup. There's no merging, so use one computer at a time.
 - **First-run migration:** imports the bank from `biblioteca/estado.json.gz` and `biblioteca/recursos/` of the old repo: questions, topics, collections with their contest tags, and images. The legacy board value "Acervo autoral" isn't an exam board, so migrated collections get no board tag. Attempts, drafts and settings are skipped.
@@ -178,7 +179,7 @@ The patterns below were **verified against the installed CLIs** (Claude Code 2.1
 - `learning`
 - `generate`, `cancel`, `draft`, `import_draft`, `discard_draft`
 - `settings_get` / `settings_set`, `cli_test`
-- `backup_now`, `restore`, `export_data`, `import_data`
+- `backup_status`, `backup_now`, `backup_choose_folder`, `backup_use_default_folder`, `backup_restore`, `export_data`, `import_data`
 
 **Events:** generation progress, re-check and explain progress.
 

@@ -11,6 +11,8 @@ import type { AiSettings } from "./bindings/AiSettings";
 import type { AiSettingsInput } from "./bindings/AiSettingsInput";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { AttemptView } from "./bindings/AttemptView";
+import type { BackupInfo } from "./bindings/BackupInfo";
+import type { BackupStatus } from "./bindings/BackupStatus";
 import type { CliStatus } from "./bindings/CliStatus";
 import type { CollectionDetail } from "./bindings/CollectionDetail";
 import type { CollectionPage } from "./bindings/CollectionPage";
@@ -104,6 +106,16 @@ export const api = {
     call<AttemptView>("unannul", { attemptId, position }),
   /** Deletes an unfinished attempt. */
   abandon: (attemptId: string) => call<null>("abandon", { attemptId }),
+  /** Backup folder, the backups that exist (newest first) and the last backup failure. */
+  backupStatus: () => call<BackupStatus>("backup_status"),
+  /** Makes a backup now. */
+  backupNow: () => call<BackupInfo>("backup_now"),
+  /** Asks for a new backup folder and saves it. `null` if the user cancels. */
+  backupChooseFolder: () => call<BackupStatus | null>("backup_choose_folder"),
+  /** Goes back to the default backup folder. */
+  backupUseDefaultFolder: () => call<BackupStatus>("backup_use_default_folder"),
+  /** Replaces the current data with a backup, after a safety backup of the current data. */
+  backupRestore: (name: string) => call<null>("backup_restore", { name }),
   /** CLI paths, role configuration and RemNote (never the token). Writes defaults on first use. */
   aiSettings: () => call<AiSettings>("ai_settings"),
   /** Validates and saves the AI settings; returns them as saved. */

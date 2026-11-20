@@ -101,6 +101,13 @@ fn configure(conn: &Connection) -> AppResult<()> {
     Ok(())
 }
 
+/// Sets up a connection whose content was just replaced from another file (a restored backup):
+/// applies the connection settings again and migrates an older schema forward.
+pub fn prepare_restored(conn: &mut Connection) -> AppResult<()> {
+    configure(conn)?;
+    migrate(conn, MIGRATIONS)
+}
+
 /// Brings the schema up to `migrations.len()`. Each migration runs in its own transaction
 /// together with the `user_version` bump, so a failure leaves the previous version intact.
 fn migrate(conn: &mut Connection, migrations: &[&str]) -> AppResult<()> {
@@ -135,6 +142,34 @@ pub fn get_setting<T: DeserializeOwned>(conn: &Connection, key: &str) -> AppResu
     raw.map(|value| serde_json::from_str(&value))
         .transpose()
         .map_err(Into::into)
+}
+
+/// A setting's stored JSON text, as is.
+pub fn get_raw_setting(conn: &Connection, key: &str) -> AppResult<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// Writes a setting's JSON text as is, or removes the setting when `None`.
+pub fn put_raw_setting(conn: &Connection, key: &str, value: Option<&str>) -> AppResult<()> {
+    match value {
+        Some(value) => {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                params![key, value],
+            )?;
+        }
+        None => {
+            conn.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+        }
+    }
+    Ok(())
 }
 
 /// Stores a setting as JSON, replacing any previous value.

@@ -62,3 +62,4 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.glob }}
           if-no-files-found: error
+          retention-days: 14

@@ -368,3 +368,21 @@ fn the_remnote_test_needs_a_token_and_a_reachable_server() {
             .contains("conectar")
     );
 }
+
+#[test]
+fn ultra_effort_is_refused_for_claude_and_kept_for_codex() {
+    let mut claude = RoleConfig {
+        agent: Agent::Claude,
+        model: "sonnet".to_owned(),
+        effort: Effort::Ultra,
+    };
+    let error = validate_role_config(&mut claude, "Gerar questões").unwrap_err();
+    assert!(error.to_string().contains("Ultra"), "{error}");
+
+    let mut codex = RoleConfig {
+        agent: Agent::Codex,
+        model: "gpt-6.2-sol".to_owned(),
+        effort: Effort::Ultra,
+    };
+    assert!(validate_role_config(&mut codex, "Gerar questões").is_ok());
+}

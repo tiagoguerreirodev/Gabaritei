@@ -10,7 +10,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::agent::Agent;
+use super::agent::{Agent, Effort};
 use super::discovery;
 use super::roles::{Role, RoleConfig, RoleSettings};
 use super::runner::{JobSpec, RemNoteAccess, is_valid_tool_name, is_write_like};
@@ -150,6 +150,11 @@ pub fn validate_role_config(config: &mut RoleConfig, label: &str) -> AppResult<(
     {
         return Err(AppError::Invalid(format!(
             "O nome do modelo de “{label}” é inválido."
+        )));
+    }
+    if config.agent == Agent::Claude && config.effort == Effort::Ultra {
+        return Err(AppError::Invalid(format!(
+            "O esforço Ultra só existe no Codex. Escolha outro esforço para “{label}”."
         )));
     }
     Ok(())

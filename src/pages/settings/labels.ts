@@ -13,6 +13,7 @@ export const effortLabels: Record<Effort, string> = {
   high: "Alto",
   xhigh: "Extra alto",
   max: "Máximo",
+  ultra: "Ultra",
 };
 
 export const roleLabels: Record<Role, { name: string; hint: string }> = {

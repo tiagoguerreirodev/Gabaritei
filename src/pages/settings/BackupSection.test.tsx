@@ -45,6 +45,7 @@ function backend(
     backups: [safety, manual, old],
     lastError: null,
     leftBehind: null,
+    folderUnavailable: false,
     ...initial,
   };
   const calls: { command: string; args: unknown }[] = [];
@@ -246,6 +247,17 @@ describe("BackupSection", () => {
     await user.click(within(notice).getByRole("button", { name: "Entendi" }));
     await waitFor(() => expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument());
     expect(calls.some((c) => c.command === "backup_forget_left_behind")).toBe(true);
+  });
+
+  it("says so, instead of 'no backups', when the backup folder does not answer", async () => {
+    backend({ backups: [], folderUnavailable: true });
+    render(() => <BackupSection busy={createBusy()} />);
+
+    const notice = await screen.findByTestId("folder-unavailable");
+    expect(notice).toHaveTextContent("não está acessível");
+    expect(screen.queryByText("Nenhum backup nesta pasta ainda.")).not.toBeInTheDocument();
+    // Choosing another folder still works.
+    expect(screen.getByRole("button", { name: "Escolher pasta…" })).toBeEnabled();
   });
 
   it("shows the offer the backend remembers when the page opens, and dismissing forgets it", async () => {

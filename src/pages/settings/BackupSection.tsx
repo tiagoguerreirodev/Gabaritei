@@ -322,9 +322,20 @@ function Content(props: {
           </button>
         </Show>
       </p>
+      <Show when={props.status.folderUnavailable}>
+        <p class="notice" role="status" data-testid="folder-unavailable">
+          A pasta dos backups não está acessível agora (um disco desconectado ou uma pasta de rede
+          fora do ar, por exemplo). Os backups dela não aparecem até ela voltar; nada foi apagado.
+          Conecte-a de novo ou escolha outra pasta.
+        </p>
+      </Show>
       <Show
         when={props.status.backups.length > 0}
-        fallback={<p class="muted">Nenhum backup nesta pasta ainda.</p>}
+        fallback={
+          <Show when={!props.status.folderUnavailable}>
+            <p class="muted">Nenhum backup nesta pasta ainda.</p>
+          </Show>
+        }
       >
         <ul class="backup-list">
           <For each={props.status.backups}>

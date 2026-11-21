@@ -5,6 +5,7 @@
 //! so the UI falls back to free text instead of failing.
 
 pub mod claude;
+pub mod codex;
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -144,8 +144,14 @@ pub(super) fn spawn_retrying(command: &mut Command) -> std::io::Result<std::proc
     }
 }
 
-/// Runs a short probe command with a timeout, with no stdin.
+/// Runs a short probe command with a timeout, with no stdin. Keeps up to 1 MiB of output.
 pub(super) fn capture(cli: &Path, args: &[&str]) -> Option<Captured> {
+    capture_limited(cli, args, 1 << 20)
+}
+
+/// Like [`capture`], keeping at most `limit` bytes of each stream. Output past the limit is read
+/// and discarded, so a chatty child can't block on a full pipe.
+pub(super) fn capture_limited(cli: &Path, args: &[&str], limit: u64) -> Option<Captured> {
     let mut command = Command::new(cli);
     command
         .args(args)
@@ -160,8 +166,8 @@ pub(super) fn capture(cli: &Path, args: &[&str]) -> Option<Captured> {
     let mut child = spawn_retrying(&mut command).ok()?;
     let mut stdout = child.stdout.take()?;
     let mut stderr = child.stderr.take()?;
-    let out = std::thread::spawn(move || read_all(&mut stdout));
-    let err = std::thread::spawn(move || read_all(&mut stderr));
+    let out = std::thread::spawn(move || read_all(&mut stdout, limit));
+    let err = std::thread::spawn(move || read_all(&mut stderr, limit));
     let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
     let status = loop {
         match child.try_wait() {
@@ -185,9 +191,10 @@ pub(super) fn capture(cli: &Path, args: &[&str]) -> Option<Captured> {
     })
 }
 
-fn read_all(reader: &mut impl std::io::Read) -> String {
+fn read_all(reader: &mut impl std::io::Read, limit: u64) -> String {
     let mut bytes = Vec::new();
-    let _ = reader.take(1 << 20).read_to_end(&mut bytes);
+    let _ = reader.take(limit).read_to_end(&mut bytes);
+    let _ = std::io::copy(reader, &mut std::io::sink());
     String::from_utf8_lossy(&bytes).into_owned()
 }
 

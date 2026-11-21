@@ -93,3 +93,17 @@ fn unavailable_source_is_kept_in_the_result_not_an_error() {
     let catalog = cache.get();
     assert_eq!(catalog.agents, vec![unavailable]);
 }
+
+#[test]
+fn claude_source_has_no_list_and_explains_it_in_pt_br() {
+    let catalog = claude::ClaudeSource.load();
+    assert_eq!(claude::ClaudeSource.agent(), Agent::Claude);
+    assert_eq!(catalog.agent, Agent::Claude);
+    assert!(catalog.models.is_empty());
+    assert_eq!(
+        catalog.status,
+        CatalogStatus::Unavailable {
+            reason: "O Claude Code não informa a lista de modelos; digite o nome.".to_owned()
+        }
+    );
+}

@@ -4,6 +4,8 @@
 //! demand. A source that can't answer reports [`CatalogStatus::Unavailable`] with a pt-BR reason,
 //! so the UI falls back to free text instead of failing.
 
+pub mod claude;
+
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 

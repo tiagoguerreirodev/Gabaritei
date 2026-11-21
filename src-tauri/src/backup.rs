@@ -15,6 +15,7 @@ pub mod snapshot;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -494,6 +495,30 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 pub struct BackupService {
     busy: Mutex<()>,
     last_error: Mutex<Option<String>>,
+    /// A copy or move of the old folder's backups is running. Its turns share the `busy` lock
+    /// with everything else, so a second one would interleave with it and report failures that
+    /// are not real.
+    relocating: AtomicBool,
+}
+
+/// Marks a relocation as running until dropped.
+struct Relocating<'a>(&'a AtomicBool);
+
+impl<'a> Relocating<'a> {
+    fn start(flag: &'a AtomicBool) -> AppResult<Self> {
+        if flag.swap(true, Ordering::AcqRel) {
+            return Err(AppError::Invalid(
+                "Já há uma cópia de backups em andamento. Aguarde ela terminar.".into(),
+            ));
+        }
+        Ok(Self(flag))
+    }
+}
+
+impl Drop for Relocating<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 impl BackupService {
@@ -578,6 +603,9 @@ impl BackupService {
         remove_originals: bool,
         between: &dyn Fn(),
     ) -> AppResult<RelocateOutcome> {
+        // One relocation at a time: the turns below take the lock per backup, so two calls
+        // would interleave.
+        let _relocating = Relocating::start(&self.relocating)?;
         // The lock is taken per backup, not for the whole copy: a scheduled backup can run between
         // two of them, and the folders are read again each time.
         let (old, new, names, others) = self.exclusive(|| {
@@ -597,6 +625,9 @@ impl BackupService {
                     "A pasta nova fica dentro da pasta anterior. Escolha outra pasta.".into(),
                 ));
             }
+            // Created here, under the lock, and not by the copy: the folder could have been
+            // removed since it was chosen (an unplugged drive).
+            fs::create_dir_all(&new)?;
             // Another computer's backups, and untagged ones on a tagged computer, stay where they are:
             // they may belong to a computer that still uses that folder.
             let (others, mine): (Vec<_>, Vec<_>) = list(&old).into_iter().partition(leave_alone);
@@ -2047,6 +2078,51 @@ mod tests {
         // the one with the moved backup, and the notice was not overwritten by the move.
         let left = outcome.status.left_behind.map(|left| left.folder);
         assert_eq!(left, Some(new.display().to_string()));
+    }
+
+    #[test]
+    fn a_second_relocation_is_refused_while_one_runs_and_allowed_after_it() {
+        let f = fixture();
+        let service = BackupService::default();
+        make_left_behind(&f, &service);
+        let refused = std::cell::RefCell::new(None);
+
+        let outcome = service
+            .relocate_with(&f.db, &f.paths, true, &|| {
+                if refused.borrow().is_none() {
+                    *refused.borrow_mut() =
+                        Some(service.relocate_left_behind(&f.db, &f.paths, true));
+                }
+            })
+            .unwrap();
+
+        let refused = refused.into_inner().unwrap();
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|e| e.to_string().contains("em andamento")),
+            "{refused:?}"
+        );
+        assert_eq!((outcome.report.removed, outcome.report.failed), (2, 0));
+        // The flag is released when the first one ends, even if it fails.
+        assert!(!service.relocating.load(Ordering::Acquire));
+        assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
+        assert!(!service.relocating.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn the_new_folder_is_created_when_the_move_starts() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (_, new) = make_left_behind(&f, &service);
+        fs::remove_dir_all(&new).unwrap();
+
+        let outcome = service
+            .relocate_left_behind(&f.db, &f.paths, false)
+            .unwrap();
+
+        assert_eq!(outcome.report.copied, 2);
+        assert_eq!(list(&new).len(), 2);
     }
 
     #[test]

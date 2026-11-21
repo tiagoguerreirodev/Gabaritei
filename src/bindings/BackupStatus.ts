@@ -20,4 +20,9 @@ lastError: string | null,
  * failures keeps it), the user dismisses it, the folder is changed again, or the old folder
  * holds none of this computer's backups.
  */
-leftBehind: LeftBehind | null, };
+leftBehind: LeftBehind | null, 
+/**
+ * The backup folder did not answer in time (a disconnected drive, a share that is offline),
+ * so `backups` is empty because it could not be read, not because there are none.
+ */
+folderUnavailable: boolean, };

@@ -45,6 +45,7 @@ function backend(
     backups: [safety, manual, old],
     lastError: null,
     leftBehind: null,
+    folderUnavailable: false,
     ...initial,
   };
   const calls: { command: string; args: unknown }[] = [];
@@ -246,6 +247,70 @@ describe("BackupSection", () => {
     await user.click(within(notice).getByRole("button", { name: "Entendi" }));
     await waitFor(() => expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument());
     expect(calls.some((c) => c.command === "backup_forget_left_behind")).toBe(true);
+  });
+
+  it("says so, instead of 'no backups', when the backup folder does not answer", async () => {
+    backend({ backups: [], folderUnavailable: true });
+    render(() => <BackupSection busy={createBusy()} />);
+
+    const notice = await screen.findByTestId("folder-unavailable");
+    expect(notice).toHaveTextContent("não está acessível");
+    expect(screen.queryByText("Nenhum backup nesta pasta ainda.")).not.toBeInTheDocument();
+    // Choosing another folder still works.
+    expect(screen.getByRole("button", { name: "Escolher pasta…" })).toBeEnabled();
+  });
+
+  it("does not repeat the last error while the folder is unavailable, and can check again", async () => {
+    const calls = backend({
+      backups: [],
+      folderUnavailable: true,
+      lastError: "A pasta dos backups não está acessível agora.",
+    });
+    const user = userEvent.setup();
+    render(() => <BackupSection busy={createBusy()} />);
+
+    const notice = await screen.findByTestId("folder-unavailable");
+    expect(screen.queryByText(/O último backup falhou/)).not.toBeInTheDocument();
+    const before = calls.filter((c) => c.command === "backup_status").length;
+
+    await user.click(within(notice).getByRole("button", { name: "Verificar de novo" }));
+
+    await waitFor(() =>
+      expect(calls.filter((c) => c.command === "backup_status").length).toBeGreaterThan(before),
+    );
+  });
+
+  it("disables 'Verificar de novo' while the status is read again", async () => {
+    let release: (status: BackupStatus) => void = () => {};
+    let reads = 0;
+    const unavailable: BackupStatus = {
+      folder: "/dados/backups",
+      isDefaultFolder: true,
+      backups: [],
+      lastError: null,
+      leftBehind: null,
+      folderUnavailable: true,
+    };
+    mockIPC((command) => {
+      if (command !== "backup_status") return null;
+      reads += 1;
+      return reads === 1
+        ? unavailable
+        : new Promise<BackupStatus>((resolve) => {
+            release = resolve;
+          });
+    });
+    const user = userEvent.setup();
+    render(() => <BackupSection busy={createBusy()} />);
+    const button = await screen.findByRole("button", { name: "Verificar de novo" });
+
+    await user.click(button);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Verificar de novo" })).toBeDisabled(),
+    );
+    release({ ...unavailable, folderUnavailable: false });
+    await waitFor(() => expect(screen.queryByTestId("folder-unavailable")).not.toBeInTheDocument());
   });
 
   it("shows the offer the backend remembers when the page opens, and dismissing forgets it", async () => {

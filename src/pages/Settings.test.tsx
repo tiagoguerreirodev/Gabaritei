@@ -38,6 +38,8 @@ function backend(
             },
           ],
           lastError: null,
+          leftBehind: null,
+          folderUnavailable: false,
         };
       case "data_folder":
         return "/home/dados/gabaritei";

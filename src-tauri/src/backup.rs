@@ -120,6 +120,69 @@ pub struct BackupStatus {
     /// failures keeps it), the user dismisses it, the folder is changed again, or the old folder
     /// holds none of this computer's backups.
     pub left_behind: Option<LeftBehind>,
+    /// The backup folder did not answer in time (a disconnected drive, a share that is offline),
+    /// so `backups` is empty because it could not be read, not because there are none.
+    pub folder_unavailable: bool,
+}
+
+/// How long reading the manifests of a healthy backup folder may take: a cloud-synced folder may
+/// have to download them first, so this is longer than the deadline of a plain `read_dir`.
+const MANIFEST_READ_TIMEOUT: Duration = Duration::from_secs(if cfg!(test) { 60 } else { 15 });
+
+/// The probe key of the slow manifest listing of `folder`, apart from the folder's own.
+fn manifest_key(folder: &Path) -> PathBuf {
+    let mut key = folder.as_os_str().to_owned();
+    key.push("\u{0}manifests");
+    PathBuf::from(key)
+}
+
+/// What a quick look at the backup folder found.
+enum FolderState {
+    /// It can be listed.
+    Present,
+    /// It does not exist yet (or any more) but its parent does: nothing wrong, it is created
+    /// on first use.
+    Missing,
+    /// It can't be read, or its parent is gone too (a removed drive or volume).
+    Unavailable,
+}
+
+fn folder_state(folder: &Path) -> FolderState {
+    match fs::read_dir(folder) {
+        Ok(_) => FolderState::Present,
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                // A root (`E:\`, `/`) that is missing is a gone drive, not a new folder.
+                && folder.parent().is_some_and(Path::exists)
+                && !mount_point_missing(folder) =>
+        {
+            FolderState::Missing
+        }
+        Err(_) => FolderState::Unavailable,
+    }
+}
+
+/// macOS mounts drives and shares at `/Volumes/<name>`: a folder under a name that isn't there is
+/// on a volume that is gone, not a folder that was never created.
+#[cfg(target_os = "macos")]
+fn mount_point_missing(folder: &Path) -> bool {
+    folder
+        .strip_prefix("/Volumes")
+        .ok()
+        .and_then(|rest| rest.components().next())
+        .is_some_and(|name| !Path::new("/Volumes").join(name).exists())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn mount_point_missing(_folder: &Path) -> bool {
+    false
+}
+
+fn folder_unavailable() -> AppError {
+    AppError::Invalid(
+        "A pasta dos backups não está acessível agora (um disco desconectado ou uma pasta de rede fora do ar). Conecte-a de novo ou escolha outra pasta."
+            .into(),
+    )
 }
 
 /// Backups that stay in the old folder after the backup folder was changed. They are not
@@ -545,6 +608,27 @@ fn remember_old_folder(conn: &Connection, old: Option<&Path>) -> AppResult<()> {
     }
 }
 
+/// Why `new` can't receive the old folder's backups, if it can't. The new folder may not exist
+/// (a removed folder or drive), so its deepest existing ancestor is looked at: if that is inside
+/// the old folder, so is the new one. `symlink_metadata` does not follow links, so a link whose
+/// target is missing is that ancestor too; one that can't be resolved can't be shown to be
+/// outside the old folder, so it is refused (with its own message: it may lead anywhere).
+fn new_folder_problem(old: &Path, new: &Path) -> Option<&'static str> {
+    let old = fs::canonicalize(old).ok()?;
+    let existing = new
+        .ancestors()
+        .find(|ancestor| ancestor.symlink_metadata().is_ok())?;
+    match fs::canonicalize(existing) {
+        Ok(existing) if existing.starts_with(&old) => {
+            Some("A pasta nova fica dentro da pasta anterior. Escolha outra pasta.")
+        }
+        Ok(_) => None,
+        Err(_) => Some(
+            "Não foi possível verificar a pasta nova (um atalho quebrado ou sem permissão). Escolha outra pasta.",
+        ),
+    }
+}
+
 /// What looking at the remembered old folder found.
 enum OldFolder {
     /// It is the current folder now.
@@ -630,7 +714,18 @@ impl FolderProbe {
         path: &Path,
         work: impl FnOnce() -> T + Send + 'static,
     ) -> Option<T> {
-        let deadline = Instant::now() + self.timeout;
+        self.run_for(path, self.timeout, work)
+    }
+
+    /// [`Self::run`] with its own deadline, for work that is slow when healthy (reading many
+    /// manifests, which a cloud-synced folder may have to download first).
+    fn run_for<T: Send + 'static>(
+        &self,
+        path: &Path,
+        timeout: Duration,
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> Option<T> {
+        let deadline = Instant::now() + timeout;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (mutex, wake) = &*self.probes;
         {
@@ -662,15 +757,20 @@ impl FolderProbe {
             path: path.to_path_buf(),
             id,
         };
+        // Tests fake the computer tag per thread; the worker must see the same one.
+        #[cfg(test)]
+        let overrides = tests::overrides();
         let spawned = std::thread::Builder::new().spawn(move || {
             let _free = free;
+            #[cfg(test)]
+            tests::apply(overrides);
             let _ = done.send(work());
         });
         if spawned.is_err() {
             // The closure (and the guard in it) was dropped: the entry is already free.
             return None;
         }
-        match result.recv_timeout(self.timeout) {
+        match result.recv_timeout(timeout) {
             Ok(value) => Some(value),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 let mut probes = lock(mutex);
@@ -815,6 +915,17 @@ impl BackupService {
             .is_err_and(|error| matches!(error, std::sync::TryLockError::WouldBlock))
     }
 
+    /// Fails with a clear message when the backup folder does not answer within the deadline,
+    /// before a backup, restore or import takes the lock for real work in it. A folder that does
+    /// not exist yet answers at once (with an error) and is fine: it is created on first use.
+    fn ensure_reachable(&self, folder: &Path) -> AppResult<()> {
+        let path = folder.to_path_buf();
+        match self.probe.run(folder, move || folder_state(&path)) {
+            Some(FolderState::Present | FolderState::Missing) => Ok(()),
+            Some(FolderState::Unavailable) | None => Err(folder_unavailable()),
+        }
+    }
+
     /// The *Dados* section's data.
     pub fn status(&self, db: &Database, paths: &AppPaths) -> AppResult<BackupStatus> {
         let (folder, is_default_folder) = db.with(|conn| {
@@ -823,8 +934,29 @@ impl BackupService {
         })?;
         let left_behind =
             pending_old_folder(db, &self.probe, &folder)?.map(|(_, notice, _)| notice);
+        // Bounded like the old folder: a hung or missing current folder shows as unavailable
+        // instead of freezing the page (and `change_folder` calls this under the backup lock).
+        // First a quick look, then the manifests with a longer deadline.
+        let listed = {
+            let path = folder.clone();
+            match self.probe.run(&folder, move || folder_state(&path)) {
+                Some(FolderState::Present) => {
+                    let path = folder.clone();
+                    // Under its own key: a slow (healthy) read of many manifests must not hold
+                    // the folder's slot, or the quick checks of a backup, restore or import
+                    // would give up waiting behind it.
+                    self.probe
+                        .run_for(&manifest_key(&folder), MANIFEST_READ_TIMEOUT, move || {
+                            list(&path)
+                        })
+                }
+                Some(FolderState::Missing) => Some(Vec::new()),
+                Some(FolderState::Unavailable) | None => None,
+            }
+        };
         Ok(BackupStatus {
-            backups: list(&folder),
+            folder_unavailable: listed.is_none(),
+            backups: listed.unwrap_or_default(),
             folder: folder.display().to_string(),
             is_default_folder,
             last_error: lock(&self.last_error).clone(),
@@ -903,35 +1035,25 @@ impl BackupService {
                 ));
             }
             // A new folder inside the old one (so inside a backup, or a temporary folder) would
-            // be deleted along with the original on a move.
-            // The new folder may not exist (a removed folder or drive), so look at its deepest
-            // existing ancestor: if that is inside the old folder, so is the new one.
-            // `symlink_metadata` does not follow links, so a link whose target is missing is
-            // that ancestor too; one that can't be resolved can't be shown to be outside the old
-            // folder, so it is refused (with its own message: it may lead anywhere).
-            if let Ok(old) = fs::canonicalize(&old)
-                && let Some(existing) = new
-                    .ancestors()
-                    .find(|ancestor| ancestor.symlink_metadata().is_ok())
-            {
-                match fs::canonicalize(existing) {
-                    Ok(existing) if existing.starts_with(&old) => {
-                        return Err(AppError::Invalid(
-                            "A pasta nova fica dentro da pasta anterior. Escolha outra pasta."
-                                .into(),
-                        ));
-                    }
-                    Ok(_) => {}
-                    Err(_) => {
-                        return Err(AppError::Invalid(
-                            "Não foi possível verificar a pasta nova (um atalho quebrado ou sem permissão). Escolha outra pasta."
-                                .into(),
-                        ));
-                    }
-                }
+            // be deleted along with the original on a move. Looked at within the deadline: it
+            // touches the old folder.
+            let problem = {
+                let (old_path, new_path) = (old.clone(), new.clone());
+                self.probe
+                    .run(&old, move || new_folder_problem(&old_path, &new_path))
+            }
+            .ok_or_else(|| {
+                AppError::Invalid(
+                    "A pasta anterior não está acessível agora. Conecte-a de novo ou dispense o aviso."
+                        .into(),
+                )
+            })?;
+            if let Some(message) = problem {
+                return Err(AppError::Invalid(message.into()));
             }
             // Created here, under the lock, and not by the copy: the folder could have been
             // removed since it was chosen (an unplugged drive).
+            self.ensure_reachable(&new)?;
             fs::create_dir_all(&new)?;
             // Another computer's backups, and untagged ones on a tagged computer, stay where they are:
             // they may belong to a computer that still uses that folder.
@@ -982,9 +1104,10 @@ impl BackupService {
     /// Makes a backup now.
     pub fn backup_now(&self, db: &Database, paths: &AppPaths, now: &str) -> AppResult<BackupInfo> {
         self.exclusive(|| {
-            let result = db
-                .with(|conn| folder(conn, paths))
-                .and_then(|folder| create(db, paths, &folder, BackupKind::Manual, now, true));
+            let result = db.with(|conn| folder(conn, paths)).and_then(|folder| {
+                self.ensure_reachable(&folder)?;
+                create(db, paths, &folder, BackupKind::Manual, now, true)
+            });
             self.remember(&result);
             result
         })
@@ -999,7 +1122,21 @@ impl BackupService {
     ) -> AppResult<Option<BackupInfo>> {
         self.exclusive(|| {
             let result = db.with(|conn| folder(conn, paths)).and_then(|folder| {
-                if is_due(&folder, now) {
+                // Bounded too, so a folder that doesn't answer is refused instead of held under the
+                // lock. This runs in the background, so it may wait longer than a click would
+                // (a drive spinning up); a gone drive is refused like everywhere else.
+                let due = {
+                    let path = folder.clone();
+                    self.probe.run_for(&folder, MANIFEST_READ_TIMEOUT, move || {
+                        match folder_state(&path) {
+                            FolderState::Unavailable => None,
+                            _ => Some(is_due(&path, now)),
+                        }
+                    })
+                }
+                .flatten()
+                .ok_or_else(folder_unavailable)?;
+                if due {
                     create(
                         db,
                         paths,
@@ -1036,6 +1173,7 @@ impl BackupService {
         self.exclusive(|| {
             ready()?;
             let folder = db.with(|conn| folder(conn, paths))?;
+            self.ensure_reachable(&folder)?;
             datafile::import(db, paths, &folder, file, now)
         })
     }
@@ -1053,23 +1191,47 @@ impl BackupService {
     ) -> AppResult<()> {
         self.exclusive(|| {
             ready()?;
+            let folder = db.with(|conn| folder(conn, paths))?;
+            self.ensure_reachable(&folder)?;
             restore(db, paths, name, now)
         })
     }
 }
 
+/// `2026-11-19T10:00:00.000Z` from a backup name's stamp `20261119-100000-000` (UTC), so it
+/// compares with [`crate::clock::format`] output.
+fn stamp_to_iso(stamp: &str) -> String {
+    format!(
+        "{}-{}-{}T{}:{}:{}.{}Z",
+        &stamp[0..4],
+        &stamp[4..6],
+        &stamp[6..8],
+        &stamp[9..11],
+        &stamp[11..13],
+        &stamp[13..15],
+        &stamp[16..19]
+    )
+}
+
 /// Whether the newest backup of this computer is older than a day (or there is none).
-/// A backup another computer made into a shared folder doesn't count.
+/// A backup another computer made into a shared folder doesn't count. Read from the folder
+/// names alone (the stamp has the time of the backup), so it stays cheap on a cloud-synced
+/// folder whose manifests would have to be downloaded.
 fn is_due(folder: &Path, now: OffsetDateTime) -> bool {
     let cutoff = crate::clock::format(now - INTERVAL);
     let present = crate::clock::format(now);
-    list(folder)
+    try_list_names(folder)
+        .unwrap_or_default()
         .iter()
-        // A backup dated in the future (the clock was wrong once) must not stop new ones.
-        .find(|info| {
-            info.kind == BackupKind::Backup && !info.other_computer && info.created_at <= present
+        .filter(|backup| {
+            backup.kind == BackupKind::Backup
+                && !is_other_computer(backup.tag.as_deref(), &backup.stamp)
         })
-        .is_none_or(|newest| newest.created_at < cutoff)
+        .map(|backup| stamp_to_iso(&backup.stamp))
+        // A backup dated in the future (the clock was wrong once) must not stop new ones.
+        .filter(|created| *created <= present)
+        .max()
+        .is_none_or(|newest| newest < cutoff)
 }
 
 /// Writes one backup into `folder`: into a hidden temporary folder first, then renamed.
@@ -1298,6 +1460,19 @@ mod tests {
         /// Overrides [`previous_tag`] for the current test.
         pub(super) static PREVIOUS: std::cell::RefCell<Option<String>> =
             const { std::cell::RefCell::new(None) };
+    }
+
+    /// The per-thread test overrides, to copy onto a probe's worker thread.
+    pub(super) fn overrides() -> (Option<Option<String>>, Option<String>) {
+        (
+            TAG.with(|tag| tag.borrow().clone()),
+            PREVIOUS.with(|tag| tag.borrow().clone()),
+        )
+    }
+
+    pub(super) fn apply((tag, previous): (Option<Option<String>>, Option<String>)) {
+        TAG.with(|current| *current.borrow_mut() = tag);
+        PREVIOUS.with(|current| *current.borrow_mut() = previous);
     }
 
     fn as_computer(tag: &str) {
@@ -2914,6 +3089,230 @@ mod tests {
         assert_eq!(outcome.report.failed, 1);
         let left = outcome.status.left_behind.expect("the offer stays");
         assert!(left.unavailable);
+    }
+
+    #[test]
+    fn a_current_folder_that_does_not_answer_shows_as_unavailable_and_blocks_nothing() {
+        let f = fixture();
+        let service = service_with_long_probe();
+        let folder = default_folder(&f.paths);
+        backup(&f, "2026-11-19T10:00:00.000Z");
+        let healthy = service.status(&f.db, &f.paths).unwrap();
+        assert_eq!(
+            (healthy.backups.len(), healthy.folder_unavailable),
+            (1, false)
+        );
+
+        service.probe.mark_stuck(&folder);
+
+        let status = service.status(&f.db, &f.paths).unwrap();
+        assert!(status.folder_unavailable);
+        assert!(status.backups.is_empty(), "unreadable, not empty");
+        // Nothing that takes the backup lock waits on the folder: each is refused at once.
+        let now = "2026-11-19T12:00:00.000Z";
+        let errors = [
+            service.backup_now(&f.db, &f.paths, now).unwrap_err(),
+            service
+                .backup_if_due(&f.db, &f.paths, datetime!(2026-11-21 10:00:00 UTC))
+                .unwrap_err(),
+            service
+                .restore(
+                    &f.db,
+                    &f.paths,
+                    "backup-20261119-100000-000",
+                    now,
+                    || Ok(()),
+                )
+                .unwrap_err(),
+            service
+                .import(&f.db, &f.paths, Path::new("/nowhere.zip"), now, || Ok(()))
+                .unwrap_err(),
+        ];
+        for error in errors {
+            assert!(error.to_string().contains("não está acessível"), "{error}");
+        }
+        assert!(
+            service
+                .status(&f.db, &f.paths)
+                .unwrap()
+                .last_error
+                .is_some()
+        );
+        assert_eq!(list(&folder).len(), 1, "nothing was written or removed");
+    }
+
+    #[test]
+    fn a_backup_folder_that_does_not_exist_yet_is_reachable() {
+        let f = fixture();
+        let service = service_with_long_probe();
+        // No backup was ever made: the default folder is missing, and that is fine.
+        assert!(!default_folder(&f.paths).exists());
+        assert!(!service.status(&f.db, &f.paths).unwrap().folder_unavailable);
+        service
+            .backup_now(&f.db, &f.paths, "2026-11-19T10:00:00.000Z")
+            .unwrap();
+        assert_eq!(list(&default_folder(&f.paths)).len(), 1);
+    }
+
+    #[test]
+    fn a_stamp_reads_as_the_time_of_the_backup() {
+        assert_eq!(
+            stamp_to_iso("20261119-100203-045"),
+            "2026-11-19T10:02:03.045Z"
+        );
+    }
+
+    #[test]
+    fn the_daily_check_reads_names_not_manifests() {
+        let f = fixture();
+        let service = service_with_long_probe();
+        let info = backup(&f, "2026-11-19T10:00:00.000Z");
+        // A manifest that can't be read (a cloud-only placeholder, a half-synced copy) must not
+        // make the backup look absent, nor slow the check down.
+        let folder = default_folder(&f.paths);
+        fs::remove_file(folder.join(&info.name).join(snapshot::MANIFEST_FILE)).unwrap();
+
+        let made = service
+            .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 11:00:00 UTC))
+            .unwrap();
+        assert!(made.is_none(), "the backup is there, by its name");
+        let made = service
+            .backup_if_due(&f.db, &f.paths, datetime!(2026-11-20 10:00:01 UTC))
+            .unwrap();
+        assert!(made.is_some(), "and a day later a new one is due");
+    }
+
+    #[test]
+    fn a_drive_that_is_gone_shows_as_unavailable_and_a_new_folder_does_not() {
+        let f = fixture();
+        let service = service_with_long_probe();
+        let set = |folder: &Path| {
+            f.db.with(|conn| set_setting(conn, KEY_FOLDER, &folder.display().to_string()))
+                .unwrap();
+        };
+        // The parent (the volume) is gone: nothing to create the folder in.
+        set(&f._dir.path().join("volume-gone").join("backups"));
+        assert!(service.status(&f.db, &f.paths).unwrap().folder_unavailable);
+        assert!(
+            service
+                .backup_now(&f.db, &f.paths, "2026-11-19T10:00:00.000Z")
+                .is_err()
+        );
+
+        // The parent exists and the folder is only missing: fine, created on first use.
+        set(&f._dir.path().join("backups-novos"));
+        assert!(!service.status(&f.db, &f.paths).unwrap().folder_unavailable);
+    }
+
+    #[test]
+    fn a_new_folder_that_does_not_answer_stops_the_relocation_before_it_creates_anything() {
+        let f = fixture();
+        let service = service_with_long_probe();
+        let (old, new) = make_left_behind(&f, &service);
+        service.probe.mark_stuck(&new);
+
+        let error = service
+            .relocate_left_behind(&f.db, &f.paths, true)
+            .unwrap_err();
+
+        assert!(error.to_string().contains("não está acessível"), "{error}");
+        assert_eq!(list(&old).len(), 2, "nothing was touched");
+    }
+
+    #[test]
+    fn status_reads_manifests_under_their_own_key_so_backups_are_not_held_up() {
+        let f = fixture();
+        let service = service_with_long_probe();
+        let folder = default_folder(&f.paths);
+        fs::create_dir_all(&folder).unwrap();
+        // A manifest read that never ends: the status gives up on the list at once...
+        service.probe.mark_stuck(&manifest_key(&folder));
+        assert!(service.status(&f.db, &f.paths).unwrap().folder_unavailable);
+        // ...but the folder itself answers, so nothing that needs it is refused or waits.
+        service
+            .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 10:00:00 UTC))
+            .unwrap()
+            .expect("due, and not refused");
+        service
+            .backup_now(&f.db, &f.paths, "2026-11-19T11:00:00.000Z")
+            .unwrap();
+    }
+
+    #[test]
+    fn a_slow_manifest_read_does_not_hold_the_folders_own_slot() {
+        let service = BackupService {
+            probe: FolderProbe::with_timeout(Duration::from_secs(5)),
+            ..BackupService::default()
+        };
+        let folder = Path::new("/some/backups");
+        let (release, work) = blocked();
+        let key = manifest_key(folder);
+        std::thread::scope(|scope| {
+            let slow = scope.spawn(|| service.probe.run_for(&key, LONG, work));
+            eventually(|| occupied(&service.probe));
+            assert_eq!(service.probe.run(folder, || 1), Some(1));
+            drop(release);
+            assert_eq!(slow.join().unwrap(), Some(7));
+        });
+    }
+
+    #[test]
+    fn the_daily_backup_refuses_a_gone_drive_like_everything_else() {
+        let f = fixture();
+        let service = service_with_long_probe();
+        f.db.with(|conn| {
+            let gone = f._dir.path().join("volume-gone").join("backups");
+            set_setting(conn, KEY_FOLDER, &gone.display().to_string())
+        })
+        .unwrap();
+
+        let error = service
+            .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 10:00:00 UTC))
+            .unwrap_err();
+
+        assert!(error.to_string().contains("não está acessível"), "{error}");
+        assert!(
+            !f._dir.path().join("volume-gone").exists(),
+            "nothing recreated"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_folder_on_a_volume_that_is_not_mounted_is_unavailable() {
+        assert!(matches!(
+            folder_state(Path::new("/Volumes/gabaritei-no-such-volume")),
+            FolderState::Unavailable
+        ));
+    }
+
+    #[test]
+    fn untagged_backups_from_before_tags_still_count_for_the_daily_check() {
+        let f = fixture();
+        let service = service_with_long_probe();
+        backup(&f, "2026-11-19T10:00:00.000Z");
+        as_computer("desktop");
+
+        let made = service
+            .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 11:00:00 UTC))
+            .unwrap();
+
+        assert!(
+            made.is_none(),
+            "the untagged one is from before tags, this computer's"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_root_that_is_missing_is_unavailable_not_a_new_folder() {
+        let letter = ('Q'..='Z')
+            .find(|letter| !Path::new(&format!("{letter}:\\")).exists())
+            .expect("an unused drive letter");
+        assert!(matches!(
+            folder_state(Path::new(&format!("{letter}:\\"))),
+            FolderState::Unavailable
+        ));
     }
 
     #[test]

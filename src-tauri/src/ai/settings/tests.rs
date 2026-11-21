@@ -189,6 +189,7 @@ fn role_values_feed_the_runner() {
     };
     settings.roles.blind_check.effort = Effort::High;
     settings.roles.blind_check.model = "outro-modelo".into();
+    settings.roles.blind_check.fast = true;
     let spec = job_spec(
         &settings,
         &secrets,
@@ -204,6 +205,7 @@ fn role_values_feed_the_runner() {
     assert_eq!(spec.cli, fake);
     assert_eq!(spec.model, "outro-modelo");
     assert_eq!(spec.effort, Effort::High);
+    assert!(spec.fast);
     assert!(spec.web);
 }
 
@@ -375,6 +377,7 @@ fn ultra_effort_is_refused_for_claude_and_kept_for_codex() {
         agent: Agent::Claude,
         model: "sonnet".to_owned(),
         effort: Effort::Ultra,
+        fast: false,
     };
     let error = validate_role_config(&mut claude, "Gerar questões").unwrap_err();
     assert!(error.to_string().contains("Ultra"), "{error}");
@@ -383,6 +386,7 @@ fn ultra_effort_is_refused_for_claude_and_kept_for_codex() {
         agent: Agent::Codex,
         model: "gpt-6.2-sol".to_owned(),
         effort: Effort::Ultra,
+        fast: false,
     };
     assert!(validate_role_config(&mut codex, "Gerar questões").is_ok());
 }

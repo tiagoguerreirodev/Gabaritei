@@ -253,6 +253,7 @@ fn role(agent: Agent, model: &str, effort: Effort) -> RoleConfig {
         agent,
         model: model.to_owned(),
         effort,
+        fast: false,
     }
 }
 

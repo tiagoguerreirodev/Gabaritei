@@ -285,6 +285,7 @@ pub fn job_spec(
         config.effort,
         schema,
     );
+    spec.fast = config.fast;
     spec.web = sources.web;
     if sources.remnote {
         spec.remnote = remnote_access(settings, secrets, config.agent)?;

@@ -46,6 +46,9 @@ pub struct RoleConfig {
     pub agent: Agent,
     pub model: String,
     pub effort: Effort,
+    /// Run in the agent's Fast Mode. Roles saved before this existed load as `false`.
+    #[serde(default)]
+    pub fast: bool,
 }
 
 impl RoleConfig {
@@ -54,6 +57,7 @@ impl RoleConfig {
             agent: Agent::Codex,
             model: DEFAULT_MODEL.to_owned(),
             effort: Effort::Xhigh,
+            fast: false,
         }
     }
 }
@@ -108,6 +112,14 @@ mod tests {
             assert_eq!(config.model, "gpt-6.2-sol", "{role:?}");
             assert_eq!(config.effort, Effort::Xhigh, "{role:?}");
         }
+    }
+
+    #[test]
+    fn old_saved_roles_without_fast_load_as_false() {
+        let config: RoleConfig =
+            serde_json::from_str(r#"{"agent":"codex","model":"m","effort":"low"}"#).unwrap();
+        assert!(!config.fast);
+        assert!(!RoleConfig::default_config().fast);
     }
 
     #[test]

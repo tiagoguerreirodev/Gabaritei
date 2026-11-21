@@ -5,4 +5,8 @@ import type { Effort } from "./Effort";
 /**
  * Agent, model and effort for one role.
  */
-export type RoleConfig = { agent: Agent, model: string, effort: Effort, };
+export type RoleConfig = { agent: Agent, model: string, effort: Effort, 
+/**
+ * Run in the agent's Fast Mode. Roles saved before this existed load as `false`.
+ */
+fast: boolean, };

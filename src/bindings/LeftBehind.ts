@@ -9,4 +9,10 @@ export type LeftBehind = { folder: string, backups: number,
 /**
  * How many of them are safety backups ("antes de restaurar").
  */
-safety: number, };
+safety: number, 
+/**
+ * The old folder can't be read now (a drive that is unplugged, a share that is offline, a
+ * folder that was deleted). The offer is kept, since the drive may come back, but there is
+ * nothing to count or move: the user can only dismiss it.
+ */
+unavailable: boolean, };

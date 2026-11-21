@@ -4,7 +4,8 @@ name: CI (macOS, manual)
 # is no macOS job in ci.yml. Run this one by hand (Actions > CI (macOS, manual) > Run workflow)
 # before a release or after touching the AI runner, the sandbox flags or process handling.
 # It covers what only macOS shows: the Unix fake-CLI runner tests with the Seatbelt sandbox,
-# process-group kill, and the rest of the backend tests (issue #93).
+# process-group kill, and the rest of the backend tests (issue #93). The runner timeout and
+# cancel tests are timing-sensitive and may fail here until #117 is fixed.
 on:
   workflow_dispatch:
     inputs:
@@ -39,5 +40,9 @@ jobs:
           workspaces: src-tauri -> target
           cache-on-failure: true
 
+      - name: cargo clippy (lints the macOS-only code)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
       - name: cargo test
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+        # The whole suite: `--lib` is only a Windows workaround (see ci.yml).
+        run: cargo test --manifest-path src-tauri/Cargo.toml

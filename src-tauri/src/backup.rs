@@ -616,8 +616,15 @@ impl BackupService {
             let (old, _) = pending_old_folder(db, &new)?.ok_or_else(nothing)?;
             // A new folder inside the old one (so inside a backup, or a temporary folder) would
             // be deleted along with the original on a move.
-            let nested = match (fs::canonicalize(&old), fs::canonicalize(&new)) {
-                (Ok(old), Ok(new)) => new.starts_with(&old),
+            // The new folder may not exist (a removed folder or drive), so look at its deepest
+            // existing ancestor: if that is inside the old folder, so is the new one.
+            let nested = match (
+                fs::canonicalize(&old),
+                new.ancestors()
+                    .find(|ancestor| ancestor.exists())
+                    .map(fs::canonicalize),
+            ) {
+                (Ok(old), Some(Ok(existing))) => existing.starts_with(&old),
                 _ => false,
             };
             if nested {
@@ -2108,6 +2115,27 @@ mod tests {
         assert!(!service.relocating.load(Ordering::Acquire));
         assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
         assert!(!service.relocating.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn a_missing_new_folder_inside_the_old_one_is_still_refused_and_not_created() {
+        let f = fixture();
+        let service = BackupService::default();
+        let old = default_folder(&f.paths);
+        backup(&f, "2026-11-19T10:00:00.000Z");
+        let nested = old.join("sub").join("deeper");
+        service
+            .change_folder(&f.db, &f.paths, Some(&nested))
+            .unwrap();
+        fs::remove_dir_all(old.join("sub")).unwrap();
+
+        assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
+
+        assert!(
+            !old.join("sub").exists(),
+            "nothing was created inside the old folder"
+        );
+        assert_eq!(list(&old).len(), 1);
     }
 
     #[test]

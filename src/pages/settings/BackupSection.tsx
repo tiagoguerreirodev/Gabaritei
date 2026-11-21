@@ -25,10 +25,15 @@ export default function BackupSection(props: {
   // Read once: these are plain objects and functions, not something that changes.
   // eslint-disable-next-line solid/reactivity
   const { busy, onRestored } = props;
-  const [status, { mutate, refetch }] = createResource(() => api.backupStatus());
-  const [restoring, setRestoring] = createSignal<BackupInfo | null>(null);
-  // What the last folder change left in the old folder; kept until dismissed or changed again.
+  // What a folder change left in the old folder is remembered by the backend, so it is shown
+  // again after a restart; the first load seeds it.
   const [leftBehind, setLeftBehind] = createSignal<LeftBehind | null>(null);
+  const [status, { mutate, refetch }] = createResource(async () => {
+    const loaded = await api.backupStatus();
+    setLeftBehind(loaded.leftBehind);
+    return loaded;
+  });
+  const [restoring, setRestoring] = createSignal<BackupInfo | null>(null);
 
   const run = (work: () => Promise<void>) =>
     busy.run(async () => {
@@ -154,7 +159,16 @@ export default function BackupSection(props: {
             <button type="button" disabled={busy.active()} onClick={() => void relocate(true)}>
               Mover para a pasta nova
             </button>{" "}
-            <button type="button" onClick={() => setLeftBehind(null)}>
+            <button
+              type="button"
+              disabled={busy.active()}
+              onClick={() =>
+                void run(async () => {
+                  await api.backupForgetLeftBehind();
+                  setLeftBehind(null);
+                })
+              }
+            >
               Entendi
             </button>
           </div>

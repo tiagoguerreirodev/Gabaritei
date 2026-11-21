@@ -489,7 +489,6 @@ fn write_import(
             )));
         }
 
-        write_images(images_dir, images)?;
         let outcome = apply_import(tx, &plan, now)?;
 
         for collection in &prepared.collections {
@@ -519,7 +518,13 @@ fn write_import(
             topics: prepared.topics as u32,
             images: images.len() as u32,
         };
+        // The last step before the commit that touches the database is done; writing the
+        // images is the last fallible one, so a failure above (bad data, a conflicting row, the
+        // status setting) rolls back without leaving image files behind. Only a failing commit
+        // can still orphan them: harmless, because they are content-addressed and a retry
+        // reuses them.
         set_setting(tx, STATUS_KEY, &report)?;
+        write_images(images_dir, images)?;
         Ok(LegacyImportOutcome {
             report,
             already_imported: false,
@@ -668,6 +673,25 @@ mod tests {
         ] {
             assert_eq!(f.count(table), 0, "{table}");
         }
+        assert!(!f.images_dir.exists(), "no image was copied");
+    }
+
+    #[test]
+    fn a_failure_after_the_questions_are_applied_leaves_no_image_behind() {
+        let f = fixture_with(&snapshot());
+        // A collection that already exists makes the collection insert fail, after the
+        // questions were applied and before the commit.
+        f.db.with(|c| {
+            c.execute(
+                "INSERT INTO collections (id, title, kind, created_at)
+                 VALUES ('c-alepa', 'Já existe', 'practice', ?1)",
+                [NOW],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        assert!(run(&f).is_err());
+        assert_eq!(f.count("questions"), 0, "the transaction rolled back");
         assert!(!f.images_dir.exists(), "no image was copied");
     }
 

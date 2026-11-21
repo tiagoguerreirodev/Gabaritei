@@ -21,7 +21,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 | # | Topic | Decision |
 |---|---|---|
 | 1 | AI access | Run the **locally installed, already-logged-in `claude` and `codex` CLIs** as subprocesses with schema-checked JSON output. The app stores **no AI credentials**. |
-| 2 | AI roles | Four roles: **Generate, Blind check, Re-check on demand, Explain on demand**. Each has its own **agent (Claude or Codex), model and reasoning effort**. Defaults live in Settings; Generate and Blind check can be overridden in the generation form. Intended use: a cheaper model generates, a smarter model checks. |
+| 2 | AI roles | Four roles: **Generate, Blind check, Re-check on demand, Explain on demand**. Each has its own **agent (Claude or Codex), model and reasoning effort**. Defaults live in Settings; Generate and Blind check can be overridden in the generation form. Intended use: a cheaper model generates, a smarter model checks. Model and effort choices come from the CLIs (Codex lists its models, efforts and Fast tier; Claude has no list, so its model is typed), and Fast Mode is a per-role option. |
 | 3 | Devices | Two computers, switching rarely. Data moves with a **manual export/import file**. No live sync. |
 | 4 | Users | Only you. No onboarding, no public distribution concerns. |
 | 5 | History migration | **Bank only.** Import questions, collections, topics and images once from this repo's `biblioteca/`. There is no attempt history to carry over. |
@@ -121,7 +121,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 
 ### 3.7 Settings (*Configurações*)
 - **CLI paths:** detected automatically, with manual override. Apps opened from the macOS Finder see a short PATH, so detection matters there. Includes a "Test" button per CLI that shows its version and login state.
-- **Role defaults:** agent, model and effort for each of the 4 roles.
+- **Role defaults:** agent, model, effort and Fast Mode for each of the 4 roles. Codex's model and effort options come from `codex debug models` (loaded when the page opens, cached for the session, "Atualizar" to reload). Claude offers no list, so its model is typed. If a CLI can't list its models, the fields become free text with a warning. A saved model that the list no longer has is flagged "não disponível" and blocks runs until another is chosen.
 - **RemNote MCP:** URL and token, or reuse the existing Codex config.
 - **Data:** backup folder and restore, export/import, open data folder.
 
@@ -201,7 +201,7 @@ That's 11 tables, down from 16.
 ---
 
 ## 6. Explicitly out of scope
-- **Sync and credentials:** GitHub sync (`U-I*`), ChatGPT OAuth and the token vault (`N-B1`'s current form), the model catalog.
+- **Sync and credentials:** GitHub sync (`U-I*`), ChatGPT OAuth and the token vault (`N-B1`'s current form), the legacy HTTP model catalog (`N-B2`; the app reads the catalog through the Codex CLI instead).
 - **AI plumbing:** the in-app tool loop, the PDF extractor, the website-fetch allowlist tool, bank reuse (`U-A1`), the jobs log (`U-A2`).
 - **Study features:** essays and AI grading (`O-G*`), the timer and exam mode (`O-D1`, `O-D2`), the syllabus, taxonomy merges.
 - **Legacy and distribution:** legacy collection cards, the C# launcher, release scripts, Electron test scripts.

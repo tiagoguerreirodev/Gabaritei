@@ -182,7 +182,7 @@ describe("BackupSection", () => {
     backend(
       {},
       {},
-      { folder: "/dados/backups", backups: 3, safety: 1 },
+      { folder: "/dados/backups", backups: 3, safety: 1, unavailable: false },
       {
         copied: 2,
         removed: 2,
@@ -214,7 +214,7 @@ describe("BackupSection", () => {
   });
 
   it("says what a folder change leaves behind, and lets the user dismiss it", async () => {
-    backend({}, {}, { folder: "/dados/backups", backups: 3, safety: 1 });
+    backend({}, {}, { folder: "/dados/backups", backups: 3, safety: 1, unavailable: false });
     const user = userEvent.setup();
     render(() => <BackupSection busy={createBusy()} />);
 
@@ -231,9 +231,26 @@ describe("BackupSection", () => {
     expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument();
   });
 
+  it("offers only to dismiss a remembered folder that can't be read now", async () => {
+    const calls = backend({
+      leftBehind: { folder: "/Volumes/HD", backups: 0, safety: 0, unavailable: true },
+    });
+    const user = userEvent.setup();
+    render(() => <BackupSection busy={createBusy()} />);
+
+    const notice = await screen.findByTestId("left-behind");
+    expect(notice).toHaveTextContent("/Volumes/HD");
+    expect(notice).toHaveTextContent("não está acessível");
+    expect(within(notice).queryByRole("button", { name: /pasta nova/ })).not.toBeInTheDocument();
+
+    await user.click(within(notice).getByRole("button", { name: "Entendi" }));
+    await waitFor(() => expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument());
+    expect(calls.some((c) => c.command === "backup_forget_left_behind")).toBe(true);
+  });
+
   it("shows the offer the backend remembers when the page opens, and dismissing forgets it", async () => {
     const calls = backend({
-      leftBehind: { folder: "/antiga", backups: 2, safety: 0 },
+      leftBehind: { folder: "/antiga", backups: 2, safety: 0, unavailable: false },
     });
     const user = userEvent.setup();
     render(() => <BackupSection busy={createBusy()} />);
@@ -251,7 +268,11 @@ describe("BackupSection", () => {
     ["Copiar para a pasta nova", false, "3 backups copiados para a pasta nova."],
     ["Mover para a pasta nova", true, "3 backups movidos para a pasta nova."],
   ])("%s by asking the backend, then drops the notice", async (label, remove, message) => {
-    const calls = backend({}, {}, { folder: "/dados/backups", backups: 3, safety: 1 });
+    const calls = backend(
+      {},
+      {},
+      { folder: "/dados/backups", backups: 3, safety: 1, unavailable: false },
+    );
     const user = userEvent.setup();
     render(() => (
       <>
@@ -277,7 +298,11 @@ describe("BackupSection", () => {
   });
 
   it("does not move anything when the confirmation is cancelled", async () => {
-    const calls = backend({}, {}, { folder: "/dados/backups", backups: 3, safety: 1 });
+    const calls = backend(
+      {},
+      {},
+      { folder: "/dados/backups", backups: 3, safety: 1, unavailable: false },
+    );
     const user = userEvent.setup();
     render(() => <BackupSection busy={createBusy()} />);
     await user.click(await screen.findByRole("button", { name: "Escolher pasta…" }));
@@ -301,6 +326,7 @@ describe("BackupSection", () => {
         folder: "/outra",
         backups: 1,
         safety: 1,
+        unavailable: false,
       },
     );
     const user = userEvent.setup();

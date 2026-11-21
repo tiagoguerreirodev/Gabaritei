@@ -131,35 +131,51 @@ export default function BackupSection(props: {
       <Show when={leftBehind()}>
         {(left) => (
           <div class="notice" role="status" data-testid="left-behind">
-            <p>
-              A pasta anterior (<code>{left().folder}</code>) ainda tem{" "}
-              {left().backups === 1
-                ? "1 backup, que não aparece mais aqui."
-                : `${left().backups} backups, que não aparecem mais aqui.`}
-              <Show when={left().safety > 0}>
-                {" "}
+            <Show
+              when={!left().unavailable}
+              fallback={
+                <p>
+                  A pasta anterior (<code>{left().folder}</code>) tinha backups que ficaram para
+                  trás, mas não está acessível agora (um disco desconectado ou uma pasta de rede
+                  fora do ar, por exemplo). Se ela voltar, a oferta de copiar ou mover aparece de
+                  novo aqui. Se não for mais voltar, dispense o aviso.
+                </p>
+              }
+            >
+              <p>
+                A pasta anterior (<code>{left().folder}</code>) ainda tem{" "}
                 {left().backups === 1
-                  ? "Ele é uma cópia feita antes de restaurar ou importar"
-                  : left().safety === 1
-                    ? "Um deles é uma cópia feita antes de restaurar ou importar"
-                    : `${left().safety} deles são cópias feitas antes de restaurar ou importar`}
-                ; para voltar atrás, volte para aquela pasta.
-              </Show>{" "}
-              <Show
-                when={relocated()}
-                fallback="Nada foi movido nem apagado. Se quiser, leve os backups para a pasta nova: cada cópia é conferida antes de qualquer original ser apagado. Os backups do outro computador, se houver, ficam onde estão."
+                  ? "1 backup, que não aparece mais aqui."
+                  : `${left().backups} backups, que não aparecem mais aqui.`}
+                <Show when={left().safety > 0}>
+                  {" "}
+                  {left().backups === 1
+                    ? "Ele é uma cópia feita antes de restaurar ou importar"
+                    : left().safety === 1
+                      ? "Um deles é uma cópia feita antes de restaurar ou importar"
+                      : `${left().safety} deles são cópias feitas antes de restaurar ou importar`}
+                  ; para voltar atrás, volte para aquela pasta.
+                </Show>{" "}
+                <Show
+                  when={relocated()}
+                  fallback="Nada foi movido nem apagado. Se quiser, leve os backups para a pasta nova: cada cópia é conferida antes de qualquer original ser apagado. Os backups do outro computador, se houver, ficam onde estão."
+                >
+                  O que não foi movido continua na pasta anterior. Você pode tentar de novo. Os
+                  backups levados passam a contar no limite da pasta nova (7 diários, 7 manuais e 5
+                  de antes de restaurar).
+                </Show>
+              </p>
+              <button type="button" disabled={busy.active()} onClick={() => void relocate(false)}>
+                Copiar para a pasta nova
+              </button>{" "}
+              <button
+                type="button"
+                disabled={busy.active()}
+                onClick={() => setConfirmingMove(true)}
               >
-                O que não foi movido continua na pasta anterior. Você pode tentar de novo. Os
-                backups levados passam a contar no limite da pasta nova (7 diários, 7 manuais e 5 de
-                antes de restaurar).
-              </Show>
-            </p>
-            <button type="button" disabled={busy.active()} onClick={() => void relocate(false)}>
-              Copiar para a pasta nova
-            </button>{" "}
-            <button type="button" disabled={busy.active()} onClick={() => setConfirmingMove(true)}>
-              Mover para a pasta nova
-            </button>{" "}
+                Mover para a pasta nova
+              </button>{" "}
+            </Show>
             <button
               type="button"
               disabled={busy.active()}

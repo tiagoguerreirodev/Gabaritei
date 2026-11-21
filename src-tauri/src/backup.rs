@@ -131,6 +131,10 @@ pub struct LeftBehind {
     pub backups: u32,
     /// How many of them are safety backups ("antes de restaurar").
     pub safety: u32,
+    /// The old folder can't be read now (a drive that is unplugged, a share that is offline, a
+    /// folder that was deleted). The offer is kept, since the drive may come back, but there is
+    /// nothing to count or move: the user can only dismiss it.
+    pub unavailable: bool,
 }
 
 /// What copying or moving the backups of the old folder did, and the status afterwards.
@@ -366,7 +370,13 @@ fn is_other_computer(tag: Option<&str>, stamp: &str) -> bool {
 /// computer's, or (on a computer that has a tag) an untagged one, which can't be told apart.
 /// Rotation leaves these alone for the same reason.
 fn leave_alone(info: &BackupInfo) -> bool {
-    info.other_computer || (info.computer.is_none() && computer_tag().is_some())
+    info.other_computer || leaves_alone_tag(info.computer.as_deref())
+}
+
+/// [`leave_alone`] from a name alone: whether a backup tagged `tag` is not this computer's to
+/// copy or delete.
+fn leaves_alone_tag(tag: Option<&str>) -> bool {
+    is_other_computer(tag) || (tag.is_none() && computer_tag().is_some())
 }
 
 /// The default backup folder.
@@ -482,15 +492,30 @@ fn try_list(folder: &Path) -> Option<Vec<BackupInfo>> {
     Some(found)
 }
 
-/// The notice for backups `left` in `old`, if there are any.
-fn left_behind(old: &Path, left: &[BackupInfo]) -> Option<LeftBehind> {
+/// What a folder holds, read from the folder names alone (no manifest is opened), or `None`
+/// when the folder can't be read at all. Cheap enough for [`BackupService::status`], which runs
+/// often and may point at a network share or a drive that is asleep. Unlike [`list`] it also
+/// counts a folder whose manifest is unreadable; a move reports that one as failed.
+fn try_list_names(folder: &Path) -> Option<Vec<ParsedName>> {
+    let entries = fs::read_dir(folder).ok()?;
+    Some(
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| parse(&entry.file_name().into_string().ok()?))
+            .collect(),
+    )
+}
+
+/// The notice for the backups `left` in `old`, if there are any.
+fn left_behind(old: &Path, left: &[ParsedName]) -> Option<LeftBehind> {
     (!left.is_empty()).then(|| LeftBehind {
         folder: old.display().to_string(),
         backups: left.len() as u32,
         safety: left
             .iter()
-            .filter(|info| info.kind == BackupKind::Safety)
+            .filter(|backup| backup.kind == BackupKind::Safety)
             .count() as u32,
+        unavailable: false,
     })
 }
 
@@ -504,25 +529,32 @@ fn remember_old_folder(conn: &Connection, old: Option<&Path>) -> AppResult<()> {
 
 /// The remembered old folder and what it still holds of this computer's, when there is
 /// something to offer. A stale memory (the folder is the current one now, or has nothing of ours
-/// left) is forgotten here.
+/// left) is forgotten here. An unreadable folder stays remembered and is offered as
+/// `unavailable`, so it can be dismissed.
 fn pending_old_folder(db: &Database, current: &Path) -> AppResult<Option<(PathBuf, LeftBehind)>> {
     let Some(old) = db.with(|conn| get_setting::<String>(conn, KEY_LEFT_BEHIND))? else {
         return Ok(None);
     };
     let old = PathBuf::from(old);
-    let mine: Vec<BackupInfo> = if same_folder(&old, current) {
-        Vec::new()
+    let notice = if same_folder(&old, current) {
+        None
     } else {
-        // An unreadable folder hides the offer for now but keeps it: the drive may come back.
-        let Some(found) = try_list(&old) else {
-            return Ok(None);
-        };
-        found
-            .into_iter()
-            .filter(|info| !leave_alone(info))
-            .collect()
+        match try_list_names(&old) {
+            Some(found) => {
+                let mine: Vec<ParsedName> = found
+                    .into_iter()
+                    .filter(|backup| !leaves_alone_tag(backup.tag.as_deref()))
+                    .collect();
+                left_behind(&old, &mine)
+            }
+            None => Some(LeftBehind {
+                folder: old.display().to_string(),
+                backups: 0,
+                safety: 0,
+                unavailable: true,
+            }),
+        }
     };
-    let notice = left_behind(&old, &mine);
     if notice.is_none() {
         forget_old_folder_if(db, &old)?;
     }
@@ -649,7 +681,13 @@ impl BackupService {
             let new = db.with(|conn| folder(conn, paths))?;
             // Read from the stored setting, so it works after a restart too, and never from a
             // path the frontend sent. It is cleared when the old folder has nothing of ours left.
-            let (old, _) = pending_old_folder(db, &new)?.ok_or_else(nothing)?;
+            let (old, notice) = pending_old_folder(db, &new)?.ok_or_else(nothing)?;
+            if notice.unavailable {
+                return Err(AppError::Invalid(
+                    "A pasta anterior não está acessível agora. Conecte-a de novo ou dispense o aviso."
+                        .into(),
+                ));
+            }
             // A new folder inside the old one (so inside a backup, or a temporary folder) would
             // be deleted along with the original on a move.
             let nested = match (fs::canonicalize(&old), fs::canonicalize(&new)) {
@@ -1222,6 +1260,7 @@ mod tests {
                 folder: old.display().to_string(),
                 backups: 2,
                 safety: 1,
+                unavailable: false,
             })
         );
         // Nothing was moved or deleted.
@@ -2263,7 +2302,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_old_folder_hides_the_offer_without_forgetting_it() {
+    fn an_unreadable_old_folder_is_offered_as_unavailable_and_can_be_dismissed() {
         let f = fixture();
         let service = BackupService::default();
         let (old, _) = make_left_behind(&f, &service);
@@ -2271,11 +2310,59 @@ mod tests {
         let away = f._dir.path().join("away");
         fs::rename(&old, &away).unwrap();
 
-        assert_eq!(service.status(&f.db, &f.paths).unwrap().left_behind, None);
+        let away_notice = service
+            .status(&f.db, &f.paths)
+            .unwrap()
+            .left_behind
+            .unwrap();
+        assert!(away_notice.unavailable);
+        assert_eq!(away_notice.folder, old.display().to_string());
+        let error = service
+            .relocate_left_behind(&f.db, &f.paths, true)
+            .unwrap_err();
+        assert!(error.to_string().contains("não está acessível"), "{error}");
 
+        // The drive comes back: the same offer, now with its backups.
         fs::rename(&away, &old).unwrap();
-        let back = service.status(&f.db, &f.paths).unwrap().left_behind;
-        assert_eq!(back.map(|left| left.backups), Some(2), "still offered");
+        let back = service
+            .status(&f.db, &f.paths)
+            .unwrap()
+            .left_behind
+            .unwrap();
+        assert_eq!((back.backups, back.unavailable), (2, false));
+
+        // Gone for good (or never coming back): the user can still dismiss it.
+        fs::rename(&old, &away).unwrap();
+        assert!(
+            service
+                .status(&f.db, &f.paths)
+                .unwrap()
+                .left_behind
+                .is_some()
+        );
+        service.forget_left_behind(&f.db).unwrap();
+        assert_eq!(service.status(&f.db, &f.paths).unwrap().left_behind, None);
+    }
+
+    #[test]
+    fn the_status_does_not_open_the_manifests_of_the_old_folder() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, _) = make_left_behind(&f, &service);
+        // A backup whose manifest can't be read still counts for the notice: the status reads
+        // names only (a move reports it as failed).
+        for info in list(&old) {
+            fs::remove_file(old.join(&info.name).join(snapshot::MANIFEST_FILE)).unwrap();
+        }
+        assert!(list(&old).is_empty());
+
+        let notice = service
+            .status(&f.db, &f.paths)
+            .unwrap()
+            .left_behind
+            .unwrap();
+
+        assert_eq!((notice.backups, notice.safety), (2, 1));
     }
 
     #[test]
@@ -2430,7 +2517,8 @@ mod tests {
             Some(LeftBehind {
                 folder: old.display().to_string(),
                 backups: 1,
-                safety: 1
+                safety: 1,
+                unavailable: false,
             })
         );
     }

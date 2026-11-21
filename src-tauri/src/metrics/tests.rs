@@ -727,6 +727,10 @@ fn home_summarizes_the_bank_and_what_is_waiting() {
     assert_eq!(home.overall.score.correct, 1);
     assert_eq!(home.areas.len(), 2);
     assert_eq!(home.due_reviews, 1);
+    assert_eq!(
+        home.due_in_open_attempt, 1,
+        "q1 is due and in the open attempt"
+    );
     assert_eq!(home.drafts_waiting, 1);
     assert_eq!(home.active_attempts.len(), 1);
     let open = &home.active_attempts[0];

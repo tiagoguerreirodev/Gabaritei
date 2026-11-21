@@ -30,9 +30,17 @@ use crate::paths::AppPaths;
 
 /// Setting that holds the backup folder chosen by the user.
 const KEY_FOLDER: &str = "backup.folder";
+/// The old folder whose backups were left behind by the last folder change (a local setting).
+const KEY_LEFT_BEHIND: &str = "backup.leftBehind";
 /// Settings that describe this computer. Restoring or importing data from another computer
 /// must not overwrite them.
-pub const LOCAL_SETTINGS: &[&str] = &[KEY_FOLDER, KEY_CLI_PATHS, KEY_REMNOTE, KEY_ROLES];
+pub const LOCAL_SETTINGS: &[&str] = &[
+    KEY_FOLDER,
+    KEY_LEFT_BEHIND,
+    KEY_CLI_PATHS,
+    KEY_REMNOTE,
+    KEY_ROLES,
+];
 
 /// Daily backups kept.
 const KEEP_BACKUPS: usize = 7;
@@ -105,7 +113,10 @@ pub struct BackupStatus {
     pub backups: Vec<BackupInfo>,
     /// pt-BR reason the last automatic or manual backup failed, until one succeeds.
     pub last_error: Option<String>,
-    /// Set only by the call that changed the folder, when the old folder still holds backups.
+    /// Set while the old folder still holds this computer's backups after a folder change. It is
+    /// remembered across restarts until the backups are copied or moved (a copy or move with
+    /// failures keeps it), the user dismisses it, the folder is changed again, or the old folder
+    /// holds none of this computer's backups.
     pub left_behind: Option<LeftBehind>,
 }
 
@@ -316,9 +327,13 @@ pub fn set_folder(conn: &Connection, paths: &AppPaths, chosen: Option<&Path>) ->
 
 /// Backups in `folder`, newest first. Folders that aren't complete backups are ignored.
 pub fn list(folder: &Path) -> Vec<BackupInfo> {
-    let Ok(entries) = fs::read_dir(folder) else {
-        return Vec::new();
-    };
+    try_list(folder).unwrap_or_default()
+}
+
+/// Like [`list`], but `None` when the folder can't be read at all (a drive that is unplugged, a
+/// share that is offline), which is not the same as a folder with no backups.
+fn try_list(folder: &Path) -> Option<Vec<BackupInfo>> {
+    let entries = fs::read_dir(folder).ok()?;
     let mut found: Vec<BackupInfo> = entries
         .filter_map(Result::ok)
         .filter_map(|entry| {
@@ -336,7 +351,7 @@ pub fn list(folder: &Path) -> Vec<BackupInfo> {
         })
         .collect();
     found.sort_by(|a, b| b.name.cmp(&a.name));
-    found
+    Some(found)
 }
 
 /// The notice for backups `left` in `old`, if there are any.
@@ -348,6 +363,53 @@ fn left_behind(old: &Path, left: &[BackupInfo]) -> Option<LeftBehind> {
             .iter()
             .filter(|info| info.kind == BackupKind::Safety)
             .count() as u32,
+    })
+}
+
+/// Stores (or, with `None`, forgets) the old folder whose backups were left behind.
+fn remember_old_folder(conn: &Connection, old: Option<&Path>) -> AppResult<()> {
+    match old {
+        Some(old) => set_setting(conn, KEY_LEFT_BEHIND, &old.display().to_string()),
+        None => crate::db::put_raw_setting(conn, KEY_LEFT_BEHIND, None),
+    }
+}
+
+/// The remembered old folder and what it still holds of this computer's, when there is
+/// something to offer. A stale memory (the folder is the current one now, or has nothing of ours
+/// left) is forgotten here.
+fn pending_old_folder(db: &Database, current: &Path) -> AppResult<Option<(PathBuf, LeftBehind)>> {
+    let Some(old) = db.with(|conn| get_setting::<String>(conn, KEY_LEFT_BEHIND))? else {
+        return Ok(None);
+    };
+    let old = PathBuf::from(old);
+    let mine: Vec<BackupInfo> = if same_folder(&old, current) {
+        Vec::new()
+    } else {
+        // An unreadable folder hides the offer for now but keeps it: the drive may come back.
+        let Some(found) = try_list(&old) else {
+            return Ok(None);
+        };
+        found
+            .into_iter()
+            .filter(|info| !leave_alone(info))
+            .collect()
+    };
+    let notice = left_behind(&old, &mine);
+    if notice.is_none() {
+        forget_old_folder_if(db, &old)?;
+    }
+    Ok(notice.map(|notice| (old, notice)))
+}
+
+/// Forgets the remembered old folder only if it is still `old`. `status` runs without the backup
+/// lock, so a folder change could have stored a newer one since it was read; that one stays.
+fn forget_old_folder_if(db: &Database, old: &Path) -> AppResult<()> {
+    db.with(|conn| {
+        let stored = get_setting::<String>(conn, KEY_LEFT_BEHIND)?;
+        if stored.as_deref() == Some(old.display().to_string().as_str()) {
+            remember_old_folder(conn, None)?;
+        }
+        Ok(())
     })
 }
 
@@ -368,9 +430,6 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 pub struct BackupService {
     busy: Mutex<()>,
     last_error: Mutex<Option<String>>,
-    /// The old folder after the last folder change that left backups in it, so the copy or move
-    /// is done from there without the frontend ever sending a path.
-    left_behind: Mutex<Option<PathBuf>>,
 }
 
 impl BackupService {
@@ -397,13 +456,19 @@ impl BackupService {
             let chosen = get_setting::<String>(conn, KEY_FOLDER)?;
             Ok((folder(conn, paths)?, chosen.is_none()))
         })?;
+        let left_behind = pending_old_folder(db, &folder)?.map(|(_, notice)| notice);
         Ok(BackupStatus {
             backups: list(&folder),
             folder: folder.display().to_string(),
             is_default_folder,
             last_error: lock(&self.last_error).clone(),
-            left_behind: None,
+            left_behind,
         })
+    }
+
+    /// Forgets the offer to move backups from the old folder. Nothing is moved or deleted.
+    pub fn forget_left_behind(&self, db: &Database) -> AppResult<()> {
+        self.exclusive(|| db.with(|conn| remember_old_folder(conn, None)))
     }
 
     /// Changes the backup folder (`None` goes back to the default). The answer says what stays
@@ -419,16 +484,11 @@ impl BackupService {
         self.exclusive(|| {
             let old = db.with(|conn| folder(conn, paths))?;
             db.with(|conn| set_folder(conn, paths, chosen))?;
-            let mut status = self.status(db, paths)?;
-            let new = PathBuf::from(&status.folder);
-            let left = if same_folder(&old, &new) {
-                Vec::new()
-            } else {
-                list(&old)
-            };
-            status.left_behind = left_behind(&old, &left);
-            *lock(&self.left_behind) = status.left_behind.is_some().then_some(old);
-            Ok(status)
+            let new = db.with(|conn| folder(conn, paths))?;
+            let has_backups =
+                !same_folder(&old, &new) && list(&old).iter().any(|i| !leave_alone(i));
+            db.with(|conn| remember_old_folder(conn, has_backups.then_some(old.as_path())))?;
+            self.status(db, paths)
         })
     }
 
@@ -444,12 +504,10 @@ impl BackupService {
     ) -> AppResult<RelocateOutcome> {
         self.exclusive(|| {
             let nothing = || AppError::Invalid("Não há backups na pasta anterior.".into());
-            let old = lock(&self.left_behind).clone().ok_or_else(nothing)?;
             let new = db.with(|conn| folder(conn, paths))?;
-            if same_folder(&old, &new) {
-                *lock(&self.left_behind) = None;
-                return Err(nothing());
-            }
+            // Read from the stored setting, so it works after a restart too, and never from a
+            // path the frontend sent. It is cleared when the old folder has nothing of ours left.
+            let (old, _) = pending_old_folder(db, &new)?.ok_or_else(nothing)?;
             // A new folder inside the old one (so inside a backup, or a temporary folder) would
             // be deleted along with the original on a move.
             let nested = match (fs::canonicalize(&old), fs::canonicalize(&new)) {
@@ -467,19 +525,13 @@ impl BackupService {
             let names: Vec<String> = mine.into_iter().map(|info| info.name).collect();
             let mut report = relocate::relocate(&old, &new, &names, remove_originals)?;
             report.left_alone = others.len() as u32;
-            let mut status = self.status(db, paths)?;
             // After a move, what is still here is what could not be moved (the other computer's
             // backups are reported apart). A copy leaves the originals on purpose.
-            let remaining: Vec<BackupInfo> = if remove_originals {
-                list(&old)
-                    .into_iter()
-                    .filter(|info| !leave_alone(info))
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            status.left_behind = left_behind(&old, &remaining);
-            *lock(&self.left_behind) = status.left_behind.is_some().then_some(old);
+            // A copy that failed for some backups keeps the offer too, so it can be tried again.
+            let remaining = (remove_originals || report.failed > 0)
+                && list(&old).iter().any(|info| !leave_alone(info));
+            db.with(|conn| remember_old_folder(conn, remaining.then_some(old.as_path())))?;
+            let status = self.status(db, paths)?;
             Ok(RelocateOutcome { report, status })
         })
     }
@@ -1002,8 +1054,11 @@ mod tests {
         );
         // Nothing was moved or deleted.
         assert_eq!(list(&old).len(), 2);
-        // The plain status never carries the notice.
-        assert_eq!(service.status(&f.db, &f.paths).unwrap().left_behind, None);
+        // The plain status carries it too (it is remembered, see #111).
+        assert_eq!(
+            service.status(&f.db, &f.paths).unwrap().left_behind,
+            status.left_behind
+        );
         // Choosing the same folder again, or an empty old folder, has nothing left behind.
         let again = service
             .change_folder(&f.db, &f.paths, Some(&elsewhere))
@@ -1797,6 +1852,119 @@ mod tests {
         let new = f._dir.path().join("synced");
         service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
         (old, new)
+    }
+
+    #[test]
+    fn the_offer_to_move_survives_a_restart() {
+        let f = fixture();
+        let (old, new) = make_left_behind(&f, &BackupService::default());
+
+        // A new service has no memory: everything comes from the stored setting.
+        let restarted = BackupService::default();
+        let notice = restarted.status(&f.db, &f.paths).unwrap().left_behind;
+        assert_eq!(
+            notice.map(|left| left.folder),
+            Some(old.display().to_string())
+        );
+
+        let outcome = restarted
+            .relocate_left_behind(&f.db, &f.paths, true)
+            .unwrap();
+        assert_eq!(outcome.report.removed, 2);
+        assert_eq!(list(&new).len(), 2);
+        assert_eq!(restarted.status(&f.db, &f.paths).unwrap().left_behind, None);
+        assert!(list(&old).is_empty());
+    }
+
+    #[test]
+    fn an_unreadable_old_folder_hides_the_offer_without_forgetting_it() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, _) = make_left_behind(&f, &service);
+        // Like an unplugged drive or an offline share: the folder can't be read for now.
+        let away = f._dir.path().join("away");
+        fs::rename(&old, &away).unwrap();
+
+        assert_eq!(service.status(&f.db, &f.paths).unwrap().left_behind, None);
+
+        fs::rename(&away, &old).unwrap();
+        let back = service.status(&f.db, &f.paths).unwrap().left_behind;
+        assert_eq!(back.map(|left| left.backups), Some(2), "still offered");
+    }
+
+    #[test]
+    fn forgetting_a_stale_offer_never_erases_a_newer_one() {
+        let f = fixture();
+        f.db.with(|conn| remember_old_folder(conn, Some(Path::new("/newer"))))
+            .unwrap();
+        forget_old_folder_if(&f.db, Path::new("/older")).unwrap();
+        let stored =
+            f.db.with(|conn| get_setting::<String>(conn, KEY_LEFT_BEHIND))
+                .unwrap();
+        assert_eq!(stored.as_deref(), Some("/newer"));
+
+        forget_old_folder_if(&f.db, Path::new("/newer")).unwrap();
+        let stored =
+            f.db.with(|conn| get_setting::<String>(conn, KEY_LEFT_BEHIND))
+                .unwrap();
+        assert_eq!(stored, None);
+    }
+
+    #[test]
+    fn a_copy_that_failed_for_some_backups_can_be_tried_again() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, new) = make_left_behind(&f, &service);
+        // Something unusable already sits under the name of one backup in the new folder.
+        let blocked = list(&old)[0].name.clone();
+        fs::create_dir_all(new.join(&blocked)).unwrap();
+
+        let first = service
+            .relocate_left_behind(&f.db, &f.paths, false)
+            .unwrap();
+        assert_eq!((first.report.copied, first.report.failed), (1, 1));
+        assert!(
+            first.status.left_behind.is_some(),
+            "the offer stays for the retry"
+        );
+
+        fs::remove_dir_all(new.join(&blocked)).unwrap();
+        let second = service
+            .relocate_left_behind(&f.db, &f.paths, false)
+            .unwrap();
+        assert_eq!(second.report.failed, 0);
+        assert_eq!(second.status.left_behind, None, "done: nothing failed");
+        assert_eq!(list(&new).len(), 2);
+    }
+
+    #[test]
+    fn dismissing_the_offer_forgets_it_for_good() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, _) = make_left_behind(&f, &service);
+
+        service.forget_left_behind(&f.db).unwrap();
+
+        let restarted = BackupService::default();
+        assert_eq!(restarted.status(&f.db, &f.paths).unwrap().left_behind, None);
+        assert!(
+            restarted
+                .relocate_left_behind(&f.db, &f.paths, true)
+                .is_err()
+        );
+        assert_eq!(list(&old).len(), 2, "nothing was deleted");
+    }
+
+    #[test]
+    fn the_offer_goes_away_once_the_old_folder_has_nothing_of_ours() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, _) = make_left_behind(&f, &service);
+        for info in list(&old) {
+            fs::remove_dir_all(old.join(info.name)).unwrap();
+        }
+        assert_eq!(service.status(&f.db, &f.paths).unwrap().left_behind, None);
+        assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
     }
 
     #[test]

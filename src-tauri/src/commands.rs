@@ -198,6 +198,16 @@ pub fn backup_move_left_behind(
     service.relocate_left_behind(&db, &paths, remove_originals)
 }
 
+/// Forgets the offer to move backups from the old folder (the "Entendi" button). Nothing is
+/// moved or deleted.
+#[tauri::command(async)]
+pub fn backup_forget_left_behind(
+    db: State<'_, Database>,
+    service: State<'_, BackupService>,
+) -> AppResult<()> {
+    service.forget_left_behind(&db)
+}
+
 /// Replaces the current data with a backup, after a safety backup. Not while a generation runs.
 #[tauri::command(async)]
 pub fn backup_restore(

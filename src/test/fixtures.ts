@@ -42,5 +42,6 @@ export const emptyHome: HomeSummary = {
   areas: [],
   activeAttempts: [],
   dueReviews: 0,
+  dueInOpenAttempt: 0,
   draftsWaiting: 0,
 };

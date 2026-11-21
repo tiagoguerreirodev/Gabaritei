@@ -24,6 +24,11 @@ activeAttempts: Array<ActiveAttempt>,
  */
 dueReviews: number, 
 /**
+ * Of the due reviews, how many sit in an unfinished attempt: they stay due, but a new
+ * reviews session leaves them out.
+ */
+dueInOpenAttempt: number, 
+/**
  * Generated packages waiting for review.
  */
 draftsWaiting: number, };

@@ -108,7 +108,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 - **Error notebook:** questions whose latest *answered* response is wrong (a later blank never hides an earlier wrong answer, the same blank rule as §3.4); the list links to the attempt holding that wrong answer. Blanks are optional: when included, a question whose latest result is blank is listed too.
 - **Spaced repetition:** a full hit moves the interval along 1 → 3 → 7 → 14 → 30 → 60 days (the first hit is 1 day, as in the legacy app). A miss resets it to 1. A blank answer counts as a miss. Only finished attempts count, and annulled questions have no review.
 - **Derived state:** a review is recomputed from the question's answers against its current key, so key corrections and annulments apply to it, and it is rebuilt at startup.
-- **Practice sessions** are built from errors and due reviews: the reviews session takes due reviews first, then recent errors (1–100 questions). Questions that sit in an unfinished attempt are left out of a new errors or reviews session, so a new errors or reviews session never repeats a question already in progress. The "due now" count still includes them, with a note saying how many are in an open attempt.
+- **Practice sessions** are built from errors and due reviews: the reviews session takes due reviews first, then recent errors (1–100 questions). Questions that sit in an unfinished attempt are left out of a new errors or reviews session, so a new errors or reviews session never repeats a question already in progress. The "due now" count (Learning page and Home) still includes them, with a note saying how many are in an open attempt.
 
 ### 3.6 Data
 - **Storage:** SQLite in the OS app-data folder.

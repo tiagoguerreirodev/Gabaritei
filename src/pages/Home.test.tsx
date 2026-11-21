@@ -26,6 +26,7 @@ const summary: HomeSummary = {
     },
   ],
   dueReviews: 3,
+  dueInOpenAttempt: 2,
   draftsWaiting: 2,
 };
 
@@ -65,7 +66,7 @@ describe("Início", () => {
     );
     expect(
       within(waiting).getByRole("link", { name: "Revisões pendentes" }).parentElement,
-    ).toHaveTextContent("3");
+    ).toHaveTextContent("3 · 2 em tentativa aberta");
     expect(
       within(waiting).getByRole("link", { name: "Pacotes para revisar" }).parentElement,
     ).toHaveTextContent("2");

@@ -16,7 +16,7 @@ pub mod snapshot;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::Duration;
 
 use rusqlite::Connection;
@@ -542,33 +542,122 @@ fn remember_old_folder(conn: &Connection, old: Option<&Path>) -> AppResult<()> {
     }
 }
 
+/// What looking at the remembered old folder found.
+enum OldFolder {
+    /// It is the current folder now.
+    Current,
+    /// Its backups, by name.
+    Listed(Vec<ParsedName>),
+    /// It can't be read (gone, unplugged, no permission).
+    Unreadable,
+}
+
+/// Looks at the old folder: whether it is the current one, and what it holds.
+fn inspect_old_folder(old: &Path, current: &Path) -> OldFolder {
+    if same_folder(old, current) {
+        OldFolder::Current
+    } else {
+        try_list_names(old).map_or(OldFolder::Unreadable, OldFolder::Listed)
+    }
+}
+
+/// Runs the filesystem calls on the old folder with a deadline. A drive that is asleep or a
+/// share that is offline can block `read_dir` for minutes, and the callers hold (or are called
+/// by something that holds) the backup lock. The work runs on its own thread; past the deadline
+/// the caller stops waiting and reports the folder as unavailable. A thread stuck in the
+/// operating system can't be cancelled, so while one is stuck, later calls answer at once
+/// instead of starting (and leaking) another.
+struct FolderProbe {
+    running: Arc<AtomicBool>,
+    stuck: Arc<AtomicBool>,
+    timeout: Duration,
+}
+
+impl Default for FolderProbe {
+    fn default() -> Self {
+        Self::with_timeout(Duration::from_secs(3))
+    }
+}
+
+impl FolderProbe {
+    fn with_timeout(timeout: Duration) -> Self {
+        Self {
+            running: Arc::default(),
+            stuck: Arc::default(),
+            timeout,
+        }
+    }
+
+    /// The result of `work`, or `None` when it didn't finish in time (or an earlier one is
+    /// still stuck).
+    fn run<T: Send + 'static>(&self, work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+        let deadline = std::time::Instant::now() + self.timeout;
+        // A healthy probe from another call is waited for; a stuck one is not.
+        while self.running.load(Ordering::Acquire) {
+            if self.stuck.load(Ordering::Acquire) || std::time::Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        self.running.store(true, Ordering::Release);
+        let (done, result) = mpsc::channel();
+        let (running, stuck) = (self.running.clone(), self.stuck.clone());
+        let spawned = std::thread::Builder::new().spawn(move || {
+            let value = work();
+            stuck.store(false, Ordering::Release);
+            running.store(false, Ordering::Release);
+            let _ = done.send(value);
+        });
+        if spawned.is_err() {
+            self.running.store(false, Ordering::Release);
+            return None;
+        }
+        match result.recv_timeout(self.timeout) {
+            Ok(value) => Some(value),
+            Err(_) => {
+                self.stuck.store(true, Ordering::Release);
+                None
+            }
+        }
+    }
+
+    /// [`inspect_old_folder`] within the deadline; `None` when it timed out.
+    fn inspect(&self, old: &Path, current: &Path) -> Option<OldFolder> {
+        let (old, current) = (old.to_path_buf(), current.to_path_buf());
+        self.run(move || inspect_old_folder(&old, &current))
+    }
+}
+
 /// The remembered old folder and what it still holds of this computer's, when there is
 /// something to offer. A stale memory (the folder is the current one now, or has nothing of ours
 /// left) is forgotten here. An unreadable folder stays remembered and is offered as
 /// `unavailable`, so it can be dismissed.
-fn pending_old_folder(db: &Database, current: &Path) -> AppResult<Option<(PathBuf, LeftBehind)>> {
+fn pending_old_folder(
+    db: &Database,
+    probe: &FolderProbe,
+    current: &Path,
+) -> AppResult<Option<(PathBuf, LeftBehind)>> {
     let Some(old) = db.with(|conn| get_setting::<String>(conn, KEY_LEFT_BEHIND))? else {
         return Ok(None);
     };
     let old = PathBuf::from(old);
-    let notice = if same_folder(&old, current) {
-        None
-    } else {
-        match try_list_names(&old) {
-            Some(found) => {
-                let mine: Vec<ParsedName> = found
-                    .into_iter()
-                    .filter(|backup| !leave_alone(backup))
-                    .collect();
-                left_behind(&old, &mine)
-            }
-            None => Some(LeftBehind {
-                folder: old.display().to_string(),
-                backups: 0,
-                safety: 0,
-                unavailable: true,
-            }),
+    let unavailable = || LeftBehind {
+        folder: old.display().to_string(),
+        backups: 0,
+        safety: 0,
+        unavailable: true,
+    };
+    let notice = match probe.inspect(&old, current) {
+        Some(OldFolder::Current) => None,
+        Some(OldFolder::Listed(found)) => {
+            let mine: Vec<ParsedName> = found
+                .into_iter()
+                .filter(|backup| !leave_alone(backup))
+                .collect();
+            left_behind(&old, &mine)
         }
+        // Not answering in time is the same as unreadable: the drive may come back.
+        Some(OldFolder::Unreadable) | None => Some(unavailable()),
     };
     if notice.is_none() {
         forget_old_folder_if(db, &old)?;
@@ -609,6 +698,8 @@ pub struct BackupService {
     /// with everything else, so a second one would interleave with it and report failures that
     /// are not real.
     relocating: AtomicBool,
+    /// Bounds the reads of the old folder, which may be on an offline share.
+    probe: FolderProbe,
 }
 
 /// Marks a relocation as running until dropped.
@@ -655,7 +746,7 @@ impl BackupService {
             let chosen = get_setting::<String>(conn, KEY_FOLDER)?;
             Ok((folder(conn, paths)?, chosen.is_none()))
         })?;
-        let left_behind = pending_old_folder(db, &folder)?.map(|(_, notice)| notice);
+        let left_behind = pending_old_folder(db, &self.probe, &folder)?.map(|(_, notice)| notice);
         Ok(BackupStatus {
             backups: list(&folder),
             folder: folder.display().to_string(),
@@ -684,8 +775,12 @@ impl BackupService {
             let old = db.with(|conn| folder(conn, paths))?;
             db.with(|conn| set_folder(conn, paths, chosen))?;
             let new = db.with(|conn| folder(conn, paths))?;
-            let has_backups = !same_folder(&old, &new)
-                && try_list_names(&old).is_some_and(|found| found.iter().any(|b| !leave_alone(b)));
+            let has_backups = match self.probe.inspect(&old, &new) {
+                Some(OldFolder::Listed(found)) => found.iter().any(|b| !leave_alone(b)),
+                Some(OldFolder::Current | OldFolder::Unreadable) => false,
+                // No answer in time (an offline share): remember it, offered as unavailable.
+                None => true,
+            };
             db.with(|conn| remember_old_folder(conn, has_backups.then_some(old.as_path())))?;
             self.status(db, paths)
         })
@@ -723,7 +818,7 @@ impl BackupService {
             let new = db.with(|conn| folder(conn, paths))?;
             // Read from the stored setting, so it works after a restart too, and never from a
             // path the frontend sent. It is cleared when the old folder has nothing of ours left.
-            let (old, notice) = pending_old_folder(db, &new)?.ok_or_else(nothing)?;
+            let (old, notice) = pending_old_folder(db, &self.probe, &new)?.ok_or_else(nothing)?;
             if notice.unavailable {
                 return Err(AppError::Invalid(
                     "A pasta anterior não está acessível agora. Conecte-a de novo ou dispense o aviso."
@@ -753,10 +848,11 @@ impl BackupService {
             fs::create_dir_all(&new)?;
             // Another computer's backups, and untagged ones on a tagged computer, stay where they are:
             // they may belong to a computer that still uses that folder.
-            let (others, mine): (Vec<_>, Vec<_>) = try_list_names(&old)
-                .unwrap_or_default()
-                .into_iter()
-                .partition(leave_alone);
+            let found = match self.probe.inspect(&old, &new) {
+                Some(OldFolder::Listed(found)) => found,
+                _ => Vec::new(),
+            };
+            let (others, mine): (Vec<_>, Vec<_>) = found.into_iter().partition(leave_alone);
             let names: Vec<String> = mine.into_iter().map(|backup| backup.name).collect();
             Ok((old, new, names, others.len() as u32))
         })?;
@@ -786,8 +882,10 @@ impl BackupService {
             // changed meanwhile, the new change already decided what to remember.
             if still_the_same() {
                 let remaining = (remove_originals || report.failed > 0)
-                    && try_list_names(&old)
-                        .is_some_and(|found| found.iter().any(|b| !leave_alone(b)));
+                    && matches!(
+                        self.probe.inspect(&old, &new),
+                        Some(OldFolder::Listed(found)) if found.iter().any(|b| !leave_alone(b))
+                    );
                 db.with(|conn| remember_old_folder(conn, remaining.then_some(old.as_path())))?;
             }
             let status = self.status(db, paths)?;
@@ -2511,6 +2609,78 @@ mod tests {
         let left = outcome.status.left_behind.unwrap();
         assert_eq!(left.backups, 1, "the offer stays for the one that failed");
         assert!(old.join(&broken).is_dir(), "the original is untouched");
+    }
+
+    fn sleeping(ms: u64) -> impl FnOnce() -> u32 + Send + 'static {
+        move || {
+            std::thread::sleep(Duration::from_millis(ms));
+            7
+        }
+    }
+
+    #[test]
+    fn the_probe_answers_in_time_gives_up_when_stuck_and_recovers() {
+        let probe = FolderProbe::with_timeout(Duration::from_millis(100));
+        assert_eq!(probe.run(|| 1), Some(1));
+
+        // Stuck: the caller stops waiting at the deadline, not when the work ends.
+        let started = std::time::Instant::now();
+        assert_eq!(probe.run(sleeping(600)), None);
+        assert!(started.elapsed() < Duration::from_millis(400));
+
+        // While it is stuck, another call answers at once and starts no second thread.
+        let started = std::time::Instant::now();
+        assert_eq!(probe.run(|| 2), None);
+        assert!(started.elapsed() < Duration::from_millis(50));
+
+        // Once the stuck work ends, the probe works again.
+        std::thread::sleep(Duration::from_millis(700));
+        assert_eq!(probe.run(|| 3), Some(3));
+    }
+
+    #[test]
+    fn a_slow_but_healthy_probe_is_waited_for_by_a_concurrent_call() {
+        let probe = Arc::new(FolderProbe::with_timeout(Duration::from_millis(500)));
+        let first = {
+            let probe = probe.clone();
+            std::thread::spawn(move || probe.run(sleeping(150)))
+        };
+        std::thread::sleep(Duration::from_millis(30));
+        assert_eq!(probe.run(|| 2), Some(2), "waited for the first, then ran");
+        assert_eq!(first.join().unwrap(), Some(7));
+    }
+
+    #[test]
+    fn an_old_folder_that_does_not_answer_is_offered_as_unavailable_without_blocking() {
+        let f = fixture();
+        let (old, _) = make_left_behind(&f, &BackupService::default());
+        let service = BackupService {
+            probe: FolderProbe::with_timeout(Duration::from_millis(100)),
+            ..BackupService::default()
+        };
+        // Something already stuck reading the folder.
+        assert_eq!(service.probe.run(sleeping(800)), None);
+
+        let started = std::time::Instant::now();
+        let notice = service
+            .status(&f.db, &f.paths)
+            .unwrap()
+            .left_behind
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_millis(400));
+        assert!(notice.unavailable);
+        assert_eq!(notice.folder, old.display().to_string());
+
+        // Changing the folder meanwhile keeps the offer (as unavailable) instead of losing it.
+        let third = f._dir.path().join("third");
+        let status = service
+            .change_folder(&f.db, &f.paths, Some(&third))
+            .unwrap();
+        assert!(status.left_behind.unwrap().unavailable);
+        let error = service
+            .relocate_left_behind(&f.db, &f.paths, true)
+            .unwrap_err();
+        assert!(error.to_string().contains("não está acessível"), "{error}");
     }
 
     #[test]

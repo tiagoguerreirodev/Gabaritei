@@ -5,6 +5,7 @@ import type { RoleConfig } from "./bindings/RoleConfig";
 import {
   catalogState,
   fallbackEfforts,
+  fastSupport,
   loadCatalog,
   resetCatalog,
   roleForAgent,
@@ -18,9 +19,9 @@ const codexReady: Catalog = {
       agent: "codex",
       status: { kind: "ready" },
       models: [
-        { id: "m1", label: "M1", efforts: ["low", "high", "ultra"] },
-        { id: "m2", label: "M2", efforts: ["medium", "xhigh"] },
-        { id: "bare", label: "Bare", efforts: [] },
+        { id: "m1", label: "M1", efforts: ["low", "high", "ultra"], supportsFast: true },
+        { id: "m2", label: "M2", efforts: ["medium", "xhigh"], supportsFast: false },
+        { id: "bare", label: "Bare", efforts: [], supportsFast: false },
       ],
     },
     {
@@ -31,10 +32,16 @@ const codexReady: Catalog = {
   ],
 };
 
-const role = (agent: RoleConfig["agent"], model: string, effort: RoleConfig["effort"]) => ({
+const role = (
+  agent: RoleConfig["agent"],
+  model: string,
+  effort: RoleConfig["effort"],
+  fast = false,
+): RoleConfig => ({
   agent,
   model,
   effort,
+  fast,
 });
 
 beforeEach(() => resetCatalog());
@@ -68,7 +75,7 @@ describe("roleProblem", () => {
 describe("roleForAgent", () => {
   it("picks the new agent's first listed model and a supported effort", () => {
     const next = roleForAgent(codexReady, "codex", role("claude", "sonnet", "high"));
-    expect(next).toEqual({ agent: "codex", model: "m1", effort: "high" });
+    expect(next).toEqual({ agent: "codex", model: "m1", effort: "high", fast: false });
   });
 
   it("never keeps the old agent's model name when the new agent has no list", () => {
@@ -124,5 +131,33 @@ describe("fallbackEfforts", () => {
     expect(fallbackEfforts("codex")).toContain("ultra");
     expect(fallbackEfforts("claude")).not.toContain("ultra");
     expect(fallbackEfforts("claude")).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  });
+});
+
+describe("Fast Mode support", () => {
+  it("fastSupport is yes, no or unknown", () => {
+    expect(fastSupport(codexReady, role("codex", "m1", "low"))).toBe("yes");
+    expect(fastSupport(codexReady, role("codex", "m2", "medium"))).toBe("no");
+    // Claude's support is only visible per run, and a missing catalog says nothing.
+    expect(fastSupport(codexReady, role("claude", "opus", "low"))).toBe("unknown");
+    expect(fastSupport(null, role("codex", "m1", "low"))).toBe("unknown");
+    expect(fastSupport(undefined, role("codex", "m1", "low"))).toBe("unknown");
+  });
+
+  it("switching to a model without Fast Mode clears it", () => {
+    expect(roleForModel(codexReady, role("codex", "m1", "high", true), "m2").fast).toBe(false);
+    expect(roleForModel(codexReady, role("codex", "m2", "medium", true), "m1").fast).toBe(true);
+  });
+
+  it("switching the agent clears it", () => {
+    expect(roleForAgent(codexReady, "claude", role("codex", "m1", "high", true)).fast).toBe(false);
+    expect(roleForAgent(codexReady, "codex", role("claude", "opus", "high", true)).fast).toBe(
+      false,
+    );
+  });
+
+  it("roleProblem flags Fast Mode on a model that cannot", () => {
+    expect(roleProblem(codexReady, role("codex", "m2", "medium", true))).toContain("modo rápido");
+    expect(roleProblem(codexReady, role("codex", "m1", "high", true))).toBeUndefined();
   });
 });

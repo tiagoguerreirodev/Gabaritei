@@ -5,6 +5,7 @@ import type { RoleConfig } from "../bindings/RoleConfig";
 import {
   catalogState,
   effortOptions,
+  fastSupport,
   loadCatalog,
   readyList,
   roleForModel,
@@ -87,6 +88,30 @@ export function EffortField(props: FieldProps) {
         )}
       </For>
     </select>
+  );
+}
+
+/** Fast Mode of a role: shown unless the selected model is known to lack it. */
+export function FastField(props: FieldProps) {
+  return (
+    <Show when={fastSupport(catalogState(), props.value) !== "no"}>
+      <label class="check">
+        <input
+          type="checkbox"
+          aria-label={`Modo rápido: ${props.label}`}
+          checked={props.value.fast}
+          onChange={(event) =>
+            props.onChange({ ...props.value, fast: event.currentTarget.checked })
+          }
+        />
+        Modo rápido
+      </label>
+      <Show when={props.value.agent === "claude"}>
+        <p class="muted" role="note">
+          Exige uso extra ativado na conta Claude; sem isso, roda no modo normal.
+        </p>
+      </Show>
+    </Show>
   );
 }
 

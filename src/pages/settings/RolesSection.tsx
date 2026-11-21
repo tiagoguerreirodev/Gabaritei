@@ -3,7 +3,7 @@ import type { Agent } from "../../bindings/Agent";
 import type { RoleConfig } from "../../bindings/RoleConfig";
 import type { RoleSettings } from "../../bindings/RoleSettings";
 import { catalogState, loadCatalog, roleForAgent, roleProblem } from "../../catalog";
-import { CatalogNotice, EffortField, ModelField } from "../../components/ModelOptions";
+import { CatalogNotice, EffortField, FastField, ModelField } from "../../components/ModelOptions";
 import { agentLabels, agents, roleLabels, roleOrder } from "./labels";
 
 /** Agent, model, effort for each of the four roles. */
@@ -69,6 +69,7 @@ export default function RolesSection(props: {
                   </td>
                   <td>
                     <EffortField label={name} value={config()} onChange={change} />
+                    <FastField label={name} value={config()} onChange={change} />
                   </td>
                 </tr>
               );

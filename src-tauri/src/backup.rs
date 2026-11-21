@@ -114,7 +114,9 @@ pub struct BackupStatus {
     /// pt-BR reason the last automatic or manual backup failed, until one succeeds.
     pub last_error: Option<String>,
     /// Set while the old folder still holds this computer's backups after a folder change. It is
-    /// remembered across restarts until moved, dismissed or the folder is changed again.
+    /// remembered across restarts until the backups are copied or moved (a copy or move with
+    /// failures keeps it), the user dismisses it, the folder is changed again, or the old folder
+    /// holds none of this computer's backups.
     pub left_behind: Option<LeftBehind>,
 }
 
@@ -525,7 +527,9 @@ impl BackupService {
             report.left_alone = others.len() as u32;
             // After a move, what is still here is what could not be moved (the other computer's
             // backups are reported apart). A copy leaves the originals on purpose.
-            let remaining = remove_originals && list(&old).iter().any(|info| !leave_alone(info));
+            // A copy that failed for some backups keeps the offer too, so it can be tried again.
+            let remaining = (remove_originals || report.failed > 0)
+                && list(&old).iter().any(|info| !leave_alone(info));
             db.with(|conn| remember_old_folder(conn, remaining.then_some(old.as_path())))?;
             let status = self.status(db, paths)?;
             Ok(RelocateOutcome { report, status })
@@ -1904,6 +1908,33 @@ mod tests {
             f.db.with(|conn| get_setting::<String>(conn, KEY_LEFT_BEHIND))
                 .unwrap();
         assert_eq!(stored, None);
+    }
+
+    #[test]
+    fn a_copy_that_failed_for_some_backups_can_be_tried_again() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, new) = make_left_behind(&f, &service);
+        // Something unusable already sits under the name of one backup in the new folder.
+        let blocked = list(&old)[0].name.clone();
+        fs::create_dir_all(new.join(&blocked)).unwrap();
+
+        let first = service
+            .relocate_left_behind(&f.db, &f.paths, false)
+            .unwrap();
+        assert_eq!((first.report.copied, first.report.failed), (1, 1));
+        assert!(
+            first.status.left_behind.is_some(),
+            "the offer stays for the retry"
+        );
+
+        fs::remove_dir_all(new.join(&blocked)).unwrap();
+        let second = service
+            .relocate_left_behind(&f.db, &f.paths, false)
+            .unwrap();
+        assert_eq!(second.report.failed, 0);
+        assert_eq!(second.status.left_behind, None, "done: nothing failed");
+        assert_eq!(list(&new).len(), 2);
     }
 
     #[test]

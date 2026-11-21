@@ -738,21 +738,27 @@ impl BackupService {
             // existing ancestor: if that is inside the old folder, so is the new one.
             // `symlink_metadata` does not follow links, so a link whose target is missing is
             // that ancestor too; one that can't be resolved can't be shown to be outside the old
-            // folder, so it counts as inside.
-            let nested = match (
-                fs::canonicalize(&old),
-                new.ancestors()
+            // folder, so it is refused (with its own message: it may lead anywhere).
+            if let Ok(old) = fs::canonicalize(&old)
+                && let Some(existing) = new
+                    .ancestors()
                     .find(|ancestor| ancestor.symlink_metadata().is_ok())
-                    .map(fs::canonicalize),
-            ) {
-                (Ok(old), Some(Ok(existing))) => existing.starts_with(&old),
-                (Ok(_), Some(Err(_))) => true,
-                _ => false,
-            };
-            if nested {
-                return Err(AppError::Invalid(
-                    "A pasta nova fica dentro da pasta anterior. Escolha outra pasta.".into(),
-                ));
+            {
+                match fs::canonicalize(existing) {
+                    Ok(existing) if existing.starts_with(&old) => {
+                        return Err(AppError::Invalid(
+                            "A pasta nova fica dentro da pasta anterior. Escolha outra pasta."
+                                .into(),
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(_) => {
+                        return Err(AppError::Invalid(
+                            "Não foi possível verificar a pasta nova (um atalho quebrado ou sem permissão). Escolha outra pasta."
+                                .into(),
+                        ));
+                    }
+                }
             }
             // Created here, under the lock, and not by the copy: the folder could have been
             // removed since it was chosen (an unplugged drive).
@@ -2411,7 +2417,15 @@ mod tests {
         })
         .unwrap();
 
-        assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
+        let error = service
+            .relocate_left_behind(&f.db, &f.paths, true)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("possível verificar a pasta nova"),
+            "{error}"
+        );
 
         assert!(
             !old.join("missing").exists(),

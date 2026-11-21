@@ -1,4 +1,4 @@
-import { render, screen, within } from "@solidjs/testing-library";
+import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { describe, expect, it, vi } from "vitest";
@@ -71,6 +71,9 @@ function backend(
       case "backup_use_default_folder":
         status = { ...status, folder: "/dados/backups", isDefaultFolder: true };
         return { ...status, leftBehind: leftBehindOnChange };
+      case "backup_forget_left_behind":
+        status = { ...status, leftBehind: null };
+        return null;
       case "open_folder":
         return null;
       case "backup_restore":
@@ -221,6 +224,22 @@ describe("BackupSection", () => {
 
     await user.click(within(notice).getByRole("button", { name: "Entendi" }));
     expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument();
+  });
+
+  it("shows the offer the backend remembers when the page opens, and dismissing forgets it", async () => {
+    const calls = backend({
+      leftBehind: { folder: "/antiga", backups: 2, safety: 0 },
+    });
+    const user = userEvent.setup();
+    render(() => <BackupSection busy={createBusy()} />);
+
+    const notice = await screen.findByTestId("left-behind");
+    expect(notice).toHaveTextContent("/antiga");
+    expect(notice).toHaveTextContent("2 backups, que não aparecem mais aqui");
+
+    await user.click(within(notice).getByRole("button", { name: "Entendi" }));
+    await waitFor(() => expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument());
+    expect(calls.some((c) => c.command === "backup_forget_left_behind")).toBe(true);
   });
 
   it.each([

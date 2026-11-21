@@ -126,6 +126,8 @@ export const api = {
    */
   backupMoveLeftBehind: (removeOriginals: boolean) =>
     call<RelocateOutcome>("backup_move_left_behind", { removeOriginals }),
+  /** Forgets the offer to move the backups left in the previous folder. Moves and deletes nothing. */
+  backupForgetLeftBehind: () => call<null>("backup_forget_left_behind"),
   /** Replaces the current data with a backup, after a safety backup of the current data. */
   backupRestore: (name: string) => call<null>("backup_restore", { name }),
   /** Asks where to save the data file (`Gabaritei-<date>.gabaritei`) and writes it. `false` if cancelled. */

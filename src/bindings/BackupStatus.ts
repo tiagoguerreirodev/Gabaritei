@@ -15,6 +15,7 @@ backups: Array<BackupInfo>,
  */
 lastError: string | null, 
 /**
- * Set only by the call that changed the folder, when the old folder still holds backups.
+ * Set while the old folder still holds this computer's backups after a folder change. It is
+ * remembered across restarts until moved, dismissed or the folder is changed again.
  */
 leftBehind: LeftBehind | null, };

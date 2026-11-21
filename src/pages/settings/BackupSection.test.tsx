@@ -205,7 +205,7 @@ describe("BackupSection", () => {
 
     const toast = await screen.findByText(/2 backups movidos para a pasta nova/);
     expect(toast).toHaveTextContent("1 backup não foi movido (backup-x: A cópia não confere");
-    expect(toast).toHaveTextContent("1 backup do outro computador ficou onde estava");
+    expect(toast).toHaveTextContent("1 backup de outro computador (ou sem identificação) ficou onde estava");
   });
 
   it("says what a folder change leaves behind, and lets the user dismiss it", async () => {

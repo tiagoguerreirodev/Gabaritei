@@ -1,0 +1,48 @@
+name: CI (macOS, manual)
+
+# Apple Silicon is a target platform, but macOS runners bill at 10x on a private repo, so there
+# is no macOS job in ci.yml. Run this one by hand (Actions > CI (macOS, manual) > Run workflow)
+# before a release or after touching the AI runner, the sandbox flags or process handling.
+# It covers what only macOS shows: the Unix fake-CLI runner tests with the Seatbelt sandbox,
+# process-group kill, and the rest of the backend tests (issue #93). The runner timeout and
+# cancel tests are timing-sensitive and may fail here until #117 is fixed.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to test (the selected branch if empty)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust-test-macos:
+    name: Rust tests (macOS Apple Silicon)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          cache-on-failure: true
+
+      - name: cargo clippy (lints the macOS-only code)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: cargo test
+        # The whole suite: `--lib` is only a Windows workaround (see ci.yml).
+        run: cargo test --manifest-path src-tauri/Cargo.toml

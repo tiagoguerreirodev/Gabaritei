@@ -386,3 +386,14 @@ fn ultra_effort_is_refused_for_claude_and_kept_for_codex() {
     };
     assert!(validate_role_config(&mut codex, "Gerar questões").is_ok());
 }
+
+#[test]
+fn load_roles_reads_only_the_roles_and_writes_nothing() {
+    let db = Database::open_in_memory().unwrap();
+    let roles = db.with(|conn| load_roles(conn)).unwrap();
+    assert_eq!(roles, RoleSettings::default());
+    let rows: i64 = db
+        .with(|conn| Ok(conn.query_row("SELECT COUNT(*) FROM settings", [], |r| r.get(0))?))
+        .unwrap();
+    assert_eq!(rows, 0, "no defaults are written");
+}

@@ -18,6 +18,7 @@ use crate::ai::jobs::{GenerationManager, GenerationStatus};
 use crate::ai::ondemand::OnDemand;
 use crate::ai::recheck::{self, RecheckView};
 use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportResult};
+use crate::ai::roles::RoleSettings;
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, RemNoteTest};
 use crate::attempts::{self, AttemptView, SessionStart};
@@ -457,12 +458,14 @@ pub fn abandon(db: State<'_, Database>, attempt_id: String) -> AppResult<()> {
 /// loaded, so it never starts a CLI.
 fn ensure_roles_listed(
     db: &Database,
-    secrets: &Secrets,
     cache: &CatalogCache,
-    roles: impl FnOnce(&AiSettings) -> Vec<(crate::ai::roles::RoleConfig, &'static str)>,
+    roles: impl FnOnce(&RoleSettings) -> Vec<(crate::ai::roles::RoleConfig, &'static str)>,
 ) -> AppResult<()> {
-    let settings = db.with(|conn| settings::load(conn, secrets))?;
-    let roles = roles(&settings);
+    if cache.cached().is_none() {
+        return Ok(());
+    }
+    let saved = db.with(|conn| settings::load_roles(conn))?;
+    let roles = roles(&saved);
     let refs: Vec<_> = roles
         .iter()
         .map(|(config, label)| (config, *label))
@@ -493,12 +496,16 @@ pub fn ai_catalog(
 pub fn save_ai_settings(
     db: State<'_, Database>,
     secrets: State<'_, Secrets>,
+    catalog: State<'_, CatalogCache>,
     input: AiSettingsInput,
 ) -> AppResult<AiSettings> {
-    db.with(|conn| {
+    let saved = db.with(|conn| {
         settings::save(conn, input)?;
         settings::load(conn, &secrets)
-    })
+    })?;
+    // The CLI paths may have changed, so the model lists are read again on next use.
+    catalog.clear();
+    Ok(saved)
 }
 
 /// Saves the RemNote token in the OS keychain; `None` or blank removes it. Returns whether a
@@ -548,22 +555,21 @@ pub fn generation_start<R: Runtime>(
     request.validate()?;
     ensure_roles_listed(
         &app.state::<Database>(),
-        &app.state::<Secrets>(),
         &app.state::<CatalogCache>(),
-        |settings| {
+        |roles| {
             vec![
                 (
                     request
                         .generator
                         .clone()
-                        .unwrap_or_else(|| settings.roles.generate.clone()),
+                        .unwrap_or_else(|| roles.generate.clone()),
                     "Gerar questões",
                 ),
                 (
                     request
                         .checker
                         .clone()
-                        .unwrap_or_else(|| settings.roles.blind_check.clone()),
+                        .unwrap_or_else(|| roles.blind_check.clone()),
                     "Conferência às cegas",
                 ),
             ]
@@ -596,9 +602,8 @@ pub fn blind_check_start<R: Runtime>(
     ensure_not_backing_up(&service)?;
     ensure_roles_listed(
         &app.state::<Database>(),
-        &app.state::<Secrets>(),
         &app.state::<CatalogCache>(),
-        |settings| vec![(settings.roles.blind_check.clone(), "Conferência às cegas")],
+        |roles| vec![(roles.blind_check.clone(), "Conferência às cegas")],
     )?;
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
@@ -688,8 +693,8 @@ pub async fn recheck_ask<R: Runtime>(
         let secrets = app.state::<Secrets>();
         let jobs = app.state::<OnDemand>();
         let catalog = app.state::<CatalogCache>();
-        ensure_roles_listed(&db, &secrets, &catalog, |settings| {
-            vec![(settings.roles.recheck.clone(), "Revisão sob demanda")]
+        ensure_roles_listed(&db, &catalog, |roles| {
+            vec![(roles.recheck.clone(), "Revisão sob demanda")]
         })?;
         recheck::ask_recheck(&db, &secrets, &jobs, &attempt_id, position)
     })
@@ -735,8 +740,8 @@ pub async fn explain_ask<R: Runtime>(
         let secrets = app.state::<Secrets>();
         let jobs = app.state::<OnDemand>();
         let catalog = app.state::<CatalogCache>();
-        ensure_roles_listed(&db, &secrets, &catalog, |settings| {
-            vec![(settings.roles.explain.clone(), "Explicação sob demanda")]
+        ensure_roles_listed(&db, &catalog, |roles| {
+            vec![(roles.explain.clone(), "Explicação sob demanda")]
         })?;
         explain::ask_explain(&db, &secrets, &jobs, &attempt_id, position)
     })
@@ -1353,7 +1358,8 @@ mod tests {
     }
 
     /// A source that always lists one Codex model, so a run can be checked against it.
-    struct OneModel;
+    #[derive(Default)]
+    struct OneModel(std::sync::Arc<std::sync::atomic::AtomicUsize>);
 
     impl crate::ai::catalog::CatalogSource for OneModel {
         fn agent(&self) -> Agent {
@@ -1361,6 +1367,7 @@ mod tests {
         }
 
         fn load(&self, _: &settings::CliPaths) -> crate::ai::catalog::AgentCatalog {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             crate::ai::catalog::AgentCatalog {
                 agent: Agent::Codex,
                 status: crate::ai::catalog::CatalogStatus::Ready,
@@ -1375,7 +1382,7 @@ mod tests {
 
     #[test]
     fn a_generation_with_a_model_the_catalog_no_longer_lists_is_refused() {
-        let cache = crate::ai::catalog::CatalogCache::new(vec![Box::new(OneModel)]);
+        let cache = crate::ai::catalog::CatalogCache::new(vec![Box::new(OneModel::default())]);
         cache.get(&settings::CliPaths::default());
         let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
         let request = json!({
@@ -1392,6 +1399,28 @@ mod tests {
         assert!(message.contains("Gerar questões"), "{message}");
         let status = app.call("generation_status", json!({})).unwrap();
         assert_eq!(status["running"], json!(false));
+    }
+
+    #[test]
+    fn saving_the_settings_makes_the_next_catalog_read_load_again() {
+        use std::sync::atomic::Ordering;
+        let loads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cache = crate::ai::catalog::CatalogCache::new(vec![Box::new(OneModel(loads.clone()))]);
+        let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
+        let before = 0;
+        app.call("ai_catalog", json!({ "refresh": false })).unwrap();
+        app.call("ai_catalog", json!({ "refresh": false })).unwrap();
+        assert_eq!(loads.load(Ordering::SeqCst), before + 1);
+
+        let settings = app.call("ai_settings", json!({})).unwrap();
+        let input = json!({
+            "cliPaths": settings["cliPaths"], "roles": settings["roles"], "remnote": settings["remnote"],
+        });
+        app.call("save_ai_settings", json!({ "input": input }))
+            .unwrap();
+
+        app.call("ai_catalog", json!({ "refresh": false })).unwrap();
+        assert_eq!(loads.load(Ordering::SeqCst), before + 2);
     }
 
     #[test]

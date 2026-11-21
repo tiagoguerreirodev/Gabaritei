@@ -152,6 +152,20 @@ pub(super) fn capture(cli: &Path, args: &[&str]) -> Option<Captured> {
 /// Like [`capture`], keeping at most `limit` bytes of each stream. Output past the limit is read
 /// and discarded, so a chatty child can't block on a full pipe.
 pub(super) fn capture_limited(cli: &Path, args: &[&str], limit: u64) -> Option<Captured> {
+    capture_with(cli, args, limit, PROBE_TIMEOUT)
+}
+
+/// How long to wait for the output readers once the child has ended or been killed. A killed
+/// child's own children may keep the pipes open, and must not hold the probe hostage.
+const READER_GRACE: Duration = Duration::from_secs(2);
+
+/// Like [`capture_limited`], with a custom timeout.
+pub(super) fn capture_with(
+    cli: &Path,
+    args: &[&str],
+    limit: u64,
+    timeout: Duration,
+) -> Option<Captured> {
     let mut command = Command::new(cli);
     command
         .args(args)
@@ -166,9 +180,15 @@ pub(super) fn capture_limited(cli: &Path, args: &[&str], limit: u64) -> Option<C
     let mut child = spawn_retrying(&mut command).ok()?;
     let mut stdout = child.stdout.take()?;
     let mut stderr = child.stderr.take()?;
-    let out = std::thread::spawn(move || read_all(&mut stdout, limit));
-    let err = std::thread::spawn(move || read_all(&mut stderr, limit));
-    let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
+    let (out_tx, out_rx) = std::sync::mpsc::channel();
+    let (err_tx, err_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = out_tx.send(read_all(&mut stdout, limit));
+    });
+    std::thread::spawn(move || {
+        let _ = err_tx.send(read_all(&mut stderr, limit));
+    });
+    let deadline = std::time::Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
@@ -182,8 +202,8 @@ pub(super) fn capture_limited(cli: &Path, args: &[&str], limit: u64) -> Option<C
             }
         }
     };
-    let stdout = out.join().unwrap_or_default();
-    let stderr = err.join().unwrap_or_default();
+    let stdout = out_rx.recv_timeout(READER_GRACE).unwrap_or_default();
+    let stderr = err_rx.recv_timeout(READER_GRACE).unwrap_or_default();
     Some(Captured {
         success: status.is_some_and(|s| s.success()),
         stdout,
@@ -376,6 +396,24 @@ esac"#,
     }
 
     #[cfg(unix)]
+    #[test]
+    #[cfg(unix)]
+    fn capture_returns_after_the_timeout_even_if_a_grandchild_keeps_the_pipes_open() {
+        let dir = tempfile::tempdir().unwrap();
+        // The background `sleep` outlives the killed shell and keeps stdout and stderr open.
+        let script =
+            crate::ai::runner::tests::write_script(dir.path(), "slow", "sleep 6 &\nsleep 6");
+        let started = std::time::Instant::now();
+        let out = capture_with(&script, &[], 1 << 20, Duration::from_millis(300))
+            .expect("the probe still reports");
+        assert!(!out.success);
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "waited {:?}",
+            started.elapsed()
+        );
+    }
+
     #[test]
     fn probes_survive_scripts_written_while_other_threads_fork() {
         // Regression for #60: writing a script and running it at once can hit ETXTBSY.

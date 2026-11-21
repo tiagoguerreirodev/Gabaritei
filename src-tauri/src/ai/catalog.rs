@@ -71,7 +71,10 @@ pub trait CatalogSource: Send + Sync {
 /// Session cache of the lists. Managed Tauri state.
 pub struct CatalogCache {
     sources: Vec<Box<dyn CatalogSource>>,
+    /// The loaded lists. Held only to read or swap them, never while a CLI runs.
     state: Mutex<Option<Catalog>>,
+    /// Held for the whole of a load, so only one load runs at a time.
+    load_lock: Mutex<()>,
     /// Counts completed loads, so a refresh that waited behind another one can reuse its result.
     generation: AtomicU64,
 }
@@ -81,6 +84,7 @@ impl CatalogCache {
         Self {
             sources,
             state: Mutex::new(None),
+            load_lock: Mutex::new(()),
             generation: AtomicU64::new(0),
         }
     }
@@ -95,37 +99,51 @@ impl CatalogCache {
         }
     }
 
-    /// The lists if they were already loaded. Never starts a CLI, so it is safe to call from a
-    /// command that must not block.
+    fn lists(&self) -> std::sync::MutexGuard<'_, Option<Catalog>> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Reads the lists and stores them. Call with `load_lock` held.
+    fn load_and_store(&self, cli_paths: &CliPaths) -> Catalog {
+        let catalog = self.load_all(cli_paths);
+        *self.lists() = Some(catalog.clone());
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        catalog
+    }
+
+    /// The lists if they were already loaded. Never starts a CLI and never waits for a load in
+    /// progress, so it is safe to call from a command that must not block.
     pub fn cached(&self) -> Option<Catalog> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.lists().clone()
+    }
+
+    /// Forgets the lists (for example after the CLI paths changed).
+    pub fn clear(&self) {
+        *self.lists() = None;
     }
 
     /// The cached lists, loading them the first time.
     pub fn get(&self, cli_paths: &CliPaths) -> Catalog {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(catalog) = state.as_ref() {
-            return catalog.clone();
+        if let Some(catalog) = self.cached() {
+            return catalog;
         }
-        let catalog = self.load_all(cli_paths);
-        self.generation.fetch_add(1, Ordering::SeqCst);
-        *state = Some(catalog.clone());
-        catalog
+        let _loading = self.load_lock.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(catalog) = self.cached() {
+            return catalog;
+        }
+        self.load_and_store(cli_paths)
     }
 
     /// Reloads the lists. Callers that arrive while a reload is running share its result.
     pub fn refresh(&self, cli_paths: &CliPaths) -> Catalog {
         let seen = self.generation.load(Ordering::SeqCst);
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let _loading = self.load_lock.lock().unwrap_or_else(|e| e.into_inner());
         if self.generation.load(Ordering::SeqCst) != seen
-            && let Some(catalog) = state.as_ref()
+            && let Some(catalog) = self.cached()
         {
-            return catalog.clone();
+            return catalog;
         }
-        let catalog = self.load_all(cli_paths);
-        self.generation.fetch_add(1, Ordering::SeqCst);
-        *state = Some(catalog.clone());
-        catalog
+        self.load_and_store(cli_paths)
     }
 }
 

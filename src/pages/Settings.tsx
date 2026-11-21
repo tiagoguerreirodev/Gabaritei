@@ -1,6 +1,7 @@
 import { Show, createResource, createSignal } from "solid-js";
 import { createStore, reconcile, unwrap } from "solid-js/store";
 import { api } from "../api";
+import { loadCatalog } from "../catalog";
 import type { Agent } from "../bindings/Agent";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { RoleConfig } from "../bindings/RoleConfig";
@@ -14,7 +15,7 @@ import DataFileSection from "./settings/DataFileSection";
 import { createBusy } from "./settings/busy";
 import AgentsSection from "./settings/AgentsSection";
 import RemNoteSection from "./settings/RemNoteSection";
-import RolesSection, { rolesBlocked } from "./settings/RolesSection";
+import RolesSection from "./settings/RolesSection";
 
 /** A deep copy where no two places share an object (unlike `structuredClone`). */
 function clone<T>(value: T): T {
@@ -50,6 +51,7 @@ export default function Settings() {
 function Form(props: { initial: AiSettings; onReload: () => void }) {
   const [draft, setDraft] = createStore<AiSettings>(clone(props.initial));
   const [saving, setSaving] = createSignal(false);
+  let savedPaths = JSON.stringify(props.initial.cliPaths);
 
   const save = async (quiet: boolean): Promise<boolean> => {
     setSaving(true);
@@ -57,6 +59,11 @@ function Form(props: { initial: AiSettings; onReload: () => void }) {
       const { cliPaths, roles, remnote } = clone(unwrap(draft));
       const saved = await api.saveAiSettings({ cliPaths, roles, remnote });
       setDraft(reconcile(saved));
+      // The model lists come from the CLIs, so a different CLI path means different lists.
+      if (JSON.stringify(saved.cliPaths) !== savedPaths) {
+        savedPaths = JSON.stringify(saved.cliPaths);
+        void loadCatalog(true);
+      }
       if (!quiet) showToast("Configurações salvas.");
       return true;
     } catch (error) {
@@ -86,12 +93,7 @@ function Form(props: { initial: AiSettings; onReload: () => void }) {
         beforeTest={() => save(true)}
       />
       <p>
-        <button
-          type="button"
-          class="primary"
-          disabled={saving() || rolesBlocked(draft.roles)}
-          onClick={() => void save(false)}
-        >
+        <button type="button" class="primary" disabled={saving()} onClick={() => void save(false)}>
           {saving() ? "Salvando…" : "Salvar configurações"}
         </button>
       </p>

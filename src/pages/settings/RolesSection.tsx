@@ -6,11 +6,6 @@ import { catalogState, loadCatalog, roleForAgent, roleProblem } from "../../cata
 import { CatalogNotice, EffortField, ModelField } from "../../components/ModelOptions";
 import { agentLabels, agents, roleLabels, roleOrder } from "./labels";
 
-/** Whether any role uses a model or effort that the agent's list no longer offers. */
-export function rolesBlocked(roles: RoleSettings): boolean {
-  return roleOrder.some(({ key }) => roleProblem(catalogState(), roles[key]) !== undefined);
-}
-
 /** Agent, model, effort for each of the four roles. */
 export default function RolesSection(props: {
   roles: RoleSettings;

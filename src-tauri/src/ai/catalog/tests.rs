@@ -342,3 +342,33 @@ fn loaded_lists_block_a_stale_role_and_unloaded_ones_never_load_anything() {
         "{error}"
     );
 }
+
+#[test]
+fn cached_does_not_wait_for_a_load_in_progress() {
+    let (cache, _) = cache_with(ready(Agent::Codex, "m1"), Duration::from_millis(400));
+    let cache = Arc::new(cache);
+    let loading = {
+        let cache = Arc::clone(&cache);
+        std::thread::spawn(move || cache.get(&CliPaths::default()))
+    };
+    std::thread::sleep(Duration::from_millis(80));
+    let started = std::time::Instant::now();
+    assert!(cache.cached().is_none());
+    assert!(
+        started.elapsed() < Duration::from_millis(200),
+        "cached() waited {:?} for the load",
+        started.elapsed()
+    );
+    loading.join().unwrap();
+    assert!(cache.cached().is_some());
+}
+
+#[test]
+fn clear_forgets_the_lists_so_the_next_get_reads_them_again() {
+    let (cache, loads) = cache_with(ready(Agent::Codex, "m1"), Duration::ZERO);
+    cache.get(&CliPaths::default());
+    cache.clear();
+    assert!(cache.cached().is_none());
+    cache.get(&CliPaths::default());
+    assert_eq!(loads.load(Ordering::SeqCst), 2);
+}

@@ -79,6 +79,9 @@ codex exec - --output-schema schema.json -o saida.json --json
   `service_tiers[]`. The rest, including long prompt text, is ignored. Effort names seen: `low`,
   `medium`, `high`, `xhigh`, `max` and `ultra` (Codex only). The app defaults to **`gpt-6.2-sol`**
   with **`xhigh`**.
+- **The model-list probe is not an isolated run:** `codex debug models` runs without a run folder, a
+  prompt or attachments (stdin closed, no shell, output capped at 8 MiB, killed after 20 s). It reads no
+  credential file and sends no prompt.
 - **Fast Mode (Codex):** every model reports a `priority` tier named "Fast"; a non-empty
   `service_tiers` means the model supports it. `-c service_tier="priority"` is accepted by
   `codex exec --strict-config` and a made-up key is rejected, but the value is not validated and

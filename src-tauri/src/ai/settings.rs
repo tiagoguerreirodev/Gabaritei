@@ -100,6 +100,11 @@ pub fn load_cli_paths(conn: &Connection) -> AppResult<CliPaths> {
     Ok(get_setting(conn, KEY_CLI_PATHS)?.unwrap_or_default())
 }
 
+/// Just the role configuration (the saved one, or the defaults), with no writes and no keychain.
+pub fn load_roles(conn: &Connection) -> AppResult<RoleSettings> {
+    Ok(get_setting(conn, KEY_ROLES)?.unwrap_or_default())
+}
+
 /// Loads the settings, writing the defaults the first time (spec §7: set on first run).
 pub fn load(conn: &Connection, secrets: &Secrets) -> AppResult<AiSettings> {
     let roles = match get_setting::<RoleSettings>(conn, KEY_ROLES)? {

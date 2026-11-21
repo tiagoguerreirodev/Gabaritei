@@ -280,14 +280,39 @@ describe("Configurações", () => {
     });
   });
 
-  it("blocks saving while a role uses a model the list no longer has", async () => {
+  it("warns about a role whose model the list no longer has, but still lets the settings be saved", async () => {
     const stale: AiSettings = {
       ...defaults,
       roles: { ...defaults.roles, explain: { agent: "codex", model: "antigo", effort: "low" } },
     };
-    backend(stale, undefined, undefined, listed);
+    const calls = backend(stale, undefined, undefined, listed);
+    const user = userEvent.setup();
     render(() => <Settings />);
     expect(await screen.findByText(/“antigo” não está mais disponível/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Salvar configurações" })).toBeDisabled();
+    const save = screen.getByRole("button", { name: "Salvar configurações" });
+    expect(save).toBeEnabled();
+    await user.click(save);
+    expect(calls.some((c) => c.command === "save_ai_settings")).toBe(true);
+  });
+
+  it("reads the lists again after the CLI path changes", async () => {
+    const calls = backend(defaults, undefined, undefined, listed);
+    const user = userEvent.setup();
+    render(() => <Settings />);
+    const codexPath = await screen.findByLabelText("Codex");
+    await screen.findByRole("combobox", { name: "Modelo: Gerar questões" });
+    const catalogCalls = () => calls.filter((c) => c.command === "ai_catalog").length;
+    const before = catalogCalls();
+
+    // Saving without touching the paths leaves the lists alone.
+    await user.click(screen.getByRole("button", { name: "Salvar configurações" }));
+    await screen.findByText("Configurações salvas.").catch(() => undefined);
+    expect(catalogCalls()).toBe(before);
+
+    await user.type(codexPath, "/opt/codex");
+    await user.click(screen.getByRole("button", { name: "Salvar configurações" }));
+    await waitFor(() => expect(catalogCalls()).toBe(before + 1));
+    const last = calls.filter((c) => c.command === "ai_catalog").at(-1);
+    expect((last?.args as { refresh: boolean }).refresh).toBe(true);
   });
 });

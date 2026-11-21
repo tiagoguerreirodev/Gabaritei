@@ -380,8 +380,23 @@ pub fn set_folder(conn: &Connection, paths: &AppPaths, chosen: Option<&Path>) ->
     let not_writable = || {
         AppError::Invalid("Não foi possível gravar na pasta escolhida. Escolha outra pasta.".into())
     };
-    fs::create_dir_all(chosen).map_err(|_| not_writable())?;
     // A link (or a Windows junction) can lead into a backup; look at where it really points.
+    // Only a part of the path that already exists can be a link, so the deepest existing
+    // ancestor is checked before anything is created: refusing then leaves no empty folders
+    // inside the backup. `symlink_metadata` does not follow links, so a link whose target does
+    // not exist yet is found too; where it would lead can't be checked, so it is refused.
+    if let Some(existing) = chosen
+        .ancestors()
+        .find(|ancestor| ancestor.symlink_metadata().is_ok())
+    {
+        match fs::canonicalize(existing) {
+            Ok(real) if inside_a_backup(&real) => return Err(refuse()),
+            Ok(_) => {}
+            Err(_) => return Err(not_writable()),
+        }
+    }
+    fs::create_dir_all(chosen).map_err(|_| not_writable())?;
+    // Checked again once it exists, in case the path changed meanwhile.
     if fs::canonicalize(chosen).is_ok_and(|real| inside_a_backup(&real)) {
         return Err(refuse());
     }
@@ -1728,9 +1743,30 @@ mod tests {
         f.db.with(|conn| {
             assert!(set_folder(conn, &f.paths, Some(&link)).is_err());
             assert!(set_folder(conn, &f.paths, Some(&link.join("sub"))).is_err());
+            assert!(set_folder(conn, &f.paths, Some(&link.join("a").join("b"))).is_err());
             Ok(())
         })
         .unwrap();
+        // Refusing must not leave empty folders inside the backup.
+        assert_eq!(fs::read_dir(&real).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_link_into_a_backup_creates_nothing_either() {
+        let f = fixture();
+        let root = f.paths.data_dir().join("shared");
+        let real = root.join("backup-20261119-210000-123");
+        fs::create_dir_all(&real).unwrap();
+        // The link's target does not exist yet.
+        let link = f.paths.data_dir().join("dangling");
+        std::os::unix::fs::symlink(real.join("missing"), &link).unwrap();
+        f.db.with(|conn| {
+            assert!(set_folder(conn, &f.paths, Some(&link.join("sub"))).is_err());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(fs::read_dir(&real).unwrap().count(), 0);
     }
 
     #[test]

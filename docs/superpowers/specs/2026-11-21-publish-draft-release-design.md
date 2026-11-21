@@ -16,7 +16,7 @@ The Release workflow builds the Windows and macOS installers but leaves them as 
 - Write permission outside the publish job.
 
 ## Constraints
-- Build jobs stay as they are; PR runs remain build-only.
+- The workflow runs only on manual dispatch with a version: no PR or push trigger (owner decision after the first PR).
 - No third-party release action; use the runner's `gh` CLI.
 
 ## Approaches
@@ -28,19 +28,19 @@ The Release workflow builds the Windows and macOS installers but leaves them as 
 - Trigger: `workflow_dispatch` with a `version` input.
 - Draft release, auto-generated notes.
 - Version must equal `package.json`, else fail.
-- Only `main` may publish; other refs stay build-only.
+- Only `main` may publish; a dispatch on another ref builds and uploads artifacts but publishes nothing.
 - Add a macOS "right-click > Open" line to the notes (English).
 
 ## Decisions (agent calls, approved with the design)
 - `version` has no `v` prefix; the tag is `v<version>`.
-- Empty `version` on dispatch means build-only, as today.
+- `version` is a required input; there is no build-only mode.
 - Fail if `v<version>` already exists; never overwrite.
 - No pre-release flag.
-- Dispatch runs are not cancelled in progress (PR runs still are).
+- Runs are never cancelled in progress.
 - `publish` has `needs: bundle`, its own `contents: write`, workflow default stays `contents: read`.
 
 ## Left to the builder
 Exact step layout, artifact download paths, and the `gh` flags that attach the files and pin `--target` to the run's SHA.
 
 ## Verification
-`actionlint`; the PR run proves the build still works. The publish path is checked by one dispatch on `main` after merge, then deleting the draft.
+`actionlint` and the guard script tests (run in CI). The build itself is no longer exercised on PRs. The publish path is checked by one dispatch on `main` after merge, then deleting the draft.

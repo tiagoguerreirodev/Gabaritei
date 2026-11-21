@@ -28,7 +28,7 @@ run() {
   LAST_OUT=$out
 }
 
-run "empty version is build-only" ok "" true
+run "empty version is rejected" fail "" true
 run "matching version" ok "1.2.3" true
 run "mismatching version" fail "1.2.4" true
 run "v prefix rejected" fail "v1.2.3" true

@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Guards a release dispatch. Run from the repo root with:
-#   VERSION  the requested version without a "v" prefix; empty means build only
+#   VERSION  the requested version without a "v" prefix; required
 #   PUBLISH  "true" when this run will publish (so the tag must not exist yet)
 set -euo pipefail
 
 version="${VERSION:-}"
-[ -z "$version" ] && exit 0
+if [ -z "$version" ]; then
+  echo "::error::No version given."
+  exit 1
+fi
 
 if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
   echo "::error::Invalid version '$version': use X.Y.Z (optionally -suffix) without a v prefix."

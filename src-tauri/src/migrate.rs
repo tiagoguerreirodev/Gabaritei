@@ -447,7 +447,26 @@ pub fn import_legacy_bank(
     let prepared = prepare(snapshot.tables)?;
     let images = read_images(&library, &manifest, &prepared.images)?;
 
-    let report = db.transaction(|tx| {
+    write_import(db, images_dir, prepared, &images, now)
+}
+
+/// Writes the prepared bank in one transaction. The "already imported" check happens inside it,
+/// so two imports that both passed the early check cannot both write: the database lock
+/// serializes the transactions and the second one returns the first one's report.
+fn write_import(
+    db: &Database,
+    images_dir: &Path,
+    prepared: Prepared,
+    images: &[(String, Vec<u8>)],
+    now: &str,
+) -> AppResult<LegacyImportOutcome> {
+    db.transaction(|tx| {
+        if let Some(report) = get_setting(tx, STATUS_KEY)? {
+            return Ok(LegacyImportOutcome {
+                report,
+                already_imported: true,
+            });
+        }
         let plan = plan_import(tx, prepared.inputs)?;
         if !plan.problems.is_empty() {
             let shown: Vec<&str> = plan.problems.iter().take(10).map(String::as_str).collect();
@@ -468,7 +487,7 @@ pub fn import_legacy_bank(
             )));
         }
 
-        write_images(images_dir, &images)?;
+        write_images(images_dir, images)?;
         let outcome = apply_import(tx, &plan, now)?;
 
         for collection in &prepared.collections {
@@ -499,12 +518,10 @@ pub fn import_legacy_bank(
             images: images.len() as u32,
         };
         set_setting(tx, STATUS_KEY, &report)?;
-        Ok(report)
-    })?;
-
-    Ok(LegacyImportOutcome {
-        report,
-        already_imported: false,
+        Ok(LegacyImportOutcome {
+            report,
+            already_imported: false,
+        })
     })
 }
 
@@ -730,6 +747,34 @@ mod tests {
         assert_eq!(second.report, first.report);
         assert_eq!(f.count("questions"), 2);
         assert_eq!(f.count("collection_items"), 3);
+    }
+
+    #[test]
+    fn an_import_that_lost_the_race_writes_nothing_and_returns_the_winner_report() {
+        // Another import finishes between this one's early status check and its write.
+        let f = fixture_with(&snapshot());
+        let winner = run(&f).unwrap().report;
+        let library = locate_library(&f.root).unwrap();
+        let manifest = read_manifest(&library).unwrap();
+        let snapshot = read_snapshot(&library, &manifest).unwrap();
+        let prepared = prepare(snapshot.tables).unwrap();
+        let images = read_images(&library, &manifest, &prepared.images).unwrap();
+        fs::remove_dir_all(&f.images_dir).unwrap();
+
+        let outcome = write_import(
+            &f.db,
+            &f.images_dir,
+            prepared,
+            &images,
+            "2030-01-01T00:00:00.000Z",
+        )
+        .unwrap();
+
+        assert!(outcome.already_imported);
+        assert_eq!(outcome.report, winner);
+        assert_eq!(f.count("questions"), 2);
+        assert_eq!(f.count("collections"), 2);
+        assert!(!f.images_dir.exists(), "the loser copied no image");
     }
 
     #[test]

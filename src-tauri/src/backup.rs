@@ -329,7 +329,9 @@ fn left_behind(old: &Path, left: &[BackupInfo]) -> Option<LeftBehind> {
 
 /// Whether two paths are the same folder, even when one is spelled differently.
 fn same_folder(a: &Path, b: &Path) -> bool {
-    a == b || matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
+    a == b
+        || matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
+        || same_file::is_same_file(a, b).unwrap_or(false)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -424,11 +426,31 @@ impl BackupService {
                 *lock(&self.left_behind) = None;
                 return Err(nothing());
             }
-            let names: Vec<String> = list(&old).into_iter().map(|info| info.name).collect();
-            let report = relocate::relocate(&old, &new, &names, remove_originals)?;
+            // A new folder inside the old one (so inside a backup, or a temporary folder) would
+            // be deleted along with the original on a move.
+            let nested = match (fs::canonicalize(&old), fs::canonicalize(&new)) {
+                (Ok(old), Ok(new)) => new.starts_with(&old),
+                _ => false,
+            };
+            if nested {
+                return Err(AppError::Invalid(
+                    "A pasta nova fica dentro da pasta anterior. Escolha outra pasta.".into(),
+                ));
+            }
+            // Another computer's backups stay where they are: it may still use that folder.
+            let (others, mine): (Vec<_>, Vec<_>) =
+                list(&old).into_iter().partition(|info| info.other_computer);
+            let names: Vec<String> = mine.into_iter().map(|info| info.name).collect();
+            let mut report = relocate::relocate(&old, &new, &names, remove_originals)?;
+            report.left_alone = others.len() as u32;
             let mut status = self.status(db, paths)?;
-            let remaining = if remove_originals {
+            // After a move, what is still here is what could not be moved (the other computer's
+            // backups are reported apart). A copy leaves the originals on purpose.
+            let remaining: Vec<BackupInfo> = if remove_originals {
                 list(&old)
+                    .into_iter()
+                    .filter(|info| !info.other_computer)
+                    .collect()
             } else {
                 Vec::new()
             };
@@ -1695,5 +1717,137 @@ mod tests {
         assert_eq!(outcome.report.removed, 0);
         assert_eq!(list(&old).len(), 1);
         snapshot::verify(&new.join("backup-20261119-100000-000")).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn moving_into_the_same_physical_folder_never_deletes_the_only_copy() {
+        let f = fixture();
+        let old = default_folder(&f.paths);
+        let info = create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T10:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        // Another spelling of the same folder.
+        let alias = f._dir.path().join("alias");
+        std::os::unix::fs::symlink(&old, &alias).unwrap();
+
+        let report =
+            relocate::relocate(&old, &alias, std::slice::from_ref(&info.name), true).unwrap();
+
+        assert_eq!(report.failed, 1);
+        assert_eq!(report.removed, 0);
+        snapshot::verify(&old.join(&info.name)).unwrap();
+    }
+
+    #[test]
+    fn a_new_folder_inside_the_old_one_is_refused() {
+        let f = fixture();
+        let service = BackupService::default();
+        let old = default_folder(&f.paths);
+        let info = create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T10:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        let inside = old.join(&info.name).join("sub");
+        service
+            .change_folder(&f.db, &f.paths, Some(&inside))
+            .unwrap();
+
+        assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
+        snapshot::verify(&old.join(&info.name)).unwrap();
+    }
+
+    #[test]
+    fn another_computers_backups_are_left_where_they_are() {
+        let f = fixture();
+        let service = BackupService::default();
+        let old = default_folder(&f.paths);
+        as_computer("laptop");
+        let theirs = create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T09:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        as_computer("desktop");
+        create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T10:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        let new = f._dir.path().join("synced");
+        service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
+
+        let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+
+        assert_eq!(outcome.report.removed, 1);
+        assert_eq!(outcome.report.left_alone, 1);
+        assert!(old.join(&theirs.name).is_dir(), "the laptop's backup stays");
+        assert!(!new.join(&theirs.name).exists());
+        assert_eq!(outcome.status.left_behind, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_inside_a_backup_is_never_followed_and_extra_files_are_not_copied() {
+        let f = fixture();
+        let service = BackupService::default();
+        let old = default_folder(&f.paths);
+        let info = create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T10:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        let dir = old.join(&info.name);
+        fs::write(dir.join("notes.txt"), b"extra").unwrap();
+        let new = f._dir.path().join("synced");
+        service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
+        let outcome = service
+            .relocate_left_behind(&f.db, &f.paths, false)
+            .unwrap();
+        assert_eq!(outcome.report.copied, 1);
+        assert!(!new.join(&info.name).join("notes.txt").exists());
+
+        // Now the database file is a link: not a regular file, so the copy is refused.
+        let other = create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T11:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        let db_file = old.join(&other.name).join("gabaritei.sqlite");
+        let real = old.join("real.sqlite");
+        fs::rename(&db_file, &real).unwrap();
+        std::os::unix::fs::symlink(&real, &db_file).unwrap();
+        service.change_folder(&f.db, &f.paths, None).unwrap();
+        service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
+        let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+        assert_eq!(outcome.report.failed, 1);
+        assert!(old.join(&other.name).is_dir());
     }
 }

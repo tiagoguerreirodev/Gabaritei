@@ -1,19 +1,21 @@
 //! Copying or moving the backups left in the old folder to the new one, after the backup
 //! folder changed.
 //!
-//! Each backup is copied into a hidden temporary folder in the new folder, checked with
-//! [`snapshot::verify`] (every hash, the database's integrity and schema), and only then renamed
-//! to its name. The original is deleted only after that, and only when the user asked to move.
-//! Any failure leaves the original where it was.
+//! Each backup is copied (only its manifest and the files the manifest lists) into a hidden
+//! temporary folder in the new folder, flushed to disk, checked with [`snapshot::verify`]
+//! (every hash, the database's integrity and schema) and renamed to its name. The original is
+//! removed only after that, and only when the user asked to move: it is first renamed to a
+//! hidden name (atomic, so it never shows as a half-deleted backup) and then deleted. Any
+//! failure before that leaves the original untouched.
 
-use std::fs;
+use std::fs::{self, File};
 use std::path::Path;
 
 use serde::Serialize;
 use ts_rs::TS;
 
-use super::snapshot;
-use crate::error::AppResult;
+use super::snapshot::{self, Manifest};
+use crate::error::{AppError, AppResult};
 
 /// What a copy or move did, in backups.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, TS)]
@@ -26,15 +28,18 @@ pub struct RelocateReport {
     pub already_there: u32,
     /// Originals deleted after their copy was verified (when moving).
     pub removed: u32,
-    /// Backups that could not be copied and verified, or whose original could not be deleted.
-    /// Their originals are untouched or, at worst, still complete.
+    /// Backups that could not be copied and verified, or whose original could not be removed.
+    /// A failed copy leaves its original untouched.
     pub failed: u32,
     /// Why the first failed one failed (pt-BR, with the backup's name).
     pub first_failure: Option<String>,
+    /// Backups of another computer in the old folder, which are never copied or moved: that
+    /// computer may still use the folder.
+    pub left_alone: u32,
 }
 
-/// Copies every complete backup in `old` to `new` and, when `remove_originals`, deletes each
-/// original once its copy is verified. `names` are the backups to handle (see [`super::list`]).
+/// Copies the backups called `names` from `old` to `new` and, when `remove_originals`, removes
+/// each original once its copy is verified.
 pub fn relocate(
     old: &Path,
     new: &Path,
@@ -44,7 +49,7 @@ pub fn relocate(
     fs::create_dir_all(new)?;
     let mut report = RelocateReport::default();
     for name in names {
-        match relocate_one(&old.join(name), new, name, remove_originals) {
+        match relocate_one(old, new, name, remove_originals) {
             Ok(Done { copied, removed }) => {
                 if copied {
                     report.copied += 1;
@@ -69,15 +74,22 @@ struct Done {
     removed: bool,
 }
 
-fn relocate_one(source: &Path, new: &Path, name: &str, remove: bool) -> AppResult<Done> {
+fn relocate_one(old: &Path, new: &Path, name: &str, remove: bool) -> AppResult<Done> {
+    let source = old.join(name);
     let target = new.join(name);
-    let original = snapshot::read_manifest(source)?;
+    let original = snapshot::read_manifest(&source)?;
     let copied = if target.exists() {
-        // The same backup (a folder shared by both, or a copy made before): fine only if it
-        // is complete and says exactly the same.
+        // Never delete the only copy: "already there" must be a different folder, however the
+        // two paths are spelled (another mount of the same share, a link, letter case).
+        if same_file::is_same_file(&source, &target).unwrap_or(true) {
+            return Err(AppError::Invalid(
+                "A pasta nova e a anterior parecem ser a mesma pasta.".into(),
+            ));
+        }
+        // The same backup (a copy made before): fine only if complete and exactly the same.
         let existing = snapshot::verify(&target)?;
         if existing != original {
-            return Err(crate::error::AppError::Invalid(
+            return Err(AppError::Invalid(
                 "Já existe outro backup com este nome na pasta nova.".into(),
             ));
         }
@@ -85,13 +97,13 @@ fn relocate_one(source: &Path, new: &Path, name: &str, remove: bool) -> AppResul
     } else {
         let building = new.join(format!(".tmp-{name}"));
         let _ = fs::remove_dir_all(&building);
-        let made = copy_dir(source, &building)
+        let made = copy_snapshot(&source, &original, &building)
             .and_then(|()| snapshot::verify(&building))
             .and_then(|copy| {
                 if copy == original {
                     fs::rename(&building, &target).map_err(Into::into)
                 } else {
-                    Err(crate::error::AppError::Invalid(
+                    Err(AppError::Invalid(
                         "A cópia não confere com o original.".into(),
                     ))
                 }
@@ -100,35 +112,64 @@ fn relocate_one(source: &Path, new: &Path, name: &str, remove: bool) -> AppResul
             let _ = fs::remove_dir_all(&building);
             return Err(error);
         }
+        sync_dir(new);
         true
     };
     // Only reached with a verified copy in place.
-    let removed = remove && fs::remove_dir_all(source).is_ok();
-    if remove && !removed {
-        return Err(crate::error::AppError::Invalid(
-            "O original não pôde ser apagado.".into(),
-        ));
+    if remove {
+        remove_original(old, name, &source)?;
     }
-    Ok(Done { copied, removed })
+    Ok(Done {
+        copied,
+        removed: remove,
+    })
 }
 
-/// Copies a folder of regular files and folders. Anything else (a link, say) is an error,
-/// since a backup never holds one.
-fn copy_dir(from: &Path, to: &Path) -> AppResult<()> {
-    fs::create_dir_all(to)?;
-    for entry in fs::read_dir(from)? {
-        let entry = entry?;
-        let kind = entry.file_type()?;
-        let target = to.join(entry.file_name());
-        if kind.is_dir() {
-            copy_dir(&entry.path(), &target)?;
-        } else if kind.is_file() {
-            fs::copy(entry.path(), &target)?;
-        } else {
-            return Err(crate::error::AppError::Invalid(
-                "O backup tem um item que não é um arquivo.".into(),
-            ));
-        }
-    }
+/// Takes the original out of the folder in one step (a rename), then deletes it. Failing to
+/// delete afterwards (a sync client holding a file) leaves only a hidden leftover that the next
+/// backup's cleanup removes, never a half-deleted backup in the list.
+fn remove_original(old: &Path, name: &str, source: &Path) -> AppResult<()> {
+    let aside = old.join(format!(".tmp-{name}"));
+    let _ = fs::remove_dir_all(&aside);
+    fs::rename(source, &aside)?;
+    let _ = fs::remove_dir_all(&aside);
     Ok(())
+}
+
+/// Copies `manifest.json` and the files it lists, nothing else, flushing each to disk so a
+/// power cut right after a move cannot leave only an incomplete copy.
+fn copy_snapshot(source: &Path, manifest: &Manifest, dest: &Path) -> AppResult<()> {
+    fs::create_dir_all(dest)?;
+    let mut files = vec![snapshot::MANIFEST_FILE];
+    for file in &manifest.files {
+        if !snapshot::is_allowed_path(&file.path) {
+            return Err(AppError::Invalid(snapshot::CORRUPT_MESSAGE.into()));
+        }
+        files.push(file.path.as_str());
+    }
+    for relative in files {
+        let from = source.join(relative);
+        // `file_type` of the entry itself: a link in a backup is never followed.
+        if !fs::symlink_metadata(&from)?.file_type().is_file() {
+            return Err(AppError::Invalid(snapshot::CORRUPT_MESSAGE.into()));
+        }
+        let to = dest.join(relative);
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(&from, &to)?;
+        File::open(&to)?.sync_all()?;
+    }
+    sync_dir(dest);
+    Ok(())
+}
+
+/// Flushes a folder's entries to disk where the OS allows it (not on Windows).
+fn sync_dir(dir: &Path) {
+    #[cfg(unix)]
+    if let Ok(handle) = File::open(dir) {
+        let _ = handle.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
 }

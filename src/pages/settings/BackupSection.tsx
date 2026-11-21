@@ -54,6 +54,7 @@ export default function BackupSection(props: {
       if (chosen) {
         mutate(chosen);
         setLeftBehind(chosen.leftBehind);
+        setRelocated(false);
         showToast("Pasta dos backups salva.");
       }
     });
@@ -63,28 +64,41 @@ export default function BackupSection(props: {
       const status = await api.backupUseDefaultFolder();
       mutate(status);
       setLeftBehind(status.leftBehind);
+      setRelocated(false);
       showToast("Voltou para a pasta padrão.");
     });
+
+  // Set once a copy or move ran, so the notice stops saying nothing was moved.
+  const [relocated, setRelocated] = createSignal(false);
 
   const relocate = (removeOriginals: boolean) =>
     run(async () => {
       const { report, status: next } = await api.backupMoveLeftBehind(removeOriginals);
       mutate(next);
       setLeftBehind(next.leftBehind);
+      setRelocated(true);
+      const count = (n: number) => (n === 1 ? "1 backup" : `${n} backups`);
       const done = report.copied + report.alreadyThere;
+      const verb = removeOriginals ? "movido" : "copiado";
+      const parts: string[] = [];
+      if (done > 0 || report.failed === 0) {
+        parts.push(`${count(done)} ${verb}${done === 1 ? "" : "s"} para a pasta nova`);
+      }
       if (report.failed > 0) {
-        showToast(
-          `${report.failed === 1 ? "1 backup não foi" : `${report.failed} backups não foram`} ` +
-            `${removeOriginals ? "movido" : "copiado"}${report.failed === 1 ? "" : "s"}` +
-            `${report.firstFailure ? ` (${report.firstFailure})` : ""}. ` +
-            "Os originais continuam na pasta anterior.",
-        );
-      } else {
-        showToast(
-          `${done === 1 ? "1 backup" : `${done} backups`} ` +
-            `${removeOriginals ? "movido" : "copiado"}${done === 1 ? "" : "s"} para a pasta nova.`,
+        parts.push(
+          `${count(report.failed)} não ${report.failed === 1 ? "foi" : "foram"} ${verb}` +
+            `${report.failed === 1 ? "" : "s"}` +
+            `${report.firstFailure ? ` (${report.firstFailure})` : ""}; ` +
+            "os originais continuam na pasta anterior",
         );
       }
+      if (report.leftAlone > 0) {
+        parts.push(
+          `${count(report.leftAlone)} do outro computador ` +
+            `${report.leftAlone === 1 ? "ficou" : "ficaram"} onde ${report.leftAlone === 1 ? "estava" : "estavam"}`,
+        );
+      }
+      showToast(`${parts.join(". ")}.`);
     });
 
   const restore = (backup: BackupInfo) =>
@@ -125,8 +139,14 @@ export default function BackupSection(props: {
                     : `${left().safety} deles são cópias feitas antes de restaurar ou importar`}
                 ; para voltar atrás, volte para aquela pasta.
               </Show>{" "}
-              Nada foi movido nem apagado. Se quiser, leve os backups para a pasta nova: cada cópia
-              é conferida antes de qualquer original ser apagado.
+              <Show
+                when={relocated()}
+                fallback="Nada foi movido nem apagado. Se quiser, leve os backups para a pasta nova: cada cópia é conferida antes de qualquer original ser apagado. Os backups do outro computador, se houver, ficam onde estão."
+              >
+                O que não foi movido continua na pasta anterior. Você pode tentar de novo. Os
+                backups levados passam a contar no limite da pasta nova (7 diários, 7 manuais e 5 de
+                antes de restaurar).
+              </Show>
             </p>
             <button type="button" disabled={busy.active()} onClick={() => void relocate(false)}>
               Copiar para a pasta nova

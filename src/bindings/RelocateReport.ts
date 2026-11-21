@@ -17,11 +17,16 @@ alreadyThere: number,
  */
 removed: number, 
 /**
- * Backups that could not be copied and verified, or whose original could not be deleted.
- * Their originals are untouched or, at worst, still complete.
+ * Backups that could not be copied and verified, or whose original could not be removed.
+ * A failed copy leaves its original untouched.
  */
 failed: number, 
 /**
  * Why the first failed one failed (pt-BR, with the backup's name).
  */
-firstFailure: string | null, };
+firstFailure: string | null, 
+/**
+ * Backups of another computer in the old folder, which are never copied or moved: that
+ * computer may still use the folder.
+ */
+leftAlone: number, };

@@ -193,7 +193,7 @@ pub fn read_manifest(dir: &Path) -> AppResult<Manifest> {
 }
 
 /// Whether a manifest path is the database or `images/<valid name>`: nothing else is ever read.
-fn is_allowed_path(path: &str) -> bool {
+pub fn is_allowed_path(path: &str) -> bool {
     path == DATABASE_FILE
         || path
             .strip_prefix("images/")

@@ -260,6 +260,26 @@ describe("BackupSection", () => {
     expect(screen.getByRole("button", { name: "Escolher pasta…" })).toBeEnabled();
   });
 
+  it("does not repeat the last error while the folder is unavailable, and can check again", async () => {
+    const calls = backend({
+      backups: [],
+      folderUnavailable: true,
+      lastError: "A pasta dos backups não está acessível agora.",
+    });
+    const user = userEvent.setup();
+    render(() => <BackupSection busy={createBusy()} />);
+
+    const notice = await screen.findByTestId("folder-unavailable");
+    expect(screen.queryByText(/O último backup falhou/)).not.toBeInTheDocument();
+    const before = calls.filter((c) => c.command === "backup_status").length;
+
+    await user.click(within(notice).getByRole("button", { name: "Verificar de novo" }));
+
+    await waitFor(() =>
+      expect(calls.filter((c) => c.command === "backup_status").length).toBeGreaterThan(before),
+    );
+  });
+
   it("shows the offer the backend remembers when the page opens, and dismissing forgets it", async () => {
     const calls = backend({
       leftBehind: { folder: "/antiga", backups: 2, safety: 0, unavailable: false },

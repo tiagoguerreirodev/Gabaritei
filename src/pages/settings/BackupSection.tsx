@@ -200,6 +200,7 @@ export default function BackupSection(props: {
               onBackupNow={() => void backupNow()}
               onChooseFolder={() => void chooseFolder()}
               onUseDefaultFolder={() => void useDefaultFolder()}
+              onRefresh={() => void refetch()}
               onRestore={setRestoring}
             />
           )}
@@ -283,6 +284,7 @@ function Content(props: {
   onBackupNow: () => void;
   onChooseFolder: () => void;
   onUseDefaultFolder: () => void;
+  onRefresh: () => void;
   onRestore: (backup: BackupInfo) => void;
 }) {
   return (
@@ -297,7 +299,7 @@ function Content(props: {
           Abrir pasta dos backups
         </button>
       </p>
-      <Show when={props.status.lastError}>
+      <Show when={!props.status.folderUnavailable && props.status.lastError}>
         {(message) => (
           <p class="error" role="alert">
             O último backup falhou: {message()}
@@ -326,7 +328,10 @@ function Content(props: {
         <p class="notice" role="status" data-testid="folder-unavailable">
           A pasta dos backups não está acessível agora (um disco desconectado ou uma pasta de rede
           fora do ar, por exemplo). Os backups dela não aparecem até ela voltar; nada foi apagado.
-          Conecte-a de novo ou escolha outra pasta.
+          Conecte-a de novo ou escolha outra pasta.{" "}
+          <button type="button" disabled={props.busy} onClick={() => props.onRefresh()}>
+            Verificar de novo
+          </button>
         </p>
       </Show>
       <Show

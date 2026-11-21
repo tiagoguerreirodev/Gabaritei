@@ -13,6 +13,7 @@ import type { AppInfo } from "./bindings/AppInfo";
 import type { AttemptView } from "./bindings/AttemptView";
 import type { BackupInfo } from "./bindings/BackupInfo";
 import type { BackupStatus } from "./bindings/BackupStatus";
+import type { RelocateOutcome } from "./bindings/RelocateOutcome";
 import type { CliStatus } from "./bindings/CliStatus";
 import type { CollectionDetail } from "./bindings/CollectionDetail";
 import type { CollectionPage } from "./bindings/CollectionPage";
@@ -119,6 +120,12 @@ export const api = {
   backupChooseFolder: () => call<BackupStatus | null>("backup_choose_folder"),
   /** Goes back to the default backup folder. */
   backupUseDefaultFolder: () => call<BackupStatus>("backup_use_default_folder"),
+  /**
+   * Copies (or moves, with `removeOriginals`) the backups left in the previous folder to the
+   * current one. An original is deleted only after its copy was verified.
+   */
+  backupMoveLeftBehind: (removeOriginals: boolean) =>
+    call<RelocateOutcome>("backup_move_left_behind", { removeOriginals }),
   /** Replaces the current data with a backup, after a safety backup of the current data. */
   backupRestore: (name: string) => call<null>("backup_restore", { name }),
   /** Asks where to save the data file (`Gabaritei-<date>.gabaritei`) and writes it. `false` if cancelled. */

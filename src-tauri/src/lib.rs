@@ -53,6 +53,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::backup_now,
             commands::backup_choose_folder,
             commands::backup_use_default_folder,
+            commands::backup_move_left_behind,
             commands::backup_restore,
             commands::export_data,
             commands::import_data,

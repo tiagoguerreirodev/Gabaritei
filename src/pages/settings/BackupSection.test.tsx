@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BackupStatus } from "../../bindings/BackupStatus";
 import { Toaster } from "../../components/toasts";
 import BackupSection from "./BackupSection";
+import type { RelocateReport } from "../../bindings/RelocateReport";
 import { createBusy } from "./busy";
 
 const old = {
@@ -36,6 +37,7 @@ function backend(
   initial: Partial<BackupStatus> = {},
   fail: Record<string, string> = {},
   leftBehindOnChange: BackupStatus["leftBehind"] = null,
+  moveReport: Partial<RelocateReport> = {},
 ) {
   let status: BackupStatus = {
     folder: "/dados/backups",
@@ -73,6 +75,20 @@ function backend(
         return null;
       case "backup_restore":
         return null;
+      case "backup_move_left_behind":
+        status = { ...status, leftBehind: null };
+        return {
+          report: {
+            copied: 3,
+            alreadyThere: 0,
+            removed: 3,
+            failed: 0,
+            firstFailure: null,
+            leftAlone: 0,
+            ...moveReport,
+          },
+          status,
+        };
       default:
         throw new Error(`Unexpected command: ${command}`);
     }
@@ -159,6 +175,38 @@ describe("BackupSection", () => {
     expect(screen.getAllByRole("button", { name: /Restaurar o backup de/ })).toHaveLength(2);
   });
 
+  it("reports both what was moved and what failed, and keeps the notice honest", async () => {
+    backend(
+      {},
+      {},
+      { folder: "/dados/backups", backups: 3, safety: 1 },
+      {
+        copied: 2,
+        removed: 2,
+        failed: 1,
+        firstFailure: "backup-x: A cópia não confere com o original.",
+        leftAlone: 1,
+      },
+    );
+    const user = userEvent.setup();
+    render(() => (
+      <>
+        <BackupSection busy={createBusy()} />
+        <Toaster />
+      </>
+    ));
+    await user.click(await screen.findByRole("button", { name: "Escolher pasta…" }));
+    const notice = await screen.findByTestId("left-behind");
+
+    await user.click(within(notice).getByRole("button", { name: "Mover para a pasta nova" }));
+
+    const toast = await screen.findByText(/2 backups movidos para a pasta nova/);
+    expect(toast).toHaveTextContent("1 backup não foi movido (backup-x: A cópia não confere");
+    expect(toast).toHaveTextContent(
+      "1 backup de outro computador (ou sem identificação) ficou onde estava",
+    );
+  });
+
   it("says what a folder change leaves behind, and lets the user dismiss it", async () => {
     backend({}, {}, { folder: "/dados/backups", backups: 3, safety: 1 });
     const user = userEvent.setup();
@@ -174,6 +222,29 @@ describe("BackupSection", () => {
     expect(notice).toHaveTextContent("Nada foi movido nem apagado");
 
     await user.click(within(notice).getByRole("button", { name: "Entendi" }));
+    expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["Copiar para a pasta nova", false, "3 backups copiados para a pasta nova."],
+    ["Mover para a pasta nova", true, "3 backups movidos para a pasta nova."],
+  ])("%s by asking the backend, then drops the notice", async (label, remove, message) => {
+    const calls = backend({}, {}, { folder: "/dados/backups", backups: 3, safety: 1 });
+    const user = userEvent.setup();
+    render(() => (
+      <>
+        <BackupSection busy={createBusy()} />
+        <Toaster />
+      </>
+    ));
+    await user.click(await screen.findByRole("button", { name: "Escolher pasta…" }));
+    const notice = await screen.findByTestId("left-behind");
+
+    await user.click(within(notice).getByRole("button", { name: label }));
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    const call = calls.find((c) => c.command === "backup_move_left_behind");
+    expect(call?.args).toEqual({ removeOriginals: remove });
     expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument();
   });
 

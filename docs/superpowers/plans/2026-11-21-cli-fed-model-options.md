@@ -4,7 +4,7 @@
 
 **Goal:** Model, Effort and Fast Mode choices in "Funções" and "Gerar" come from the agents' real sources (OpenAI account for Codex, the `claude` CLI for Claude) instead of hard-coded values.
 
-**Architecture:** A Rust `ai::catalog` module asks one `CatalogSource` per agent for its models (each with the efforts it supports), caches the answer in memory for the app session, and exposes it through one Tauri command. The frontend renders selectors from that command and falls back to free text when a source is unavailable. Codex's source uses an app-owned OpenAI sign-in whose token lives in the OS keychain.
+**Architecture:** A Rust `ai::catalog` module asks one `CatalogSource` per agent for its models (each with the efforts it supports), caches the answer in memory for the app session, and exposes it through one Tauri command. The frontend renders selectors from that command and falls back to free text when a source is unavailable. Codex's source runs `codex debug models` and reads only the fields it needs.
 
 **Tech Stack:** Rust (Tauri 2, `ureq`, `keyring`, `ts-rs`), Solid.js + TypeScript, Vitest.
 
@@ -16,16 +16,16 @@
 - Commands are thin; domain logic is plain Rust tested without Tauri. Only `src/api.ts` calls `invoke`. After Rust type changes run `cargo test --manifest-path src-tauri/Cargo.toml` and commit the regenerated `src/bindings/` (never hand-edit them).
 - Migrations are append-only. This work is expected to need none (role config is JSON in `settings`).
 - No real AI, network or keychain calls in tests: use fake sources, fake CLI executables and `Secrets::memory()`.
-- The OpenAI token is never logged, passed as an argument, exported, backed up, committed or sent to the frontend. Log with `log::error(..)` only, and never log study content or credentials.
+- Never log prompts, study content or credentials; log with `log::error(..)` only. The app reads no credential files and calls no OpenAI API (rule 2 is unchanged).
 - One issue per branch and PR, branch name `issue-<n>-<slug>`, Conventional Commits in English, `Closes #<n>`.
-- Spec changes made here are updated in the same PR (AGENTS.md rule 7). The owner approved amending rule 2 on 2026-11-21.
+- Spec changes made here are updated in the same PR (AGENTS.md rule 7). Rule 2 is **not** amended (the sign-in was refused; see the design's Amendment).
 - Before each PR: `cargo test`, `cargo clippy ... -D warnings`, `cargo fmt --check`, `npm run lint`, `npm run typecheck`, `npm test` (use the `preflight` skill). A change touching the AI runner or settings also gets the `spoiler-auditor` agent.
 
 ## Review Focus
 
-1. **Effort name outside the `Effort` enum** (`low|medium|high|xhigh|max`) reported by a source: ignored, never a crash or a broken selector.
+1. **Effort name outside the `Effort` enum** (`low|medium|high|xhigh|max|ultra`) reported by `codex debug models`: ignored, never a crash or a broken selector.
 2. **Model listed with no efforts:** its Effort selector offers the enum values the source still reports for other models, or free text if none.
-3. **Expired or revoked OpenAI token:** one failed refresh makes the account "not signed in" with a pt-BR warning and free text; no retry loop, no error toast storm.
+3. **`codex` missing, not signed in, hanging, or printing invalid or huge JSON:** the Codex source becomes `Unavailable` with a pt-BR reason and free text; the call has a timeout and an output cap.
 4. **Switching a role's agent:** the model becomes the new agent's first listed model (or stays free text), never the old agent's model name.
 5. **Two refreshes at once** (both pages open, or a double click on "Atualizar"): one request in flight, both callers get the same result.
 
@@ -33,7 +33,7 @@
 
 ## Step 0: Spike (throwaway, not merged)
 
-### Task 0: Verify the four unknowns
+### Task 0: Verify the four unknowns — DONE (see the findings note; sign-in refused, Codex CLI chosen)
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-11-21-catalog-spike-findings.md` (kept)
@@ -49,22 +49,20 @@
 
 ---
 
-## PR 1: Catalog and sign-in
+## PR 1: Catalog
 
 Open a GitHub issue first (`gh issue create`, milestone to be chosen with the owner), then branch `issue-<n>-cli-fed-model-options`.
 
-### Task 1: Amend the rules and the spec
+### Task 1: Update the spec and docs
 
 **Files:**
-- Modify: `AGENTS.md` (non-negotiable rule 2, and the stack table row for `ai`)
-- Modify: `docs/spec.md` (§2 decision 2, §4, §6 "Sync and credentials" line)
-- Modify: `docs/ai-cli.md` (add an "OpenAI account" section citing the findings note)
+- Modify: `docs/spec.md` (§2 decision 2, §4, §6 "Sync and credentials" line: narrow "the model catalog" so only the legacy HTTP catalog stays out; describe CLI-fed Model/Effort options and Fast Mode)
+- Modify: `docs/ai-cli.md` (add the verified `codex debug models` fields and the findings for Claude and Codex Fast Mode, citing `docs/superpowers/specs/2026-11-21-catalog-spike-findings.md`)
 
-**Interfaces:** none.
+**Interfaces:** none. `AGENTS.md` is unchanged.
 
-- [ ] **Step 1:** Rewrite rule 2 so it states: Claude only through the local `claude` CLI; the OpenAI subscription account may be used through the app's own sign-in with the token only in the OS keychain; never read or copy the CLIs' credential files; never call the Anthropic API; Codex runs still use `codex exec` until the Codex-runs project is approved. Keep the read-only-tools and blind-check lines unchanged.
-- [ ] **Step 2:** In `docs/spec.md` §6 narrow "ChatGPT OAuth … the model catalog" so only the legacy tool loop and legacy sign-in specifics stay out; describe the account catalog, sign-in and CLI-fed options in §2/§4.
-- [ ] **Step 3:** Commit: `git commit -m "docs: allow the OpenAI account for the model catalog"`.
+- [ ] **Step 1:** Make the edits above. State in `docs/ai-cli.md` that the Codex Fast Mode effect is unobserved.
+- [ ] **Step 2:** Commit: `git commit -m "docs: describe the CLI-fed model catalog"`.
 
 ### Task 2: Catalog domain and cache
 
@@ -72,6 +70,8 @@ Open a GitHub issue first (`gh issue create`, milestone to be chosen with the ow
 - Create: `src-tauri/src/ai/catalog.rs`
 - Create: `src-tauri/src/ai/catalog/tests.rs`
 - Modify: `src-tauri/src/ai/mod.rs` (declare `pub mod catalog;`)
+- Modify: `src-tauri/src/ai/agent.rs` (add `Effort::Ultra`, name `"ultra"`, `as_str`; Codex only)
+- Modify: `src/pages/settings/labels.ts` (`effortLabels.ultra = "Ultra"`)
 
 **Interfaces:**
 - Produces (all `#[derive(Serialize, TS)]` with `#[ts(export)]` and camelCase, in `catalog.rs`):
@@ -82,7 +82,7 @@ Open a GitHub issue first (`gh issue create`, milestone to be chosen with the ow
   - `pub trait CatalogSource: Send + Sync { fn agent(&self) -> Agent; fn load(&self) -> AgentCatalog; }`
   - `pub struct CatalogCache` with `new(sources: Vec<Box<dyn CatalogSource>>)`, `get(&self) -> Catalog` (loads once, then cached) and `refresh(&self) -> Catalog`. Managed Tauri state.
 
-- [ ] **Step 1: Write failing tests** in `catalog/tests.rs` using a fake `CatalogSource` that counts `load` calls: `get_loads_each_source_once`, `refresh_loads_again`, `concurrent_refreshes_share_one_load` (two threads, one `load`), `unavailable_source_is_kept_in_the_result_not_an_error`.
+- [ ] **Step 1: Write failing tests** in `catalog/tests.rs` using a fake `CatalogSource` that counts `load` calls: `get_loads_each_source_once`, `refresh_loads_again`, `concurrent_refreshes_share_one_load` (two threads, one `load`), `unavailable_source_is_kept_in_the_result_not_an_error`, and in `agent.rs` tests `ultra_serializes_as_ultra`; also a Claude-argument test that a role with `Effort::Ultra` and agent Claude is rejected with a pt-BR message before spawning (Claude's `--effort` stops at `max`).
 - [ ] **Step 2:** Run `cargo test --manifest-path src-tauri/Cargo.toml catalog` → FAIL (module missing).
 - [ ] **Step 3:** Implement the types and `CatalogCache` (a `Mutex<Option<Catalog>>` plus a guard so concurrent refreshes wait for the in-flight one).
 - [ ] **Step 4:** Run the same command → PASS.
@@ -98,46 +98,31 @@ Open a GitHub issue first (`gh issue create`, milestone to be chosen with the ow
 - Consumes: `CatalogSource`, `AgentCatalog`, `ModelOption` (Task 2); the Claude binary path resolution already used by `src-tauri/src/ai/discovery.rs` and the settings CLI path.
 - Produces: `pub struct ClaudeSource { /* binary path */ }` implementing `CatalogSource`.
 
-- [ ] **Step 1: Write failing tests** with a fake `claude` executable (follow the pattern in `src-tauri/src/ai/runner/tests.rs`): `claude_source_reads_models_from_the_cli` (only if Task 0 found a real source; the fake prints the shape Task 0 recorded), `claude_source_without_a_cli_is_unavailable_with_a_pt_br_reason`, `claude_source_with_unparseable_output_is_unavailable`.
+- [ ] **Step 1: Write failing tests** with a fake `claude` executable (follow the pattern in `src-tauri/src/ai/runner/tests.rs`): `claude_source_reads_models_from_the_cli` (skip: Task 0 found no listing source), `claude_source_without_a_cli_is_unavailable_with_a_pt_br_reason`, `claude_source_with_unparseable_output_is_unavailable`.
 - [ ] **Step 2:** Run → FAIL.
-- [ ] **Step 3:** Implement per the findings note. **If Task 0 found no source,** implement `load` returning `CatalogStatus::Unavailable` with the reason "O Claude Code não informa a lista de modelos; digite o nome." and an empty model list, keeping the tests that apply.
+- [ ] **Step 3:** Implement per the findings note. Task 0 found no source, so implement `load` returning `CatalogStatus::Unavailable` with the reason "O Claude Code não informa a lista de modelos; digite o nome." and an empty model list, keeping the tests that apply.
 - [ ] **Step 4:** Run → PASS.
 - [ ] **Step 5:** Commit `feat: add the Claude catalog source`.
 
-### Task 4: OpenAI sign-in
+### Task 4: REMOVED
 
-**Files:**
-- Create: `src-tauri/src/ai/openai_auth.rs`
-- Create: `src-tauri/src/ai/openai_auth/tests.rs`
-- Modify: `src-tauri/src/ai/secrets.rs` (add `openai_token`, `set_openai_token`, `clear_openai_token` beside the RemNote ones; secret name `"openai-token"`)
-- Modify: `src-tauri/src/commands.rs`, `src-tauri/src/lib.rs` (`register()`)
-- Modify: `src/api.ts`
+The app's own OpenAI sign-in was refused by the service (spike findings). No sign-in, token storage or commands are built.
 
-**Interfaces:**
-- Produces (Rust): `pub enum SignInState { SignedOut, SignedIn }` (`ts-rs`, camelCase); `pub fn sign_in(secrets: &Secrets, http: &dyn OpenAiHttp) -> AppResult<SignInState>`; `pub fn sign_out(secrets: &Secrets) -> AppResult<()>`; `pub fn state(secrets: &Secrets) -> AppResult<SignInState>`; `pub fn access_token(secrets: &Secrets, http: &dyn OpenAiHttp) -> AppResult<Option<String>>` (refreshes when expired; one failure returns `None`); `pub trait OpenAiHttp` hiding network calls so tests use a fake.
-- Produces (commands): `openai_sign_in`, `openai_sign_out`, `openai_sign_in_state`, each returning `AppResult<SignInState>`; `api.openaiSignIn()`, `api.openaiSignOut()`, `api.openaiSignInState()` in `src/api.ts`. Follow the `add-command` skill for each.
-
-- [ ] **Step 1: Write failing tests:** `sign_in_stores_the_token_in_secrets_and_never_in_settings`, `sign_out_clears_the_token`, `access_token_refreshes_when_expired`, `failed_refresh_returns_none_and_clears_nothing_twice` (no loop), `state_reflects_the_keychain`. Use `Secrets::memory()` and a fake `OpenAiHttp`.
-- [ ] **Step 2:** Run `cargo test ... openai_auth` → FAIL.
-- [ ] **Step 3:** Implement the flow recorded in the findings note (browser plus local redirect, or device code). Open the browser with the existing opener used by `src/pages/settings/openFolder.ts`'s backend command, or the Tauri opener plugin if already a dependency; do not add a dependency without checking `Cargo.toml` first.
-- [ ] **Step 4:** Run → PASS. Then add the commands, register them, add the `api.ts` functions, run `cargo test` to regenerate bindings.
-- [ ] **Step 5:** Commit `feat: add the OpenAI account sign-in`.
-
-### Task 5: Codex account source
+### Task 5: Codex source (`codex debug models`)
 
 **Files:**
 - Create: `src-tauri/src/ai/catalog/codex.rs`
 - Test: `src-tauri/src/ai/catalog/tests.rs`
 
 **Interfaces:**
-- Consumes: `CatalogSource` (Task 2); `access_token` and `OpenAiHttp` (Task 4).
-- Produces: `pub struct CodexSource { secrets, http }` implementing `CatalogSource`.
+- Consumes: `CatalogSource` (Task 2); the Codex binary path from the AI settings (see `src-tauri/src/ai/discovery.rs`); the fake-CLI helper pattern in `src-tauri/src/ai/runner/tests.rs`.
+- Produces: `pub struct CodexSource { /* binary path */ }` implementing `CatalogSource`, and `pub(super) fn parse_models(json: &str) -> Result<Vec<ModelOption>, String>`.
 
-- [ ] **Step 1: Write failing tests** with a fake `OpenAiHttp` returning the redacted sample from the findings note: `codex_source_lists_listed_models_with_their_efforts`, `codex_source_hides_models_not_visible_in_the_list`, `codex_source_ignores_efforts_outside_the_enum` (Review Focus 1), `codex_source_signed_out_is_unavailable_with_a_pt_br_reason`, `codex_source_request_failure_is_unavailable`.
+- [ ] **Step 1: Write failing tests** using a fake `codex` executable that prints a trimmed copy of the real shape (`{"models":[{"slug":..,"display_name":..,"visibility":..,"supported_reasoning_levels":[{"effort":..}],"service_tiers":[{"id":"priority"}], ... extra large fields ...}]}`): `parse_keeps_only_listed_models`, `parse_maps_efforts_and_drops_unknown_ones` (an `"effort":"turbo"` entry is dropped, `ultra` is kept), `parse_ignores_unrelated_large_fields`, `source_runs_debug_models_with_a_timeout`, `missing_cli_is_unavailable_with_a_pt_br_reason`, `invalid_json_is_unavailable`, `oversized_output_is_unavailable` (cap the read, e.g. 8 MiB).
 - [ ] **Step 2:** Run → FAIL.
-- [ ] **Step 3:** Implement `load`: get the token, request the model list as the findings note specifies, map to `ModelOption`, drop unknown efforts.
+- [ ] **Step 3:** Implement: run `codex debug models` without a shell (no `--strict-config`, not supported by `debug`), read at most the cap, parse with `serde_json` into a minimal struct, keep `visibility == "list"`, map efforts through `Effort`, label from `display_name`.
 - [ ] **Step 4:** Run → PASS.
-- [ ] **Step 5:** Commit `feat: add the Codex account catalog source`.
+- [ ] **Step 5:** Commit `feat: add the Codex catalog source`.
 
 ### Task 6: Catalog command and API
 
@@ -187,25 +172,15 @@ Open a GitHub issue first (`gh issue create`, milestone to be chosen with the ow
 - [ ] **Step 4:** Run `npm test`, `npm run typecheck`, `npm run lint` → PASS.
 - [ ] **Step 5:** Commit `feat: feed model and effort selectors from the catalog`.
 
-### Task 9: Sign-in section in Configurações
+### Task 9: REMOVED
 
-**Files:**
-- Create: `src/pages/settings/OpenAiSection.tsx` and `src/pages/settings/OpenAiSection.test.tsx`
-- Modify: `src/pages/Settings.tsx` (mount the section near "Agentes")
-
-**Interfaces:**
-- Consumes: `api.openaiSignIn`, `api.openaiSignOut`, `api.openaiSignInState` (Task 4); `showError`/`showToast` from `src/components`.
-
-- [ ] **Step 1: Write failing tests:** `shows_signed_out_with_an_entrar_button`, `entrar_calls_sign_in_and_shows_signed_in`, `sair_calls_sign_out`, `a_sign_in_error_is_shown_in_pt_br`. Assert the page never renders a token (the API never returns one).
-- [ ] **Step 2:** Run → FAIL; implement the section (pt-BR: "Conta OpenAI", "Entrar", "Sair", "Conectada"/"Desconectada"); run → PASS.
-- [ ] **Step 3:** After sign-in or sign-out, call the catalog refresh so the selectors update.
-- [ ] **Step 4:** Commit `feat: add the OpenAI account section to settings`.
+No OpenAI sign-in section (see Task 4).
 
 ### Task 10: Preflight and PR
 
 - [ ] **Step 1:** Run the `preflight` skill; fix anything it reports.
 - [ ] **Step 2:** Run the `spoiler-auditor` agent on the whole branch.
-- [ ] **Step 3:** Open the PR with `Closes #<n>`, how it was verified (including a manual run on both computers: sign in, open Funções and Gerar, refresh, sign out), and the spec/doc updates listed.
+- [ ] **Step 3:** Open the PR with `Closes #<n>`, how it was verified (including a manual run on both computers: open Funções and Gerar, refresh, change agent and model), and the spec/doc updates listed.
 
 ---
 
@@ -213,12 +188,12 @@ Open a GitHub issue first (`gh issue create`, milestone to be chosen with the ow
 
 Open a second issue and branch. Tasks, each with the same test-first pattern:
 
-1. `ModelOption` gains `supports_fast: bool` (Codex source from the account's service tiers; Claude source per Task 0).
+1. `ModelOption` gains `supports_fast: bool`. Codex: true when `service_tiers` is non-empty. Claude: not listed, so the checkbox is always shown for Claude.
 2. `RoleConfig` gains `fast: bool` (default `false`, `#[serde(default)]` so saved roles still load); settings validation rejects `fast: true` for a model that doesn't support it when the catalog is `Ready`.
-3. Runner support per agent using only the mechanism recorded in the findings note, in `src-tauri/src/ai/claude.rs` and `codex.rs`; an agent with no verified mechanism never receives the option. Fake-CLI tests assert the exact arguments or config.
+3. Runner support: Claude `--settings '{"fastMode":true}'` (added to the isolated argument list in `claude.rs`), Codex `-c service_tier="priority"` (in `codex.rs`), the mechanisms recorded in the findings note, in `src-tauri/src/ai/claude.rs` and `codex.rs`; an agent with no verified mechanism never receives the option. Fake-CLI tests assert the exact arguments or config.
 4. Frontend: a "Modo rápido" checkbox in `ModelEffortFields`, shown only when the selected model supports it; included in the Gerar override.
 5. `docs/ai-cli.md` updated with the verified mechanisms; preflight and PR.
 
-## Later project (not in this plan)
+## Later project
 
-Codex runs through the account in place of `codex exec`. Needs its own brainstorm and spec changes before any plan.
+Dropped: running Codex through the account needed the sign-in that the service refused. Reopen only if the owner asks.

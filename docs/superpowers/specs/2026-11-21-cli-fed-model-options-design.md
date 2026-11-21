@@ -1,6 +1,6 @@
 # Model, Effort and Fast Mode options fed by the agents' own sources: design
 
-Status: draft for owner approval. Date: 2026-11-21.
+Status: approved 2026-11-21, amended the same day after the spike (see "Amendment").
 
 ## Intent
 
@@ -89,3 +89,14 @@ Replaces `codex exec`. Requires rebuilding the read-only tool loop, attachments,
 ## Left to the builder
 
 Module and type names, exact pt-BR strings, the cache structure, and the OAuth flow variant once the spike answers question 1.
+
+## Amendment (after the spike, owner-approved 2026-11-21)
+
+The service refused the app's own OpenAI sign-in (see the findings note), so these parts above are replaced:
+
+- **Codex source:** `codex debug models` (the CLI's own catalog), not the account. No sign-in, no OAuth, no token in the keychain. **AGENTS.md rule 2 is not amended**; only spec §6's "model catalog" entry is narrowed (the legacy HTTP catalog stays out).
+- **Plan changes:** PR 1 loses the sign-in and its Configurações section; the Codex source parses `codex debug models`.
+- **Effort:** `Effort` gains `Ultra` (Codex only).
+- **Claude Fast Mode:** the checkbox is always shown for Claude (support can't be known before a run). For Codex it is shown only for models whose `service_tiers` is non-empty.
+- **Fast Mode mechanisms:** Claude `--settings '{"fastMode":true}'`; Codex `-c service_tier="priority"` (key verified, effect unobserved).
+- The later "Codex runs through the account" project is dropped unless the owner reopens it, since the sign-in it needed is refused.

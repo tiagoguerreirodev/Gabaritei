@@ -1,6 +1,6 @@
 # Catalog and Fast Mode spike findings
 
-Date: 2026-11-21. Claude Code 2.1.330, macOS. Status: **partial, and the gate failed**. Claude is verified. The OpenAI sign-in (Step 1) was refused by the service, so the account catalog and Codex Fast Mode could not be tested (see "OpenAI sign-in").
+Date: 2026-11-21. Claude Code 2.1.330, macOS. Status: **complete**. Claude and Codex (CLI) are verified. The app's own OpenAI sign-in was refused by the service, so the owner chose the Codex CLI's own catalog instead.
 
 ## Claude Code (verified)
 
@@ -33,7 +33,19 @@ Date: 2026-11-21. Claude Code 2.1.330, macOS. Status: **partial, and the gate fa
 
 Consequence: Steps 2 (account model list) and 4 (Codex Fast Mode through the account) are blocked. From the legacy code, the account's Fast Mode was the request field `service_tier` (`priority` or `fast`) and effort was `reasoning.effort` (levels can include `none` and `minimal`), but this was not verified against the live service.
 
-## Open questions
+## Codex CLI (verified, codex-cli 0.171.0)
 
-1. With the account sign-in refused, how should Codex's Model, Effort and Fast Mode options be sourced? This needs the owner (rule 2 and spec §6 were amended on the assumption that sign-in works).
-2. Claude's Fast Mode checkbox: decided by the owner, always shown for Claude.
+- `codex debug models` prints `{"models":[...]}` as JSON. It also contains long prompt text per model (`model_messages`, `base_instructions`), so the parser must read only the fields it needs and tolerate everything else.
+- Fields used: `slug` (the id passed to `-m`), `display_name`, `visibility` (`list` or `hide`; hidden ones such as `gpt-reserve` and `codex-auto-review` must not be offered), `default_reasoning_level`, `supported_reasoning_levels[].effort`, `service_tiers[]` (`{"id":"priority","name":"Fast","description":"..."}`).
+- 12 models were returned, 10 with `visibility: "list"`. Effort names seen: `low, medium, high, xhigh, max` and **`ultra`** (on most models; `gpt-6-luna`, `gpt-5.6-luna` and `gpt-reserve` stop at `max`). The app's `Effort` type has no `ultra`, so it must be added (Codex only; Claude's `--effort` accepts `low` to `max`).
+- Every model, listed or hidden, reports one service tier, `id: "priority"`, `name: "Fast"`. A model with a non-empty `service_tiers` supports Fast Mode.
+- `codex debug` does not accept `--strict-config`.
+- Fast Mode mechanism: `codex exec --strict-config -c service_tier="priority"` is accepted, and a made-up key (`definitely_not_a_key=1`) is rejected with "unknown configuration field", so `service_tier` is a real key. The value is not validated (`"bogus"` also passes) and the events show no field that says which tier served the request, so the effect itself could not be observed. `codex features list` also shows `fast_mode` and `ultrafast_mode` as stable and on. The plan treats `-c service_tier="priority"` as the mechanism and PR 2 must keep a test that asserts the exact argument. A note in `docs/ai-cli.md` says the effect is unobserved.
+- Not tested: whether `codex debug models` needs network or being signed in (it worked here, signed in).
+
+## Decisions after the spike
+
+1. The app does not sign in to OpenAI. Codex's Model, Effort and Fast Mode come from `codex debug models`. **AGENTS.md rule 2 is not amended.**
+2. Claude has no listing source: free text with a pt-BR notice.
+3. The Claude Fast Mode checkbox is always shown, using `--settings '{"fastMode":true}'`; models that don't support it ignore it, and an account without extra usage runs without it (`extra_usage_disabled`).
+4. `Effort` gains `Ultra`, valid for Codex only.

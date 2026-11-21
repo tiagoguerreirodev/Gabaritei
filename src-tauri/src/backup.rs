@@ -129,6 +129,13 @@ pub struct BackupStatus {
 /// have to download them first, so this is longer than the deadline of a plain `read_dir`.
 const MANIFEST_READ_TIMEOUT: Duration = Duration::from_secs(if cfg!(test) { 60 } else { 15 });
 
+/// The probe key of the slow manifest listing of `folder`, apart from the folder's own.
+fn manifest_key(folder: &Path) -> PathBuf {
+    let mut key = folder.as_os_str().to_owned();
+    key.push("\u{0}manifests");
+    PathBuf::from(key)
+}
+
 /// What a quick look at the backup folder found.
 enum FolderState {
     /// It can be listed.
@@ -145,12 +152,30 @@ fn folder_state(folder: &Path) -> FolderState {
         Ok(_) => FolderState::Present,
         Err(error)
             if error.kind() == std::io::ErrorKind::NotFound
-                && folder.parent().is_none_or(Path::exists) =>
+                // A root (`E:\`, `/`) that is missing is a gone drive, not a new folder.
+                && folder.parent().is_some_and(Path::exists)
+                && !mount_point_missing(folder) =>
         {
             FolderState::Missing
         }
         Err(_) => FolderState::Unavailable,
     }
+}
+
+/// macOS mounts drives and shares at `/Volumes/<name>`: a folder under a name that isn't there is
+/// on a volume that is gone, not a folder that was never created.
+#[cfg(target_os = "macos")]
+fn mount_point_missing(folder: &Path) -> bool {
+    folder
+        .strip_prefix("/Volumes")
+        .ok()
+        .and_then(|rest| rest.components().next())
+        .is_some_and(|name| !Path::new("/Volumes").join(name).exists())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn mount_point_missing(_folder: &Path) -> bool {
+    false
 }
 
 fn folder_unavailable() -> AppError {
@@ -917,8 +942,13 @@ impl BackupService {
             match self.probe.run(&folder, move || folder_state(&path)) {
                 Some(FolderState::Present) => {
                     let path = folder.clone();
+                    // Under its own key: a slow (healthy) read of many manifests must not hold
+                    // the folder's slot, or the quick checks of a backup, restore or import
+                    // would give up waiting behind it.
                     self.probe
-                        .run_for(&folder, MANIFEST_READ_TIMEOUT, move || list(&path))
+                        .run_for(&manifest_key(&folder), MANIFEST_READ_TIMEOUT, move || {
+                            list(&path)
+                        })
                 }
                 Some(FolderState::Missing) => Some(Vec::new()),
                 Some(FolderState::Unavailable) | None => None,
@@ -1092,12 +1122,19 @@ impl BackupService {
     ) -> AppResult<Option<BackupInfo>> {
         self.exclusive(|| {
             let result = db.with(|conn| folder(conn, paths)).and_then(|folder| {
-                // Bounded too, so a folder that doesn't answer is refused instead of held under the lock.
+                // Bounded too, so a folder that doesn't answer is refused instead of held under the
+                // lock. This runs in the background, so it may wait longer than a click would
+                // (a drive spinning up); a gone drive is refused like everywhere else.
                 let due = {
-                    let folder = folder.clone();
-                    self.probe
-                        .run(&folder.clone(), move || is_due(&folder, now))
+                    let path = folder.clone();
+                    self.probe.run_for(&folder, MANIFEST_READ_TIMEOUT, move || {
+                        match folder_state(&path) {
+                            FolderState::Unavailable => None,
+                            _ => Some(is_due(&path, now)),
+                        }
+                    })
                 }
+                .flatten()
                 .ok_or_else(folder_unavailable)?;
                 if due {
                     create(
@@ -3180,6 +3217,83 @@ mod tests {
 
         assert!(error.to_string().contains("não está acessível"), "{error}");
         assert_eq!(list(&old).len(), 2, "nothing was touched");
+    }
+
+    #[test]
+    fn a_slow_manifest_read_does_not_make_backups_wait_or_fail() {
+        let f = fixture();
+        let service = Arc::new(BackupService {
+            probe: FolderProbe::with_timeout(Duration::from_secs(5)),
+            ..BackupService::default()
+        });
+        let folder = default_folder(&f.paths);
+        fs::create_dir_all(&folder).unwrap();
+        // The status is in the middle of a long (healthy) read of the manifests.
+        let (release, work) = blocked();
+        let slow = {
+            let service = service.clone();
+            let key = manifest_key(&folder);
+            std::thread::spawn(move || service.probe.run_for(&key, LONG, work))
+        };
+        eventually(|| occupied(&service.probe));
+
+        // Neither the daily nor the manual backup is refused while it runs.
+        service
+            .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 10:00:00 UTC))
+            .unwrap()
+            .expect("due, and not refused");
+        service
+            .backup_now(&f.db, &f.paths, "2026-11-19T11:00:00.000Z")
+            .unwrap();
+        drop(release);
+        assert_eq!(slow.join().unwrap(), Some(7));
+    }
+
+    #[test]
+    fn the_daily_backup_refuses_a_gone_drive_like_everything_else() {
+        let f = fixture();
+        let service = service_with_long_probe();
+        f.db.with(|conn| {
+            let gone = f._dir.path().join("volume-gone").join("backups");
+            set_setting(conn, KEY_FOLDER, &gone.display().to_string())
+        })
+        .unwrap();
+
+        let error = service
+            .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 10:00:00 UTC))
+            .unwrap_err();
+
+        assert!(error.to_string().contains("não está acessível"), "{error}");
+        assert!(
+            !f._dir.path().join("volume-gone").exists(),
+            "nothing recreated"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_folder_on_a_volume_that_is_not_mounted_is_unavailable() {
+        assert!(matches!(
+            folder_state(Path::new("/Volumes/gabaritei-no-such-volume/backups")),
+            FolderState::Unavailable
+        ));
+    }
+
+    #[test]
+    fn untagged_backups_from_before_tags_still_count_for_the_daily_check() {
+        let f = fixture();
+        let service = service_with_long_probe();
+        backup(&f, "2026-11-19T10:00:00.000Z");
+        as_computer("desktop");
+
+        let made = service
+            .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 11:00:00 UTC))
+            .unwrap();
+
+        assert!(
+            made.is_none(),
+            "the untagged one is from before tags, this computer's"
+        );
     }
 
     #[test]

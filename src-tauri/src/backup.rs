@@ -560,21 +560,14 @@ impl BackupService {
         report.left_alone = others;
         self.exclusive(|| {
             // After a move, what is still here is what could not be moved (the other computer's
-<<<<<<< HEAD
-            // backups are reported apart). A copy leaves the originals on purpose. If the folder
+            // backups are reported apart). A copy leaves the originals on purpose, unless it failed
+            // for some backups: then the offer stays so the rest can be tried again. If the folder
             // changed meanwhile, the new change already decided what to remember.
             if still_the_same() {
-                let remaining =
-                    remove_originals && list(&old).iter().any(|info| !leave_alone(info));
+                let remaining = (remove_originals || report.failed > 0)
+                    && list(&old).iter().any(|info| !leave_alone(info));
                 db.with(|conn| remember_old_folder(conn, remaining.then_some(old.as_path())))?;
             }
-=======
-            // backups are reported apart). A copy leaves the originals on purpose.
-            // A copy that failed for some backups keeps the offer too, so it can be tried again.
-            let remaining = (remove_originals || report.failed > 0)
-                && list(&old).iter().any(|info| !leave_alone(info));
-            db.with(|conn| remember_old_folder(conn, remaining.then_some(old.as_path())))?;
->>>>>>> issue-111-persist-left-behind
             let status = self.status(db, paths)?;
             Ok(RelocateOutcome { report, status })
         })

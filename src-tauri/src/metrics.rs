@@ -478,13 +478,7 @@ pub fn home(conn: &Connection, now: &str) -> AppResult<HomeSummary> {
             "SELECT COUNT(*) FROM review_state WHERE due_at <= ?1",
             &[&now],
         )?,
-        due_in_open_attempt: count(
-            "SELECT COUNT(*) FROM review_state rs WHERE rs.due_at <= ?1 AND EXISTS (
-               SELECT 1 FROM responses r
-               JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NULL
-               WHERE r.question_id = rs.question_id)",
-            &[&now],
-        )?,
+        due_in_open_attempt: crate::learning::due_in_open_attempt(conn, now)?,
         drafts_waiting: count("SELECT COUNT(*) FROM drafts WHERE status = 'review'", &[])?,
     })
 }

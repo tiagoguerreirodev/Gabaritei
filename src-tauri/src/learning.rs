@@ -201,17 +201,31 @@ impl Latest {
     }
 }
 
-/// Questions that sit in an unfinished attempt. Practice sessions leave them out: they stay
-/// due until that attempt is finished, and would otherwise be picked again.
+/// The one definition of "held by an open attempt": the questions that sit in an unfinished
+/// attempt. Practice sessions leave them out: they stay due until that attempt is finished,
+/// and would otherwise be picked again. Every query that needs the rule embeds this one.
+const OPEN_ATTEMPT_QUESTIONS_SQL: &str = "SELECT DISTINCT r.question_id FROM responses r
+     JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NULL";
+
 fn open_attempt_questions(conn: &Connection) -> AppResult<HashSet<String>> {
     let ids = conn
-        .prepare(
-            "SELECT DISTINCT r.question_id FROM responses r
-             JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NULL",
-        )?
+        .prepare(OPEN_ATTEMPT_QUESTIONS_SQL)?
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<Result<_, _>>()?;
     Ok(ids)
+}
+
+/// How many reviews due at `now` sit in an unfinished attempt: they stay due, but a new
+/// practice session leaves them out. The Home summary and the Learning overview both use this.
+pub fn due_in_open_attempt(conn: &Connection, now: &str) -> AppResult<u32> {
+    Ok(conn.query_row(
+        &format!(
+            "SELECT COUNT(*) FROM review_state
+             WHERE due_at <= ?1 AND question_id IN ({OPEN_ATTEMPT_QUESTIONS_SQL})"
+        ),
+        [now],
+        |r| r.get(0),
+    )?)
 }
 
 /// Questions of the error notebook for a practice session, most recent error first, without
@@ -248,14 +262,11 @@ pub fn review_session(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec
 /// Questions whose review is due at `now`, the most overdue first, without the ones already
 /// in an unfinished attempt.
 pub fn due_questions(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<String>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT question_id FROM review_state
-         WHERE due_at <= ?1
-           AND question_id NOT IN (
-             SELECT r.question_id FROM responses r
-             JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NULL)
-         ORDER BY due_at, question_id LIMIT ?2",
-    )?;
+         WHERE due_at <= ?1 AND question_id NOT IN ({OPEN_ATTEMPT_QUESTIONS_SQL})
+         ORDER BY due_at, question_id LIMIT ?2"
+    ))?;
     let ids = stmt
         .query_map(params![now, limit], |r| r.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -368,11 +379,7 @@ pub fn overview(conn: &Connection, now: &str, include_blanks: bool) -> AppResult
         !only_upcoming || upcoming_only <= MAX_UPCOMING_ROWS
     });
     let due = due_dates.values().filter(|d| d.as_str() <= now).count() as u32;
-    let in_open_attempt = open_attempt_questions(conn)?;
-    let due_in_open_attempt = due_dates
-        .iter()
-        .filter(|(q, d)| d.as_str() <= now && in_open_attempt.contains(*q))
-        .count() as u32;
+    let due_in_open_attempt = due_in_open_attempt(conn, now)?;
     Ok(LearningOverview {
         due,
         due_in_open_attempt,

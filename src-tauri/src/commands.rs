@@ -9,6 +9,7 @@ use ts_rs::TS;
 
 use crate::ai::agent::Agent;
 use crate::ai::blind_check;
+use crate::ai::catalog::{self as model_catalog, CatalogCache};
 use crate::ai::discovery::{self, CliStatus};
 use crate::ai::draft_files;
 use crate::ai::explain;
@@ -451,6 +452,24 @@ pub fn abandon(db: State<'_, Database>, attempt_id: String) -> AppResult<()> {
     db.transaction(|tx| attempts::abandon(tx, &attempt_id))
 }
 
+/// Refuses to start AI work with a model the agent's list no longer offers. `roles` picks the
+/// configurations the work will use from the saved settings. Uses only lists that are already
+/// loaded, so it never starts a CLI.
+fn ensure_roles_listed(
+    db: &Database,
+    secrets: &Secrets,
+    cache: &CatalogCache,
+    roles: impl FnOnce(&AiSettings) -> Vec<(crate::ai::roles::RoleConfig, &'static str)>,
+) -> AppResult<()> {
+    let settings = db.with(|conn| settings::load(conn, secrets))?;
+    let roles = roles(&settings);
+    let refs: Vec<_> = roles
+        .iter()
+        .map(|(config, label)| (config, *label))
+        .collect();
+    model_catalog::ensure_cached_listed(cache, &refs)
+}
+
 /// The AI settings (CLI paths, roles, RemNote). Writes the defaults on first use.
 #[tauri::command]
 pub fn ai_settings(db: State<'_, Database>, secrets: State<'_, Secrets>) -> AppResult<AiSettings> {
@@ -462,11 +481,11 @@ pub fn ai_settings(db: State<'_, Database>, secrets: State<'_, Secrets>) -> AppR
 #[tauri::command(async)]
 pub fn ai_catalog(
     db: State<'_, Database>,
-    cache: State<'_, crate::ai::catalog::CatalogCache>,
+    cache: State<'_, CatalogCache>,
     refresh: bool,
-) -> AppResult<crate::ai::catalog::Catalog> {
+) -> AppResult<model_catalog::Catalog> {
     let cli_paths = db.with(|conn| settings::load_cli_paths(conn))?;
-    Ok(crate::ai::catalog::catalog(&cache, &cli_paths, refresh))
+    Ok(model_catalog::catalog(&cache, &cli_paths, refresh))
 }
 
 /// Validates and saves the AI settings, and returns them as saved.
@@ -527,6 +546,29 @@ pub fn generation_start<R: Runtime>(
 ) -> AppResult<()> {
     ensure_not_backing_up(&service)?;
     request.validate()?;
+    ensure_roles_listed(
+        &app.state::<Database>(),
+        &app.state::<Secrets>(),
+        &app.state::<CatalogCache>(),
+        |settings| {
+            vec![
+                (
+                    request
+                        .generator
+                        .clone()
+                        .unwrap_or_else(|| settings.roles.generate.clone()),
+                    "Gerar questões",
+                ),
+                (
+                    request
+                        .checker
+                        .clone()
+                        .unwrap_or_else(|| settings.roles.blind_check.clone()),
+                    "Conferência às cegas",
+                ),
+            ]
+        },
+    )?;
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
@@ -552,6 +594,12 @@ pub fn blind_check_start<R: Runtime>(
     draft_id: String,
 ) -> AppResult<()> {
     ensure_not_backing_up(&service)?;
+    ensure_roles_listed(
+        &app.state::<Database>(),
+        &app.state::<Secrets>(),
+        &app.state::<CatalogCache>(),
+        |settings| vec![(settings.roles.blind_check.clone(), "Conferência às cegas")],
+    )?;
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
@@ -639,6 +687,10 @@ pub async fn recheck_ask<R: Runtime>(
         let db = app.state::<Database>();
         let secrets = app.state::<Secrets>();
         let jobs = app.state::<OnDemand>();
+        let catalog = app.state::<CatalogCache>();
+        ensure_roles_listed(&db, &secrets, &catalog, |settings| {
+            vec![(settings.roles.recheck.clone(), "Revisão sob demanda")]
+        })?;
         recheck::ask_recheck(&db, &secrets, &jobs, &attempt_id, position)
     })
     .await
@@ -682,6 +734,10 @@ pub async fn explain_ask<R: Runtime>(
         let db = app.state::<Database>();
         let secrets = app.state::<Secrets>();
         let jobs = app.state::<OnDemand>();
+        let catalog = app.state::<CatalogCache>();
+        ensure_roles_listed(&db, &secrets, &catalog, |settings| {
+            vec![(settings.roles.explain.clone(), "Explicação sob demanda")]
+        })?;
         explain::ask_explain(&db, &secrets, &jobs, &attempt_id, position)
     })
     .await
@@ -739,14 +795,22 @@ mod tests {
 
     impl MockApp {
         fn new(db: Database) -> Self {
+            Self::with_catalog(
+                db,
+                crate::ai::catalog::CatalogCache::new(vec![Box::new(
+                    crate::ai::catalog::claude::ClaudeSource,
+                )]),
+            )
+        }
+
+        /// Like [`MockApp::new`], with the given model lists as managed state.
+        fn with_catalog(db: Database, catalog: crate::ai::catalog::CatalogCache) -> Self {
             let app = crate::register(mock_builder())
                 .build(mock_context(noop_assets()))
                 .expect("mock app builds");
             app.manage(db);
             app.manage(Secrets::memory());
-            app.manage(crate::ai::catalog::CatalogCache::new(vec![Box::new(
-                crate::ai::catalog::claude::ClaudeSource,
-            )]));
+            app.manage(catalog);
             app.manage(BackupService::default());
             let data = tempfile::tempdir().unwrap();
             app.manage(AppPaths::new(data.path()));
@@ -1286,6 +1350,48 @@ mod tests {
             app.call("generation_status", json!({})).unwrap()["outcome"],
             json!(null)
         );
+    }
+
+    /// A source that always lists one Codex model, so a run can be checked against it.
+    struct OneModel;
+
+    impl crate::ai::catalog::CatalogSource for OneModel {
+        fn agent(&self) -> Agent {
+            Agent::Codex
+        }
+
+        fn load(&self, _: &settings::CliPaths) -> crate::ai::catalog::AgentCatalog {
+            crate::ai::catalog::AgentCatalog {
+                agent: Agent::Codex,
+                status: crate::ai::catalog::CatalogStatus::Ready,
+                models: vec![crate::ai::catalog::ModelOption {
+                    id: "m1".into(),
+                    label: "M1".into(),
+                    efforts: vec![crate::ai::Effort::Low],
+                }],
+            }
+        }
+    }
+
+    #[test]
+    fn a_generation_with_a_model_the_catalog_no_longer_lists_is_refused() {
+        let cache = crate::ai::catalog::CatalogCache::new(vec![Box::new(OneModel)]);
+        cache.get(&settings::CliPaths::default());
+        let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
+        let request = json!({
+            "topic": { "area": "Português", "matter": "Gramática", "topic": "Crase" },
+            "count": 1, "board": null, "format": null, "instructions": null,
+            "sources": { "remnote": false, "web": false, "attachments": [] },
+            "generator": { "agent": "codex", "model": "gone", "effort": "low" }, "checker": null,
+        });
+        let error = app
+            .call("generation_start", json!({ "request": request }))
+            .expect_err("the stale model is refused");
+        let message = error["message"].as_str().unwrap();
+        assert!(message.contains("não está mais disponível"), "{message}");
+        assert!(message.contains("Gerar questões"), "{message}");
+        let status = app.call("generation_status", json!({})).unwrap();
+        assert_eq!(status["running"], json!(false));
     }
 
     #[test]

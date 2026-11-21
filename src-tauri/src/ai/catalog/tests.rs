@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use super::*;
+use crate::ai::roles::RoleConfig;
 use crate::ai::settings::CliPaths;
 
 /// A source that counts how often it is asked and answers with a fixed catalog.
@@ -235,4 +236,109 @@ fn catalog_reloads_only_when_asked() {
     assert_eq!(loads.load(Ordering::SeqCst), 1);
     catalog(&cache, &paths, true);
     assert_eq!(loads.load(Ordering::SeqCst), 2);
+}
+
+// ---- ensure_listed ------------------------------------------------------------------------
+
+fn role(agent: Agent, model: &str, effort: Effort) -> RoleConfig {
+    RoleConfig {
+        agent,
+        model: model.to_owned(),
+        effort,
+    }
+}
+
+fn catalog_of(agent_catalog: AgentCatalog) -> Catalog {
+    Catalog {
+        agents: vec![agent_catalog],
+    }
+}
+
+#[test]
+fn run_is_allowed_for_a_listed_model_and_effort() {
+    let catalog = catalog_of(ready(Agent::Codex, "m1"));
+    let config = role(Agent::Codex, "m1", Effort::High);
+    assert!(ensure_listed(&catalog, &config, "Gerar questões").is_ok());
+}
+
+#[test]
+fn run_is_blocked_for_a_model_the_catalog_no_longer_lists() {
+    let catalog = catalog_of(ready(Agent::Codex, "m1"));
+    let config = role(Agent::Codex, "gone", Effort::Low);
+    let error = ensure_listed(&catalog, &config, "Gerar questões").unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("gone"), "{message}");
+    assert!(message.contains("não está mais disponível"), "{message}");
+}
+
+#[test]
+fn run_is_blocked_for_an_effort_the_model_does_not_support() {
+    // `ready` offers Low and High only.
+    let catalog = catalog_of(ready(Agent::Codex, "m1"));
+    let config = role(Agent::Codex, "m1", Effort::Max);
+    let error = ensure_listed(&catalog, &config, "Gerar questões").unwrap_err();
+    assert!(error.to_string().contains("esforço"), "{error}");
+}
+
+#[test]
+fn run_is_allowed_for_any_model_when_the_catalog_is_unavailable() {
+    let unavailable = AgentCatalog {
+        agent: Agent::Claude,
+        status: CatalogStatus::Unavailable {
+            reason: "x".to_owned(),
+        },
+        models: Vec::new(),
+    };
+    let config = role(Agent::Claude, "qualquer-modelo", Effort::Max);
+    assert!(ensure_listed(&catalog_of(unavailable), &config, "Gerar questões").is_ok());
+}
+
+#[test]
+fn a_model_listed_without_efforts_accepts_any_effort() {
+    let mut agent_catalog = ready(Agent::Codex, "m1");
+    agent_catalog.models[0].efforts.clear();
+    let config = role(Agent::Codex, "m1", Effort::Max);
+    assert!(ensure_listed(&catalog_of(agent_catalog), &config, "Gerar questões").is_ok());
+}
+
+#[test]
+fn run_is_allowed_when_the_agent_is_missing_from_the_catalog() {
+    let catalog = catalog_of(ready(Agent::Codex, "m1"));
+    let config = role(Agent::Claude, "sonnet", Effort::High);
+    assert!(ensure_listed(&catalog, &config, "Gerar questões").is_ok());
+}
+
+#[test]
+fn cached_is_empty_until_the_lists_are_loaded() {
+    let (cache, loads) = cache_with(ready(Agent::Codex, "m1"), Duration::ZERO);
+    assert!(cache.cached().is_none());
+    assert_eq!(loads.load(Ordering::SeqCst), 0);
+    cache.get(&CliPaths::default());
+    assert!(cache.cached().is_some());
+}
+
+#[test]
+fn loaded_lists_block_a_stale_role_and_unloaded_ones_never_load_anything() {
+    let (cache, loads) = cache_with(ready(Agent::Codex, "m1"), Duration::ZERO);
+    let stale = role(Agent::Codex, "gone", Effort::Low);
+    let listed = role(Agent::Codex, "m1", Effort::Low);
+
+    // Nothing loaded yet: no check, and no CLI call from a command that must not block.
+    assert!(ensure_cached_listed(&cache, &[(&stale, "Gerar questões")]).is_ok());
+    assert_eq!(loads.load(Ordering::SeqCst), 0);
+
+    cache.get(&CliPaths::default());
+    assert!(ensure_cached_listed(&cache, &[(&listed, "Gerar questões")]).is_ok());
+    let error = ensure_cached_listed(
+        &cache,
+        &[
+            (&listed, "Gerar questões"),
+            (&stale, "Conferência às cegas"),
+        ],
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("Conferência às cegas"),
+        "{error}"
+    );
 }

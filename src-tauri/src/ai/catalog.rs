@@ -14,7 +14,9 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use super::agent::{Agent, Effort};
+use super::roles::RoleConfig;
 use super::settings::CliPaths;
+use crate::error::{AppError, AppResult};
 
 /// One model an agent can run, with the efforts it supports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -93,6 +95,12 @@ impl CatalogCache {
         }
     }
 
+    /// The lists if they were already loaded. Never starts a CLI, so it is safe to call from a
+    /// command that must not block.
+    pub fn cached(&self) -> Option<Catalog> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
     /// The cached lists, loading them the first time.
     pub fn get(&self, cli_paths: &CliPaths) -> Catalog {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -128,6 +136,41 @@ pub fn catalog(cache: &CatalogCache, cli_paths: &CliPaths, refresh: bool) -> Cat
     } else {
         cache.get(cli_paths)
     }
+}
+
+/// Refuses a run whose model, or effort for that model, the agent's list doesn't offer. A list
+/// that couldn't be read allows anything: the CLI itself will complain if the name is wrong.
+pub fn ensure_listed(catalog: &Catalog, config: &RoleConfig, label: &str) -> AppResult<()> {
+    let Some(agent) = catalog.agents.iter().find(|a| a.agent == config.agent) else {
+        return Ok(());
+    };
+    if agent.status != CatalogStatus::Ready {
+        return Ok(());
+    }
+    let Some(model) = agent.models.iter().find(|m| m.id == config.model) else {
+        return Err(AppError::Invalid(format!(
+            "O modelo “{}” de “{label}” não está mais disponível. Escolha outro em Configurações.",
+            config.model
+        )));
+    };
+    if !model.efforts.is_empty() && !model.efforts.contains(&config.effort) {
+        return Err(AppError::Invalid(format!(
+            "O esforço “{}” não existe para o modelo “{}” de “{label}”. Escolha outro em Configurações.",
+            config.effort.as_str(),
+            config.model
+        )));
+    }
+    Ok(())
+}
+
+/// [`ensure_listed`] for each `(role, label)`, using the lists only if they are already loaded.
+pub fn ensure_cached_listed(cache: &CatalogCache, roles: &[(&RoleConfig, &str)]) -> AppResult<()> {
+    let Some(catalog) = cache.cached() else {
+        return Ok(());
+    };
+    roles
+        .iter()
+        .try_for_each(|(config, label)| ensure_listed(&catalog, config, label))
 }
 
 #[cfg(test)]

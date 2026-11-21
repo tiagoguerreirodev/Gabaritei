@@ -100,7 +100,7 @@ export default function BackupSection(props: {
       }
       if (report.leftAlone > 0) {
         parts.push(
-          `${count(report.leftAlone)} do outro computador ` +
+          `${count(report.leftAlone)} de outro computador (ou sem identificação) ` +
             `${report.leftAlone === 1 ? "ficou" : "ficaram"} onde ${report.leftAlone === 1 ? "estava" : "estavam"}`,
         );
       }

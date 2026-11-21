@@ -2,8 +2,15 @@ name: Release build
 
 # Manual build of the installers for both computers. No auto-update, no notarization:
 # the macOS app is ad-hoc signed, so the first launch needs right-click > Open.
+# Dispatching on main with a version (it must equal package.json) also publishes a draft
+# GitHub Release v<version> with the installers attached; the owner publishes the draft.
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, without a v prefix (must equal package.json). Empty = build only.
+        type: string
+        required: false
   # Edits to this workflow are built too, so a broken release build shows up in the PR.
   pull_request:
     paths:
@@ -19,7 +26,8 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  # A release build must never be cancelled halfway; PR runs are cheap to restart.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -62,6 +70,19 @@ jobs:
           workspaces: src-tauri -> target
           key: ${{ matrix.target }}
 
+      # Fails fast (before the long build) on a bad version or an existing tag.
+      # Values go through env, never into the script text.
+      - name: Check release version
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          PUBLISH: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+        run: |
+          if [ -n "$VERSION" ] && [ "$PUBLISH" != "true" ]; then
+            echo "::warning::A version was given but this is not main: installers are built, no release is published."
+          fi
+          bash .github/scripts/check-release-version.sh
+
       - run: npm ci
 
       - name: Build installer
@@ -76,3 +97,32 @@ jobs:
           path: ${{ matrix.glob }}
           if-no-files-found: error
           retention-days: 14
+
+  # Draft release with both installers. Only on main, only when a version was given, and only
+  # if every bundle leg succeeded (the default for `needs`). Needs no checkout.
+  publish:
+    name: Publish draft release
+    needs: bundle
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.version != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gabaritei-*
+          merge-multiple: true
+          path: bundles
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "v$VERSION" bundles/*.exe bundles/*.dmg \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --draft \
+            --generate-notes \
+            --notes "macOS: the app is not notarized. On first launch, right-click it and choose Open."

@@ -320,6 +320,8 @@ fn slug(text: &str) -> Option<String> {
 /// What a backup folder name says.
 #[derive(Debug, PartialEq, Eq)]
 struct ParsedName {
+    /// The folder name this was read from.
+    name: String,
     kind: BackupKind,
     /// `YYYYMMDD-HHMMSS-mmm`, UTC.
     stamp: String,
@@ -350,6 +352,7 @@ fn parse(name: &str) -> Option<ParsedName> {
                 .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
     });
     (shape && tag_ok).then(|| ParsedName {
+        name: name.to_owned(),
         kind,
         stamp: stamp.to_owned(),
         tag: tag.map(str::to_owned),
@@ -369,14 +372,8 @@ fn is_other_computer(tag: Option<&str>, stamp: &str) -> bool {
 /// Whether a backup in a shared folder is not this computer's to copy or delete: another
 /// computer's, or (on a computer that has a tag) an untagged one, which can't be told apart.
 /// Rotation leaves these alone for the same reason.
-fn leave_alone(info: &BackupInfo) -> bool {
-    info.other_computer || leaves_alone_tag(info.computer.as_deref())
-}
-
-/// [`leave_alone`] from a name alone: whether a backup tagged `tag` is not this computer's to
-/// copy or delete.
-fn leaves_alone_tag(tag: Option<&str>) -> bool {
-    is_other_computer(tag) || (tag.is_none() && computer_tag().is_some())
+fn leave_alone(backup: &ParsedName) -> bool {
+    !owns_tag(backup.tag.as_deref(), &backup.stamp)
 }
 
 /// The default backup folder.
@@ -495,12 +492,14 @@ fn try_list(folder: &Path) -> Option<Vec<BackupInfo>> {
 /// What a folder holds, read from the folder names alone (no manifest is opened), or `None`
 /// when the folder can't be read at all. Cheap enough for [`BackupService::status`], which runs
 /// often and may point at a network share or a drive that is asleep. Unlike [`list`] it also
-/// counts a folder whose manifest is unreadable; a move reports that one as failed.
+/// counts a folder whose manifest is unreadable. The move works from the same names, so such a
+/// backup is reported as failed (its copy can't be verified) and keeps the offer open.
 fn try_list_names(folder: &Path) -> Option<Vec<ParsedName>> {
     let entries = fs::read_dir(folder).ok()?;
     Some(
         entries
             .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
             .filter_map(|entry| parse(&entry.file_name().into_string().ok()?))
             .collect(),
     )
@@ -543,7 +542,7 @@ fn pending_old_folder(db: &Database, current: &Path) -> AppResult<Option<(PathBu
             Some(found) => {
                 let mine: Vec<ParsedName> = found
                     .into_iter()
-                    .filter(|backup| !leaves_alone_tag(backup.tag.as_deref()))
+                    .filter(|backup| !leave_alone(backup))
                     .collect();
                 left_behind(&old, &mine)
             }
@@ -645,8 +644,8 @@ impl BackupService {
             let old = db.with(|conn| folder(conn, paths))?;
             db.with(|conn| set_folder(conn, paths, chosen))?;
             let new = db.with(|conn| folder(conn, paths))?;
-            let has_backups =
-                !same_folder(&old, &new) && list(&old).iter().any(|i| !leave_alone(i));
+            let has_backups = !same_folder(&old, &new)
+                && try_list_names(&old).is_some_and(|found| found.iter().any(|b| !leave_alone(b)));
             db.with(|conn| remember_old_folder(conn, has_backups.then_some(old.as_path())))?;
             self.status(db, paths)
         })
@@ -701,8 +700,11 @@ impl BackupService {
             }
             // Another computer's backups, and untagged ones on a tagged computer, stay where they are:
             // they may belong to a computer that still uses that folder.
-            let (others, mine): (Vec<_>, Vec<_>) = list(&old).into_iter().partition(leave_alone);
-            let names: Vec<String> = mine.into_iter().map(|info| info.name).collect();
+            let (others, mine): (Vec<_>, Vec<_>) = try_list_names(&old)
+                .unwrap_or_default()
+                .into_iter()
+                .partition(leave_alone);
+            let names: Vec<String> = mine.into_iter().map(|backup| backup.name).collect();
             Ok((old, new, names, others.len() as u32))
         })?;
         let still_the_same = || {
@@ -731,7 +733,8 @@ impl BackupService {
             // changed meanwhile, the new change already decided what to remember.
             if still_the_same() {
                 let remaining = (remove_originals || report.failed > 0)
-                    && list(&old).iter().any(|info| !leave_alone(info));
+                    && try_list_names(&old)
+                        .is_some_and(|found| found.iter().any(|b| !leave_alone(b)));
                 db.with(|conn| remember_old_folder(conn, remaining.then_some(old.as_path())))?;
             }
             let status = self.status(db, paths)?;
@@ -2345,24 +2348,29 @@ mod tests {
     }
 
     #[test]
-    fn the_status_does_not_open_the_manifests_of_the_old_folder() {
+    fn a_backup_with_a_broken_manifest_is_counted_fails_to_move_and_keeps_the_offer() {
         let f = fixture();
         let service = BackupService::default();
         let (old, _) = make_left_behind(&f, &service);
-        // A backup whose manifest can't be read still counts for the notice: the status reads
-        // names only (a move reports it as failed).
-        for info in list(&old) {
-            fs::remove_file(old.join(&info.name).join(snapshot::MANIFEST_FILE)).unwrap();
-        }
-        assert!(list(&old).is_empty());
+        // The status and the move both read names, so a half-synced backup (no manifest) is
+        // not silently dropped from the count and then forgotten.
+        let broken = list(&old).remove(0).name;
+        fs::remove_file(old.join(&broken).join(snapshot::MANIFEST_FILE)).unwrap();
+        // A plain file named like a backup is not a backup.
+        fs::write(old.join("backup-20261101-000000-000"), b"x").unwrap();
 
         let notice = service
             .status(&f.db, &f.paths)
             .unwrap()
             .left_behind
             .unwrap();
+        assert_eq!(notice.backups, 2);
 
-        assert_eq!((notice.backups, notice.safety), (2, 1));
+        let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+        assert_eq!((outcome.report.removed, outcome.report.failed), (1, 1));
+        let left = outcome.status.left_behind.unwrap();
+        assert_eq!(left.backups, 1, "the offer stays for the one that failed");
+        assert!(old.join(&broken).is_dir(), "the original is untouched");
     }
 
     #[test]

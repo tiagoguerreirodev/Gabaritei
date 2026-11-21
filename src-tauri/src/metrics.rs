@@ -450,6 +450,9 @@ pub struct HomeSummary {
     pub active_attempts: Vec<ActiveAttempt>,
     /// Spaced-repetition reviews due at `now` (counts rows of `review_state`, filled by #21).
     pub due_reviews: u32,
+    /// Of the due reviews, how many sit in an unfinished attempt: they stay due, but a new
+    /// reviews session leaves them out.
+    pub due_in_open_attempt: u32,
     /// Generated packages waiting for review.
     pub drafts_waiting: u32,
 }
@@ -473,6 +476,13 @@ pub fn home(conn: &Connection, now: &str) -> AppResult<HomeSummary> {
         active_attempts: attempts::active(conn)?,
         due_reviews: count(
             "SELECT COUNT(*) FROM review_state WHERE due_at <= ?1",
+            &[&now],
+        )?,
+        due_in_open_attempt: count(
+            "SELECT COUNT(*) FROM review_state rs WHERE rs.due_at <= ?1 AND EXISTS (
+               SELECT 1 FROM responses r
+               JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NULL
+               WHERE r.question_id = rs.question_id)",
             &[&now],
         )?,
         drafts_waiting: count("SELECT COUNT(*) FROM drafts WHERE status = 'review'", &[])?,

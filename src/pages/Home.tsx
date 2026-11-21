@@ -90,6 +90,12 @@ export default function Home() {
                   <li>
                     <a href="#/erros-e-revisoes">Revisões pendentes</a>
                     <strong>{formatNumber(summary().dueReviews)}</strong>
+                    <Show when={summary().dueInOpenAttempt > 0}>
+                      <span class="muted">
+                        {" "}
+                        · {formatNumber(summary().dueInOpenAttempt)} em tentativa aberta
+                      </span>
+                    </Show>
                   </li>
                   <li>
                     <a href="#/revisar-pacote">Pacotes para revisar</a>

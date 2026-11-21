@@ -687,6 +687,47 @@ fn absurd_time_zone_offsets_are_clamped() {
 }
 
 #[test]
+fn home_counts_as_held_only_the_due_reviews_that_sit_in_an_open_attempt() {
+    let f = fixture(&[("q1", &[D]), ("q2", &[D]), ("q3", &[D]), ("q4", &[D])]);
+    // q1: open attempt. q2: only a finished attempt. q3: no attempt. q4: open attempt, not due.
+    f.attempt(
+        "open",
+        "study",
+        None,
+        &[("q1", Some("o0")), ("q4", Some("o0"))],
+    );
+    f.attempt(
+        "done",
+        "study",
+        Some("2026-11-02T10:00:00.000Z"),
+        &[("q2", Some("o0"))],
+    );
+    f.db.transaction(|tx| {
+        for (local, due) in [
+            ("q1", "2026-11-10T00:00:00.000Z"),
+            ("q2", "2026-11-10T00:00:00.000Z"),
+            ("q3", "2026-11-10T00:00:00.000Z"),
+            ("q4", "2026-12-10T00:00:00.000Z"),
+        ] {
+            tx.execute(
+                "INSERT INTO review_state (question_id, due_at, state) VALUES (?1, ?2, '{}')",
+                params![f.id(local), due],
+            )?;
+        }
+        Ok(())
+    })
+    .unwrap();
+
+    let home = f.db.with(|c| home(c, "2026-11-20T00:00:00.000Z")).unwrap();
+
+    assert_eq!(home.due_reviews, 3, "q1, q2 and q3 are due; q4 is not");
+    assert_eq!(
+        home.due_in_open_attempt, 1,
+        "only q1 is due and held by an open attempt"
+    );
+}
+
+#[test]
 fn home_summarizes_the_bank_and_what_is_waiting() {
     let f = fixture(&[("q1", &[D]), ("q2", &[P])]);
     f.collection("c1", None, None, &["q1", "q2"]);
@@ -727,6 +768,10 @@ fn home_summarizes_the_bank_and_what_is_waiting() {
     assert_eq!(home.overall.score.correct, 1);
     assert_eq!(home.areas.len(), 2);
     assert_eq!(home.due_reviews, 1);
+    assert_eq!(
+        home.due_in_open_attempt, 1,
+        "q1 is due and in the open attempt"
+    );
     assert_eq!(home.drafts_waiting, 1);
     assert_eq!(home.active_attempts.len(), 1);
     let open = &home.active_attempts[0];

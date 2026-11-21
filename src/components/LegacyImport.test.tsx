@@ -7,6 +7,8 @@ import type { LegacyImportStatus } from "../bindings/LegacyImportStatus";
 import Home from "../pages/Home";
 import { emptyHome } from "../test/fixtures";
 import Settings from "../pages/Settings";
+import { createBusy } from "../pages/settings/busy";
+import LegacyImport from "./LegacyImport";
 
 const report: LegacyImportReport = {
   importedAt: "2026-11-19T12:00:00.000Z",
@@ -98,5 +100,54 @@ describe("legacy import", () => {
     render(() => <Settings />);
 
     expect(await screen.findByTestId("legacy-import-summary")).toHaveTextContent(summary);
+  });
+
+  describe("shared busy state", () => {
+    it("cannot start while another Dados action runs", async () => {
+      const calls = backend({ report: null, bankEmpty: true });
+      const busy = createBusy();
+      let release!: () => void;
+      void busy.run(() => new Promise<void>((resolve) => (release = resolve)));
+      render(() => <LegacyImport initialReport={null} busy={busy} />);
+
+      expect(screen.getByRole("button", { name: "Escolher pasta e importar" })).toBeDisabled();
+      release();
+      await vi.waitFor(() =>
+        expect(screen.getByRole("button", { name: "Escolher pasta e importar" })).toBeEnabled(),
+      );
+      expect(calls).not.toContain("import_legacy_bank");
+    });
+
+    it("does nothing when clicked while another action runs", async () => {
+      const calls = backend({ report: null, bankEmpty: true });
+      const busy = createBusy();
+      let release!: () => void;
+      void busy.run(() => new Promise<void>((resolve) => (release = resolve)));
+      const user = userEvent.setup();
+      render(() => <LegacyImport initialReport={null} busy={busy} />);
+
+      await user.click(screen.getByRole("button", { name: "Escolher pasta e importar" }));
+
+      expect(calls).not.toContain("import_legacy_bank");
+      release();
+    });
+
+    it("holds the shared flag while it runs, so other actions are blocked", async () => {
+      let finish!: (value: unknown) => void;
+      backend(
+        { report: null, bankEmpty: true },
+        () => new Promise((resolve) => (finish = resolve)),
+      );
+      const busy = createBusy();
+      const user = userEvent.setup();
+      render(() => <LegacyImport initialReport={null} busy={busy} />);
+
+      await user.click(screen.getByRole("button", { name: "Escolher pasta e importar" }));
+      await vi.waitFor(() => expect(busy.active()).toBe(true));
+      expect(await busy.run(() => Promise.resolve())).toBe(false);
+
+      finish(null);
+      await vi.waitFor(() => expect(busy.active()).toBe(false));
+    });
   });
 });

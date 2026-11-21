@@ -50,6 +50,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src-tauri/src/bank/catalog.rs` | Read-only browsing views (topic tree, collections, collection detail) with accent- and case-insensitive search and Portuguese ordering (`fold`). |
 | `src-tauri/src/db.rs` | `Database` (managed Tauri state, opened at startup at `<app data dir>/gabaritei.sqlite`), `with`/`transaction` helpers, JSON settings helpers, migration runner. |
 | `src-tauri/src/paths.rs` | `AppPaths` (managed state): the app data folder, database file and `images/` folder. |
+| `src-tauri/src/log.rs` | `log::error(..)`: the app log, `<app data>/gabaritei.log` (size-capped, rotated to `.old`). Use it instead of `eprintln!`, which goes nowhere in release builds. Never log study content, prompts, agent output or credentials. |
 | `src-tauri/src/images.rs` | The `image` URI scheme serving `<app data>/images/<hash>.<ext>` only. Frontend URLs come from `imageUrl()` / `QuestionImage` in `src/components/QuestionImage.tsx`; CSP `img-src` allows only that scheme. |
 | `src-tauri/migrations/` | SQL migrations, numbered `NNNN_name.sql`. Each one is listed in `MIGRATIONS` in `db.rs`; `PRAGMA user_version` records how many have run. |
 | `src/` | Solid.js + TypeScript + Vite frontend. Renders state and sends commands; holds no business rules. |

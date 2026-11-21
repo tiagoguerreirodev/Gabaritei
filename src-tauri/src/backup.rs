@@ -571,8 +571,7 @@ fn create(
     )
 }
 
-/// [`create`] with the snapshot written by `write_snapshot` into the folder it is given, so a
-/// caller that holds the database lock can write it from its own connection.
+/// [`create`] with the snapshot written by `write_snapshot` into the folder it is given.
 fn create_with(
     write_snapshot: impl FnOnce(&Path) -> AppResult<snapshot::Manifest>,
     folder: &Path,
@@ -580,6 +579,21 @@ fn create_with(
     now: &str,
     prune: bool,
 ) -> AppResult<BackupInfo> {
+    let pending = begin(folder, kind, now)?;
+    let manifest = write_snapshot(&pending.building).inspect_err(|_| pending.abandon())?;
+    pending.finish(folder, kind, manifest, prune)
+}
+
+/// A backup being built in a hidden temporary folder, not yet visible in the list.
+struct Pending {
+    name: String,
+    computer: Option<String>,
+    building: PathBuf,
+    finished: PathBuf,
+}
+
+/// Creates the empty temporary folder for a backup of `kind` made at `now`.
+fn begin(folder: &Path, kind: BackupKind, now: &str) -> AppResult<Pending> {
     fs::create_dir_all(folder)?;
     let name = match computer_tag() {
         Some(tag) => format!("{}-{}-{tag}", kind.prefix(), stamp(now)),
@@ -594,26 +608,42 @@ fn create_with(
     let building = folder.join(format!(".tmp-{name}"));
     let _ = fs::remove_dir_all(&building);
     fs::create_dir(&building)?;
-    let manifest = write_snapshot(&building)
-        .and_then(|manifest| {
-            fs::rename(&building, &finished)
-                .map(|()| manifest)
-                .map_err(Into::into)
-        })
-        .inspect_err(|_| {
-            let _ = fs::remove_dir_all(&building);
-        })?;
-    if prune {
-        self::prune(folder, kind);
-    }
-    Ok(BackupInfo {
+    Ok(Pending {
         name,
-        kind,
         computer: computer_tag(),
-        other_computer: false,
-        size_bytes: manifest.size(),
-        created_at: manifest.created_at,
+        building,
+        finished,
     })
+}
+
+impl Pending {
+    /// Removes the temporary folder after a failure.
+    fn abandon(&self) {
+        let _ = fs::remove_dir_all(&self.building);
+    }
+
+    /// Renames the temporary folder to its final name (the backup now exists) and, if asked,
+    /// prunes the old backups of its kind.
+    fn finish(
+        self,
+        folder: &Path,
+        kind: BackupKind,
+        manifest: snapshot::Manifest,
+        prune: bool,
+    ) -> AppResult<BackupInfo> {
+        fs::rename(&self.building, &self.finished).inspect_err(|_| self.abandon())?;
+        if prune {
+            self::prune(folder, kind);
+        }
+        Ok(BackupInfo {
+            name: self.name,
+            kind,
+            computer: self.computer,
+            other_computer: false,
+            size_bytes: manifest.size(),
+            created_at: manifest.created_at,
+        })
+    }
 }
 
 /// Whether a temporary folder was last changed more than a day ago: no build takes that long.
@@ -700,17 +730,20 @@ pub fn replace_data(
     db.with(|conn| snapshot::ensure_replaceable(conn, &staged))?;
     // Adding images is harmless to the current data, so it stays out of the lock.
     snapshot::copy_images(&paths.images_dir(), source, &staged)?;
+    // The safety backup's own images are copied before the lock too (they are append-only), so
+    // a large image folder never freezes the other commands. Only the database copy, the images
+    // added since, and the replacement run under the lock.
+    let pending = begin(folder, BackupKind::Safety, now)?;
+    let ahead = snapshot::copy_images_ahead(&paths.images_dir(), &pending.building)
+        .inspect_err(|_| pending.abandon())?;
     // One lock around the safety backup and the replacement: a write in between would be in
     // neither.
     db.with(|conn| {
+        let manifest =
+            snapshot::write_locked(conn, &paths.images_dir(), &pending.building, now, ahead)
+                .inspect_err(|_| pending.abandon())?;
         // Pruned only afterwards, so a safety backup being restored is never deleted by this one.
-        create_with(
-            |building| snapshot::write_locked(conn, &paths.images_dir(), building, now),
-            folder,
-            BackupKind::Safety,
-            now,
-            false,
-        )?;
+        pending.finish(folder, BackupKind::Safety, manifest, false)?;
         snapshot::commit(conn, &staged, LOCAL_SETTINGS)
     })?;
     prune(folder, BackupKind::Safety);
@@ -1122,6 +1155,72 @@ mod tests {
         ] {
             assert!(restore(&f.db, &f.paths, name, "2026-11-19T11:00:00.000Z").is_err());
         }
+    }
+
+    #[test]
+    fn images_copied_ahead_of_the_lock_are_kept_and_later_ones_are_added() {
+        let f = fixture();
+        let late = "fedcba9876543210fedcba98.png";
+        let dest = f.paths.data_dir().join("snapshot");
+        fs::create_dir_all(&dest).unwrap();
+        // Early copy: only IMAGE exists yet.
+        let ahead = snapshot::copy_images_ahead(&f.paths.images_dir(), &dest).unwrap();
+        assert_eq!(ahead.len(), 1);
+        // An image added between the early copy and the database copy.
+        fs::write(f.paths.images_dir().join(late), b"late bytes").unwrap();
+        let manifest =
+            f.db.with(|conn| {
+                snapshot::write_locked(
+                    conn,
+                    &f.paths.images_dir(),
+                    &dest,
+                    "2026-11-19T10:00:00.000Z",
+                    ahead,
+                )
+            })
+            .unwrap();
+        let paths: Vec<&str> = manifest
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "gabaritei.sqlite",
+                &format!("images/{IMAGE}"),
+                &format!("images/{late}")
+            ]
+        );
+        // The snapshot is complete and every hash matches.
+        snapshot::verify(&dest).unwrap();
+    }
+
+    #[test]
+    fn a_restore_still_puts_every_image_in_its_safety_backup() {
+        let f = fixture();
+        let info = backup(&f, "2026-11-19T10:00:00.000Z");
+        let extra = "fedcba9876543210fedcba98.png";
+        fs::write(f.paths.images_dir().join(extra), b"extra").unwrap();
+        restore(&f.db, &f.paths, &info.name, "2026-11-19T11:00:00.000Z").unwrap();
+        let safety = default_folder(&f.paths).join("safety-20261119-110000-000");
+        assert_eq!(
+            fs::read(safety.join("images").join(extra)).unwrap(),
+            b"extra"
+        );
+        assert_eq!(
+            fs::read(safety.join("images").join(IMAGE)).unwrap(),
+            b"png bytes"
+        );
+        snapshot::verify(&safety).unwrap();
+        assert!(
+            !default_folder(&f.paths).read_dir().unwrap().any(|e| e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".tmp-")),
+            "no temporary folder left"
+        );
     }
 
     #[test]

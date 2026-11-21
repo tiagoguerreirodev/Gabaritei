@@ -14,6 +14,7 @@ pub mod db;
 pub mod error;
 pub mod images;
 pub mod learning;
+pub mod log;
 pub mod metrics;
 pub mod migrate;
 pub mod paths;
@@ -126,11 +127,14 @@ fn open_database<R: Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error:
         .path()
         .app_data_dir()
         .map_err(|error| AppError::Internal(error.to_string()))
-        .and_then(open_state);
+        .and_then(|data_dir| {
+            log::init(&data_dir);
+            open_state(data_dir)
+        });
     let (database, paths) = match opened {
         Ok(state) => state,
         Err(error) => {
-            eprintln!("Gabaritei: could not start: {error} ({error:?})");
+            log::error(format!("could not start: {error} ({error:?})"));
             // The main window already exists; hide it so only the dialog shows. The dialog must not
             // block here: this hook runs on the main thread, which the dialog needs to be drawn
             // on Linux. Closing it ends the app through Tauri's own exit.
@@ -177,7 +181,7 @@ fn run_scheduled_backup(
     match service.backup_if_due(db, paths, now) {
         Ok(_) => false,
         Err(error) => {
-            eprintln!("Gabaritei: the scheduled backup failed: {error:?}");
+            log::error(format!("the scheduled backup failed: {error:?}"));
             true
         }
     }
@@ -210,7 +214,7 @@ fn start_backup_schedule<R: Runtime>(app: tauri::AppHandle<R>) {
             }
         });
     if let Err(error) = spawned {
-        eprintln!("Gabaritei: could not start the backup schedule: {error}");
+        log::error(format!("could not start the backup schedule: {error}"));
     }
 }
 

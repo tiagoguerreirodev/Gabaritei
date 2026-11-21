@@ -77,6 +77,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::annul,
             commands::unannul,
             commands::ai_settings,
+            commands::ai_catalog,
             commands::save_ai_settings,
             commands::set_remnote_token,
             commands::cli_test,
@@ -156,6 +157,10 @@ fn open_database<R: Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error:
     app.manage(backup::BackupService::default());
     start_backup_schedule(app.handle().clone());
     app.manage(ai::secrets::Secrets::keychain());
+    app.manage(ai::catalog::CatalogCache::new(vec![
+        Box::new(ai::catalog::claude::ClaudeSource),
+        Box::new(ai::catalog::codex::CodexSource),
+    ]));
     app.manage(ai::jobs::GenerationManager::default());
     app.manage(ai::ondemand::OnDemand::default());
     Ok(())

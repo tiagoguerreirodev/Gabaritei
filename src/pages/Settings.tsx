@@ -1,6 +1,7 @@
 import { Show, createResource, createSignal } from "solid-js";
 import { createStore, reconcile, unwrap } from "solid-js/store";
 import { api } from "../api";
+import { loadCatalog } from "../catalog";
 import type { Agent } from "../bindings/Agent";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { RoleConfig } from "../bindings/RoleConfig";
@@ -50,6 +51,7 @@ export default function Settings() {
 function Form(props: { initial: AiSettings; onReload: () => void }) {
   const [draft, setDraft] = createStore<AiSettings>(clone(props.initial));
   const [saving, setSaving] = createSignal(false);
+  let savedPaths = JSON.stringify(props.initial.cliPaths);
 
   const save = async (quiet: boolean): Promise<boolean> => {
     setSaving(true);
@@ -57,6 +59,11 @@ function Form(props: { initial: AiSettings; onReload: () => void }) {
       const { cliPaths, roles, remnote } = clone(unwrap(draft));
       const saved = await api.saveAiSettings({ cliPaths, roles, remnote });
       setDraft(reconcile(saved));
+      // The model lists come from the CLIs, so a different CLI path means different lists.
+      if (JSON.stringify(saved.cliPaths) !== savedPaths) {
+        savedPaths = JSON.stringify(saved.cliPaths);
+        void loadCatalog(true);
+      }
       if (!quiet) showToast("Configurações salvas.");
       return true;
     } catch (error) {

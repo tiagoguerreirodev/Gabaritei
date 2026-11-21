@@ -4,10 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AiSettings } from "../bindings/AiSettings";
+import type { Catalog } from "../bindings/Catalog";
 import type { GenerateRequest } from "../bindings/GenerateRequest";
 import type { GenerationStatus } from "../bindings/GenerationStatus";
 import GenerationBanner from "../components/GenerationBanner";
 import { Toaster } from "../components/toasts";
+import { resetCatalog } from "../catalog";
 import { resetGenerationWatch, watchGeneration } from "../generation";
 import Generate from "./Generate";
 
@@ -43,7 +45,29 @@ const tree = {
   questions: 5,
 };
 
-function backend(status: GenerationStatus = idle, aiSettings: AiSettings = settings) {
+const listed: Catalog = {
+  agents: [
+    {
+      agent: "codex",
+      status: { kind: "ready" },
+      models: [
+        { id: "gpt-6.2-sol", label: "GPT-6.2-Sol", efforts: ["high", "xhigh"] },
+        { id: "gpt-6-luna", label: "GPT-6-Luna", efforts: ["medium", "high"] },
+      ],
+    },
+    {
+      agent: "claude",
+      status: { kind: "unavailable", reason: "O Claude Code não informa a lista de modelos." },
+      models: [],
+    },
+  ],
+};
+
+function backend(
+  status: GenerationStatus = idle,
+  aiSettings: AiSettings = settings,
+  catalog?: Catalog,
+) {
   const calls: { command: string; args: Record<string, unknown> }[] = [];
   mockIPC((command, raw) => {
     const args = (raw ?? {}) as Record<string, unknown>;
@@ -51,6 +75,9 @@ function backend(status: GenerationStatus = idle, aiSettings: AiSettings = setti
     switch (command) {
       case "topics_tree":
         return tree;
+      case "ai_catalog":
+        if (!catalog) throw new Error("no catalog");
+        return catalog;
       case "ai_settings":
         return aiSettings;
       case "generation_status":
@@ -98,6 +125,7 @@ async function fillTopic(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
   window.location.hash = "";
+  resetCatalog();
 });
 
 describe("Gerar", () => {
@@ -241,5 +269,39 @@ describe("Aviso de geração", () => {
       screen.getAllByRole("status").some((el) => /Conferindo às cegas/.test(el.textContent ?? "")),
     ).toBe(true);
     expect(screen.getByRole("link", { name: "Acompanhar" })).toBeVisible();
+  });
+
+  it("offers the catalog's models and picks the new agent's first model when the agent changes", async () => {
+    backend(idle, settings, listed);
+    const user = userEvent.setup();
+    renderPage();
+    const generator = within(await screen.findByRole("group", { name: "Gerador" }));
+    const model = await generator.findByRole("combobox", { name: "Modelo: Gerador" });
+    expect(
+      within(model)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["GPT-6.2-Sol", "GPT-6-Luna"]);
+
+    // Claude offers no list: free text, and the Codex model name is not carried over.
+    await user.selectOptions(generator.getByLabelText("Agente: Gerador"), "claude");
+    expect(generator.getByRole("textbox", { name: "Modelo: Gerador" })).toHaveValue("");
+
+    await user.selectOptions(generator.getByLabelText("Agente: Gerador"), "codex");
+    expect(await generator.findByRole("combobox", { name: "Modelo: Gerador" })).toHaveValue(
+      "gpt-6.2-sol",
+    );
+  });
+
+  it("does not start a generation with a model the list no longer has", async () => {
+    const stale: AiSettings = {
+      ...settings,
+      roles: { ...settings.roles, generate: { ...role, model: "antigo" } },
+    };
+    const calls = backend(idle, stale, listed);
+    renderPage();
+    expect(await screen.findByText(/“antigo” não está mais disponível/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Gerar" })).toBeDisabled();
+    expect(calls.some((c) => c.command === "generation_start")).toBe(false);
   });
 });

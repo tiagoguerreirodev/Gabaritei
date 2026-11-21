@@ -10,7 +10,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::agent::Agent;
+use super::agent::{Agent, Effort};
 use super::discovery;
 use super::roles::{Role, RoleConfig, RoleSettings};
 use super::runner::{JobSpec, RemNoteAccess, is_valid_tool_name, is_write_like};
@@ -95,6 +95,16 @@ pub struct AiSettings {
     pub has_remnote_token: bool,
 }
 
+/// Just the CLI path overrides (no defaults written, no keychain access).
+pub fn load_cli_paths(conn: &Connection) -> AppResult<CliPaths> {
+    Ok(get_setting(conn, KEY_CLI_PATHS)?.unwrap_or_default())
+}
+
+/// Just the role configuration (the saved one, or the defaults), with no writes and no keychain.
+pub fn load_roles(conn: &Connection) -> AppResult<RoleSettings> {
+    Ok(get_setting(conn, KEY_ROLES)?.unwrap_or_default())
+}
+
 /// Loads the settings, writing the defaults the first time (spec §7: set on first run).
 pub fn load(conn: &Connection, secrets: &Secrets) -> AppResult<AiSettings> {
     let roles = match get_setting::<RoleSettings>(conn, KEY_ROLES)? {
@@ -150,6 +160,11 @@ pub fn validate_role_config(config: &mut RoleConfig, label: &str) -> AppResult<(
     {
         return Err(AppError::Invalid(format!(
             "O nome do modelo de “{label}” é inválido."
+        )));
+    }
+    if config.agent == Agent::Claude && config.effort == Effort::Ultra {
+        return Err(AppError::Invalid(format!(
+            "O esforço Ultra só existe no Codex. Escolha outro esforço para “{label}”."
         )));
     }
     Ok(())

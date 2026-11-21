@@ -6,6 +6,7 @@
 
 pub mod agent;
 pub mod blind_check;
+pub mod catalog;
 mod claude;
 mod codex;
 pub mod discovery;

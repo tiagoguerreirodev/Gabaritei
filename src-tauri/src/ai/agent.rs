@@ -49,6 +49,8 @@ pub enum Effort {
     /// "Extra alto" in the UI.
     Xhigh,
     Max,
+    /// Codex only; Claude's `--effort` stops at `max`.
+    Ultra,
 }
 
 impl Effort {
@@ -59,6 +61,7 @@ impl Effort {
             Self::High => "high",
             Self::Xhigh => "xhigh",
             Self::Max => "max",
+            Self::Ultra => "ultra",
         }
     }
 }
@@ -71,12 +74,14 @@ mod tests {
     fn names_match_what_the_clis_and_the_ui_use() {
         assert_eq!(serde_json::to_value(Agent::Codex).unwrap(), "codex");
         assert_eq!(serde_json::to_value(Effort::Xhigh).unwrap(), "xhigh");
+        assert_eq!(serde_json::to_value(Effort::Ultra).unwrap(), "ultra");
         for effort in [
             Effort::Low,
             Effort::Medium,
             Effort::High,
             Effort::Xhigh,
             Effort::Max,
+            Effort::Ultra,
         ] {
             let json = serde_json::to_value(effort).unwrap();
             assert_eq!(json, effort.as_str());

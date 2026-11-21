@@ -144,8 +144,28 @@ pub(super) fn spawn_retrying(command: &mut Command) -> std::io::Result<std::proc
     }
 }
 
-/// Runs a short probe command with a timeout, with no stdin.
+/// Runs a short probe command with a timeout, with no stdin. Keeps up to 1 MiB of output.
 pub(super) fn capture(cli: &Path, args: &[&str]) -> Option<Captured> {
+    capture_limited(cli, args, 1 << 20)
+}
+
+/// Like [`capture`], keeping at most `limit` bytes of each stream. Output past the limit is read
+/// and discarded, so a chatty child can't block on a full pipe.
+pub(super) fn capture_limited(cli: &Path, args: &[&str], limit: u64) -> Option<Captured> {
+    capture_with(cli, args, limit, PROBE_TIMEOUT)
+}
+
+/// How long to wait for the output readers once the child has ended or been killed. A killed
+/// child's own children may keep the pipes open, and must not hold the probe hostage.
+const READER_GRACE: Duration = Duration::from_secs(2);
+
+/// Like [`capture_limited`], with a custom timeout.
+pub(super) fn capture_with(
+    cli: &Path,
+    args: &[&str],
+    limit: u64,
+    timeout: Duration,
+) -> Option<Captured> {
     let mut command = Command::new(cli);
     command
         .args(args)
@@ -160,9 +180,15 @@ pub(super) fn capture(cli: &Path, args: &[&str]) -> Option<Captured> {
     let mut child = spawn_retrying(&mut command).ok()?;
     let mut stdout = child.stdout.take()?;
     let mut stderr = child.stderr.take()?;
-    let out = std::thread::spawn(move || read_all(&mut stdout));
-    let err = std::thread::spawn(move || read_all(&mut stderr));
-    let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
+    let (out_tx, out_rx) = std::sync::mpsc::channel();
+    let (err_tx, err_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = out_tx.send(read_all(&mut stdout, limit));
+    });
+    std::thread::spawn(move || {
+        let _ = err_tx.send(read_all(&mut stderr, limit));
+    });
+    let deadline = std::time::Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
@@ -176,8 +202,11 @@ pub(super) fn capture(cli: &Path, args: &[&str]) -> Option<Captured> {
             }
         }
     };
-    let stdout = out.join().unwrap_or_default();
-    let stderr = err.join().unwrap_or_default();
+    // One grace period for both streams, so the probe never waits for it twice.
+    let readers_until = std::time::Instant::now() + READER_GRACE;
+    let left = || readers_until.saturating_duration_since(std::time::Instant::now());
+    let stdout = out_rx.recv_timeout(left()).unwrap_or_default();
+    let stderr = err_rx.recv_timeout(left()).unwrap_or_default();
     Some(Captured {
         success: status.is_some_and(|s| s.success()),
         stdout,
@@ -185,9 +214,10 @@ pub(super) fn capture(cli: &Path, args: &[&str]) -> Option<Captured> {
     })
 }
 
-fn read_all(reader: &mut impl std::io::Read) -> String {
+fn read_all(reader: &mut impl std::io::Read, limit: u64) -> String {
     let mut bytes = Vec::new();
-    let _ = reader.take(1 << 20).read_to_end(&mut bytes);
+    let _ = reader.take(limit).read_to_end(&mut bytes);
+    let _ = std::io::copy(reader, &mut std::io::sink());
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
@@ -365,6 +395,24 @@ esac"#,
         assert_eq!(
             cli_test(Agent::Codex, Some(&logged_out)).logged_in,
             Some(false)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capture_returns_after_the_timeout_even_if_a_grandchild_keeps_the_pipes_open() {
+        let dir = tempfile::tempdir().unwrap();
+        // The background `sleep` outlives the killed shell and keeps stdout and stderr open.
+        let script =
+            crate::ai::runner::tests::write_script(dir.path(), "slow", "sleep 6 &\nsleep 6");
+        let started = std::time::Instant::now();
+        let out = capture_with(&script, &[], 1 << 20, Duration::from_millis(300))
+            .expect("the probe still reports");
+        assert!(!out.success);
+        assert!(
+            started.elapsed() < Duration::from_millis(3200),
+            "waited {:?}",
+            started.elapsed()
         );
     }
 

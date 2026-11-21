@@ -73,7 +73,24 @@ codex exec - --output-schema schema.json -o saida.json --json
 - **Events (`--json`, JSONL):** `thread.started`, `turn.started`, `item.started`/`item.completed`
   (`item.type`: `agent_message`, `reasoning`, `command_execution`, `web_search`, `mcp_tool_call`),
   `turn.completed` (with `usage`), `turn.failed` and `error` (with a message). Codex reports no cost.
-- **Models:** `codex debug models` lists them. The app defaults to **`gpt-6.2-sol`** with **`xhigh`**.
+- **Models:** `codex debug models` prints `{"models":[...]}` (it does not accept `--strict-config`). Per
+  model the app reads `slug` (the `-m` value), `display_name`, `visibility` (`list` or `hide`; hidden
+  ones are not offered), `default_reasoning_level`, `supported_reasoning_levels[].effort` and
+  `service_tiers[]`. The rest, including long prompt text, is ignored. Effort names seen: `low`,
+  `medium`, `high`, `xhigh`, `max` and `ultra` (Codex only). The app defaults to **`gpt-6.2-sol`**
+  with **`xhigh`**.
+- **The model-list probe is not an isolated run:** `codex debug models` runs without a run folder, a
+  prompt or attachments (stdin closed, no shell, output capped at 8 MiB, killed after 20 s). It reads no
+  credential file and sends no prompt.
+- **Fast Mode (Codex):** every model reports a `priority` tier named "Fast"; a non-empty
+  `service_tiers` means the model supports it. `-c service_tier="priority"` is accepted by
+  `codex exec --strict-config` and a made-up key is rejected, but the value is not validated and
+  the events do not show which tier served a request, so **the effect is unobserved**.
+- **Fast Mode (Claude):** `--settings '{"fastMode":true}'` turns it on with `--setting-sources ""`
+  in place (`system`/`init` `fast_mode_state` becomes `on` for Opus and stays `off` for Sonnet).
+  Without extra usage on the account the `result` event reports `off` with
+  `fast_mode_disabled_reason: extra_usage_disabled`. Claude has no command that lists models.
+  See `docs/superpowers/specs/2026-11-21-catalog-spike-findings.md`.
 - **Web search:** `-c web_search=live` or `disabled`, as the generation form asks. It can be
   combined with attachments and RemNote (owner decision, 2026-11-20: nothing in the notes is
   secret).

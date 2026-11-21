@@ -3,4 +3,4 @@
 /**
  * Reasoning effort. Both CLIs accept these names (verified in `docs/ai-cli.md`).
  */
-export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";

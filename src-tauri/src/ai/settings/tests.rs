@@ -368,3 +368,32 @@ fn the_remnote_test_needs_a_token_and_a_reachable_server() {
             .contains("conectar")
     );
 }
+
+#[test]
+fn ultra_effort_is_refused_for_claude_and_kept_for_codex() {
+    let mut claude = RoleConfig {
+        agent: Agent::Claude,
+        model: "sonnet".to_owned(),
+        effort: Effort::Ultra,
+    };
+    let error = validate_role_config(&mut claude, "Gerar questões").unwrap_err();
+    assert!(error.to_string().contains("Ultra"), "{error}");
+
+    let mut codex = RoleConfig {
+        agent: Agent::Codex,
+        model: "gpt-6.2-sol".to_owned(),
+        effort: Effort::Ultra,
+    };
+    assert!(validate_role_config(&mut codex, "Gerar questões").is_ok());
+}
+
+#[test]
+fn load_roles_reads_only_the_roles_and_writes_nothing() {
+    let db = Database::open_in_memory().unwrap();
+    let roles = db.with(|conn| load_roles(conn)).unwrap();
+    assert_eq!(roles, RoleSettings::default());
+    let rows: i64 = db
+        .with(|conn| Ok(conn.query_row("SELECT COUNT(*) FROM settings", [], |r| r.get(0))?))
+        .unwrap();
+    assert_eq!(rows, 0, "no defaults are written");
+}

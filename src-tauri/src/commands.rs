@@ -9,6 +9,7 @@ use ts_rs::TS;
 
 use crate::ai::agent::Agent;
 use crate::ai::blind_check;
+use crate::ai::catalog::{self as model_catalog, CatalogCache};
 use crate::ai::discovery::{self, CliStatus};
 use crate::ai::draft_files;
 use crate::ai::explain;
@@ -17,6 +18,7 @@ use crate::ai::jobs::{GenerationManager, GenerationStatus};
 use crate::ai::ondemand::OnDemand;
 use crate::ai::recheck::{self, RecheckView};
 use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportResult};
+use crate::ai::roles::RoleSettings;
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, RemNoteTest};
 use crate::attempts::{self, AttemptView, SessionStart};
@@ -451,10 +453,42 @@ pub fn abandon(db: State<'_, Database>, attempt_id: String) -> AppResult<()> {
     db.transaction(|tx| attempts::abandon(tx, &attempt_id))
 }
 
+/// Refuses to start AI work with a model the agent's list no longer offers. `roles` picks the
+/// configurations the work will use from the saved settings. Uses only lists that are already
+/// loaded, so it never starts a CLI.
+fn ensure_roles_listed(
+    db: &Database,
+    cache: &CatalogCache,
+    roles: impl FnOnce(&RoleSettings) -> Vec<(crate::ai::roles::RoleConfig, &'static str)>,
+) -> AppResult<()> {
+    if cache.cached().is_none() {
+        return Ok(());
+    }
+    let saved = db.with(|conn| settings::load_roles(conn))?;
+    let roles = roles(&saved);
+    let refs: Vec<_> = roles
+        .iter()
+        .map(|(config, label)| (config, *label))
+        .collect();
+    model_catalog::ensure_cached_listed(cache, &refs)
+}
+
 /// The AI settings (CLI paths, roles, RemNote). Writes the defaults on first use.
 #[tauri::command]
 pub fn ai_settings(db: State<'_, Database>, secrets: State<'_, Secrets>) -> AppResult<AiSettings> {
     db.with(|conn| settings::load(conn, &secrets))
+}
+
+/// The models and efforts each agent offers, from the agents' own CLIs. The lists are cached for
+/// the session; `refresh` reads them again.
+#[tauri::command(async)]
+pub fn ai_catalog(
+    db: State<'_, Database>,
+    cache: State<'_, CatalogCache>,
+    refresh: bool,
+) -> AppResult<model_catalog::Catalog> {
+    let cli_paths = db.with(|conn| settings::load_cli_paths(conn))?;
+    Ok(model_catalog::catalog(&cache, &cli_paths, refresh))
 }
 
 /// Validates and saves the AI settings, and returns them as saved.
@@ -462,12 +496,16 @@ pub fn ai_settings(db: State<'_, Database>, secrets: State<'_, Secrets>) -> AppR
 pub fn save_ai_settings(
     db: State<'_, Database>,
     secrets: State<'_, Secrets>,
+    catalog: State<'_, CatalogCache>,
     input: AiSettingsInput,
 ) -> AppResult<AiSettings> {
-    db.with(|conn| {
+    let saved = db.with(|conn| {
         settings::save(conn, input)?;
         settings::load(conn, &secrets)
-    })
+    })?;
+    // The CLI paths may have changed, so the model lists are read again on next use.
+    catalog.clear();
+    Ok(saved)
 }
 
 /// Saves the RemNote token in the OS keychain; `None` or blank removes it. Returns whether a
@@ -515,6 +553,28 @@ pub fn generation_start<R: Runtime>(
 ) -> AppResult<()> {
     ensure_not_backing_up(&service)?;
     request.validate()?;
+    ensure_roles_listed(
+        &app.state::<Database>(),
+        &app.state::<CatalogCache>(),
+        |roles| {
+            vec![
+                (
+                    request
+                        .generator
+                        .clone()
+                        .unwrap_or_else(|| roles.generate.clone()),
+                    "Gerar questões",
+                ),
+                (
+                    request
+                        .checker
+                        .clone()
+                        .unwrap_or_else(|| roles.blind_check.clone()),
+                    "Conferência às cegas",
+                ),
+            ]
+        },
+    )?;
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
@@ -540,6 +600,11 @@ pub fn blind_check_start<R: Runtime>(
     draft_id: String,
 ) -> AppResult<()> {
     ensure_not_backing_up(&service)?;
+    ensure_roles_listed(
+        &app.state::<Database>(),
+        &app.state::<CatalogCache>(),
+        |roles| vec![(roles.blind_check.clone(), "Conferência às cegas")],
+    )?;
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
@@ -627,6 +692,10 @@ pub async fn recheck_ask<R: Runtime>(
         let db = app.state::<Database>();
         let secrets = app.state::<Secrets>();
         let jobs = app.state::<OnDemand>();
+        let catalog = app.state::<CatalogCache>();
+        ensure_roles_listed(&db, &catalog, |roles| {
+            vec![(roles.recheck.clone(), "Revisão sob demanda")]
+        })?;
         recheck::ask_recheck(&db, &secrets, &jobs, &attempt_id, position)
     })
     .await
@@ -670,6 +739,10 @@ pub async fn explain_ask<R: Runtime>(
         let db = app.state::<Database>();
         let secrets = app.state::<Secrets>();
         let jobs = app.state::<OnDemand>();
+        let catalog = app.state::<CatalogCache>();
+        ensure_roles_listed(&db, &catalog, |roles| {
+            vec![(roles.explain.clone(), "Explicação sob demanda")]
+        })?;
         explain::ask_explain(&db, &secrets, &jobs, &attempt_id, position)
     })
     .await
@@ -727,11 +800,22 @@ mod tests {
 
     impl MockApp {
         fn new(db: Database) -> Self {
+            Self::with_catalog(
+                db,
+                crate::ai::catalog::CatalogCache::new(vec![Box::new(
+                    crate::ai::catalog::claude::ClaudeSource,
+                )]),
+            )
+        }
+
+        /// Like [`MockApp::new`], with the given model lists as managed state.
+        fn with_catalog(db: Database, catalog: crate::ai::catalog::CatalogCache) -> Self {
             let app = crate::register(mock_builder())
                 .build(mock_context(noop_assets()))
                 .expect("mock app builds");
             app.manage(db);
             app.manage(Secrets::memory());
+            app.manage(catalog);
             app.manage(BackupService::default());
             let data = tempfile::tempdir().unwrap();
             app.manage(AppPaths::new(data.path()));
@@ -1084,6 +1168,23 @@ mod tests {
     }
 
     #[test]
+    fn ai_catalog_returns_each_agents_list_in_camel_case() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
+        let catalog = app
+            .call("ai_catalog", json!({ "refresh": false }))
+            .expect("loads");
+        assert_eq!(catalog["agents"][0]["agent"], json!("claude"));
+        assert_eq!(catalog["agents"][0]["status"]["kind"], json!("unavailable"));
+        assert!(
+            catalog["agents"][0]["status"]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("Claude Code")
+        );
+        assert_eq!(catalog["agents"][0]["models"], json!([]));
+    }
+
+    #[test]
     fn ai_settings_default_save_and_never_return_the_token() {
         let app = MockApp::new(Database::open_in_memory().unwrap());
         let settings = app.call("ai_settings", json!({})).expect("loads");
@@ -1254,6 +1355,72 @@ mod tests {
             app.call("generation_status", json!({})).unwrap()["outcome"],
             json!(null)
         );
+    }
+
+    /// A source that always lists one Codex model, so a run can be checked against it.
+    #[derive(Default)]
+    struct OneModel(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl crate::ai::catalog::CatalogSource for OneModel {
+        fn agent(&self) -> Agent {
+            Agent::Codex
+        }
+
+        fn load(&self, _: &settings::CliPaths) -> crate::ai::catalog::AgentCatalog {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            crate::ai::catalog::AgentCatalog {
+                agent: Agent::Codex,
+                status: crate::ai::catalog::CatalogStatus::Ready,
+                models: vec![crate::ai::catalog::ModelOption {
+                    id: "m1".into(),
+                    label: "M1".into(),
+                    efforts: vec![crate::ai::Effort::Low],
+                }],
+            }
+        }
+    }
+
+    #[test]
+    fn a_generation_with_a_model_the_catalog_no_longer_lists_is_refused() {
+        let cache = crate::ai::catalog::CatalogCache::new(vec![Box::new(OneModel::default())]);
+        cache.get(&settings::CliPaths::default());
+        let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
+        let request = json!({
+            "topic": { "area": "Português", "matter": "Gramática", "topic": "Crase" },
+            "count": 1, "board": null, "format": null, "instructions": null,
+            "sources": { "remnote": false, "web": false, "attachments": [] },
+            "generator": { "agent": "codex", "model": "gone", "effort": "low" }, "checker": null,
+        });
+        let error = app
+            .call("generation_start", json!({ "request": request }))
+            .expect_err("the stale model is refused");
+        let message = error["message"].as_str().unwrap();
+        assert!(message.contains("não está mais disponível"), "{message}");
+        assert!(message.contains("Gerar questões"), "{message}");
+        let status = app.call("generation_status", json!({})).unwrap();
+        assert_eq!(status["running"], json!(false));
+    }
+
+    #[test]
+    fn saving_the_settings_makes_the_next_catalog_read_load_again() {
+        use std::sync::atomic::Ordering;
+        let loads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cache = crate::ai::catalog::CatalogCache::new(vec![Box::new(OneModel(loads.clone()))]);
+        let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
+        let before = 0;
+        app.call("ai_catalog", json!({ "refresh": false })).unwrap();
+        app.call("ai_catalog", json!({ "refresh": false })).unwrap();
+        assert_eq!(loads.load(Ordering::SeqCst), before + 1);
+
+        let settings = app.call("ai_settings", json!({})).unwrap();
+        let input = json!({
+            "cliPaths": settings["cliPaths"], "roles": settings["roles"], "remnote": settings["remnote"],
+        });
+        app.call("save_ai_settings", json!({ "input": input }))
+            .unwrap();
+
+        app.call("ai_catalog", json!({ "refresh": false })).unwrap();
+        assert_eq!(loads.load(Ordering::SeqCst), before + 2);
     }
 
     #[test]

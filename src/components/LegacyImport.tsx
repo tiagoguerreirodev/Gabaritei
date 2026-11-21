@@ -1,6 +1,7 @@
 import { Match, Show, Switch, createSignal } from "solid-js";
 import { api } from "../api";
 import type { LegacyImportReport } from "../bindings/LegacyImportReport";
+import type { Busy } from "../pages/settings/busy";
 import { showToast } from "./toasts";
 
 const number = (n: number) => n.toLocaleString("pt-BR");
@@ -21,13 +22,20 @@ export default function LegacyImport(props: {
   /** Report of a previous import; the component tracks later imports itself. */
   initialReport: LegacyImportReport | null;
   onImported?: (report: LegacyImportReport) => void;
+  /**
+   * The shared "something is running" flag of Configurações → Dados. When given, the import
+   * cannot start while a backup, restore, export or data-file import runs, and they cannot
+   * start while this one runs.
+   */
+  busy?: Busy;
 }) {
   const [report, setReport] = createSignal(props.initialReport);
-  const [busy, setBusy] = createSignal(false);
+  const [importing, setImporting] = createSignal(false);
   const [error, setError] = createSignal("");
+  const blocked = () => importing() || (props.busy?.active() ?? false);
 
-  const start = async () => {
-    setBusy(true);
+  const run = async () => {
+    setImporting(true);
     setError("");
     try {
       const outcome = await api.importLegacyBank();
@@ -39,8 +47,13 @@ export default function LegacyImport(props: {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      setImporting(false);
     }
+  };
+
+  const start = async () => {
+    if (props.busy) await props.busy.run(run);
+    else await run();
   };
 
   return (
@@ -60,8 +73,8 @@ export default function LegacyImport(props: {
             repositório Simulados-Concursos neste computador. Os arquivos são conferidos antes de
             qualquer alteração, e a importação acontece uma única vez.
           </p>
-          <button type="button" class="primary" disabled={busy()} onClick={() => void start()}>
-            {busy() ? "Importando…" : "Escolher pasta e importar"}
+          <button type="button" class="primary" disabled={blocked()} onClick={() => void start()}>
+            {importing() ? "Importando…" : "Escolher pasta e importar"}
           </button>
         </Match>
       </Switch>

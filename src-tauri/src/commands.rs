@@ -189,7 +189,7 @@ pub fn backup_use_default_folder(
 /// Copies (or, with `remove_originals`, moves) the backups left in the old folder by the last
 /// folder change to the current one. Each original is deleted only after its copy is verified.
 #[tauri::command(async)]
-pub fn backup_move_left_behind(
+pub fn backup_relocate_left_behind(
     db: State<'_, Database>,
     paths: State<'_, AppPaths>,
     service: State<'_, BackupService>,
@@ -243,7 +243,7 @@ fn ensure_no_ai_job(
 fn ensure_not_backing_up(service: &BackupService) -> AppResult<()> {
     if service.is_busy() {
         return Err(AppError::Invalid(
-            "Um backup, restauração ou importação está em andamento. Tente de novo em instantes."
+            "Um backup, restauração, importação ou a cópia de backups para a pasta nova está em andamento. Tente de novo em instantes."
                 .into(),
         ));
     }

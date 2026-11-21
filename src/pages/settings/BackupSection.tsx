@@ -83,9 +83,9 @@ export default function BackupSection(props: {
         backups feitos por você ficam à parte e não tomam o lugar dos diários.
       </p>
       <p class="muted">
-        <strong>Não use a mesma pasta nos dois computadores</strong> (por exemplo, uma pasta
-        sincronizada na nuvem): cada computador apaga os backups mais antigos além do limite, e os
-        do outro computador entram nessa conta e se misturam na lista.
+        Os dois computadores podem usar a mesma pasta (por exemplo, uma pasta sincronizada na
+        nuvem): cada um apaga só os próprios backups mais antigos, e os do outro aparecem na lista
+        com o nome do computador. Atualize o Gabaritei nos dois antes de compartilhar a pasta.
       </p>
       <Show when={leftBehind()}>
         {(left) => (
@@ -216,6 +216,10 @@ function Content(props: {
               <li>
                 <span>
                   {dateTime(backup.createdAt)} · {megabytes(backup.sizeBytes)}
+                  <Show when={backup.otherComputer}>
+                    {" "}
+                    <span class="badge">outro computador ({backup.computer})</span>
+                  </Show>
                   <Show when={backup.kind !== "backup"}>
                     {" "}
                     <span class="badge">

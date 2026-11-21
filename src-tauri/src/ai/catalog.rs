@@ -180,6 +180,12 @@ pub fn ensure_listed(catalog: &Catalog, config: &RoleConfig, label: &str) -> App
             config.model
         )));
     }
+    if config.fast && !model.supports_fast {
+        return Err(AppError::Invalid(format!(
+            "O modelo “{}” de “{label}” não tem modo rápido. Desligue o modo rápido em Configurações.",
+            config.model
+        )));
+    }
     Ok(())
 }
 

@@ -380,9 +380,22 @@ pub fn set_folder(conn: &Connection, paths: &AppPaths, chosen: Option<&Path>) ->
     let not_writable = || {
         AppError::Invalid("Não foi possível gravar na pasta escolhida. Escolha outra pasta.".into())
     };
-    fs::create_dir_all(chosen).map_err(|_| not_writable())?;
     // A link (or a Windows junction) can lead into a backup; look at where it really points.
-    if fs::canonicalize(chosen).is_ok_and(|real| inside_a_backup(&real)) {
+    // Only a part of the path that already exists can be a link, so the deepest existing
+    // ancestor is checked before anything is created: refusing then leaves no empty folders
+    // inside the backup.
+    let leads_into_a_backup =
+        |path: &Path| fs::canonicalize(path).is_ok_and(|real| inside_a_backup(&real));
+    if chosen
+        .ancestors()
+        .find(|ancestor| ancestor.exists())
+        .is_some_and(leads_into_a_backup)
+    {
+        return Err(refuse());
+    }
+    fs::create_dir_all(chosen).map_err(|_| not_writable())?;
+    // Checked again once it exists, in case the path changed meanwhile.
+    if leads_into_a_backup(chosen) {
         return Err(refuse());
     }
     tempfile::tempfile_in(chosen).map_err(|_| not_writable())?;
@@ -1728,9 +1741,12 @@ mod tests {
         f.db.with(|conn| {
             assert!(set_folder(conn, &f.paths, Some(&link)).is_err());
             assert!(set_folder(conn, &f.paths, Some(&link.join("sub"))).is_err());
+            assert!(set_folder(conn, &f.paths, Some(&link.join("a").join("b"))).is_err());
             Ok(())
         })
         .unwrap();
+        // Refusing must not leave empty folders inside the backup.
+        assert_eq!(fs::read_dir(&real).unwrap().count(), 0);
     }
 
     #[test]

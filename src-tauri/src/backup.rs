@@ -182,6 +182,64 @@ fn tag_from(local_host_name: Option<&str>, host_name: &str) -> Option<String> {
     local_host_name.and_then(slug).or_else(|| slug(host_name))
 }
 
+/// The tags this computer's backups carried before the derivation changed: builds from `main`
+/// since the tags appeared slugged the network host name (`gethostname()`) with ASCII letters
+/// and digits only, either whole (`mac.local` → `mac-local`) or up to the first dot, cut at
+/// [`MAX_TAG`]. Backups with one of these still belong to this computer, so they are rotated,
+/// counted for the daily check and moved with the rest, instead of looking like another
+/// computer's. Only what the current host name would have produced is recognized: a name the
+/// network gave on another day is not (and a different computer's tag is never claimed).
+fn previous_tags() -> Vec<String> {
+    #[cfg(test)]
+    {
+        tests::PREVIOUS.with(|tags| tags.borrow().clone())
+    }
+    #[cfg(not(test))]
+    {
+        static TAGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+        TAGS.get_or_init(|| previous_tags_from(&gethostname::gethostname().to_string_lossy()))
+            .clone()
+    }
+}
+
+#[cfg_attr(test, allow(dead_code))] // tests set the previous tags directly
+fn previous_tags_from(host_name: &str) -> Vec<String> {
+    let first_label = host_name.split('.').next().unwrap_or_default();
+    let mut tags: Vec<String> = [host_name, first_label]
+        .into_iter()
+        .filter_map(ascii_slug)
+        .collect();
+    tags.dedup();
+    tags
+}
+
+/// The first tag derivations: ASCII letters and digits lowercased, other runs one hyphen, cut
+/// at [`MAX_TAG`] with no hash.
+fn ascii_slug(text: &str) -> Option<String> {
+    let mut out = String::new();
+    for c in text.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.truncate(MAX_TAG);
+    let out = out.trim_end_matches('-');
+    (!out.is_empty()).then(|| out.to_owned())
+}
+
+/// Whether a backup tagged `tag` (`None`: untagged) is this computer's by name: it carries this
+/// computer's tag or one of its [`previous_tags`], or it is untagged on a computer with no tag.
+fn owns_tag(tag: Option<&str>) -> bool {
+    match tag {
+        Some(tag) => {
+            computer_tag().as_deref() == Some(tag) || previous_tags().iter().any(|t| t == tag)
+        }
+        None => computer_tag().is_none(),
+    }
+}
+
 /// macOS keeps a stable name apart from `gethostname()`, which follows the network (a router
 /// may hand out `air-3.lan` one day and `Air.local` the next). Other systems have none.
 #[cfg(target_os = "macos")]
@@ -295,7 +353,7 @@ fn parse_name(name: &str) -> Option<BackupKind> {
 
 /// Whether a backup tagged `tag` was made by another computer than the one running.
 fn is_other_computer(tag: Option<&str>) -> bool {
-    tag.is_some() && tag != computer_tag().as_deref()
+    tag.is_some() && !owns_tag(tag)
 }
 
 /// Whether a backup in a shared folder is not this computer's to copy or delete: another
@@ -852,7 +910,6 @@ fn prune(folder: &Path, kind: BackupKind) {
     let Ok(entries) = fs::read_dir(folder) else {
         return;
     };
-    let own = computer_tag();
     let mut names: Vec<String> = Vec::new();
     for entry in entries.filter_map(Result::ok) {
         let Ok(name) = entry.file_name().into_string() else {
@@ -865,12 +922,14 @@ fn prune(folder: &Path, kind: BackupKind) {
             let parsed = parse(building);
             let theirs = parsed
                 .as_ref()
-                .is_some_and(|parsed| parsed.tag.is_some() && parsed.tag != own);
-            let mine = parsed.is_some_and(|parsed| parsed.tag == own);
+                .is_some_and(|parsed| is_other_computer(parsed.tag.as_deref()));
+            let mine = parsed.is_some_and(|parsed| owns_tag(parsed.tag.as_deref()));
             if mine || (!theirs && is_stale(&entry.path())) {
                 remove_dir_logged(&entry.path());
             }
-        } else if parse(&name).is_some_and(|parsed| parsed.kind == kind && parsed.tag == own) {
+        } else if parse(&name)
+            .is_some_and(|parsed| parsed.kind == kind && owns_tag(parsed.tag.as_deref()))
+        {
             names.push(name);
         }
     }
@@ -949,6 +1008,12 @@ mod tests {
         /// Without an override, tests make untagged backups.
         pub(super) static TAG: std::cell::RefCell<Option<Option<String>>> =
             const { std::cell::RefCell::new(None) };
+    }
+
+    thread_local! {
+        /// Overrides [`previous_tags`] for the current test.
+        pub(super) static PREVIOUS: std::cell::RefCell<Vec<String>> =
+            const { std::cell::RefCell::new(Vec::new()) };
     }
 
     fn as_computer(tag: &str) {
@@ -1955,6 +2020,86 @@ mod tests {
         assert_eq!(all.len(), 8, "the untagged ones stay");
         let old = all.iter().find(|b| b.computer.is_none()).unwrap();
         assert!(!old.other_computer);
+    }
+
+    #[test]
+    fn the_previous_tags_are_what_the_first_derivations_made_of_the_host_name() {
+        assert_eq!(previous_tags_from("mac"), ["mac"]);
+        assert_eq!(previous_tags_from("Mac.local"), ["mac-local", "mac"]);
+        // Accents were dropped to hyphens back then.
+        assert_eq!(
+            previous_tags_from("Máquina.lan"),
+            ["m-quina-lan", "m-quina"]
+        );
+        // Cut at the limit, without the hash of the current derivation.
+        let long = "a".repeat(40);
+        assert_eq!(previous_tags_from(&long), ["a".repeat(MAX_TAG)]);
+        assert!(previous_tags_from("???").is_empty());
+    }
+
+    #[test]
+    fn backups_with_an_old_style_tag_of_this_computer_are_still_its_own() {
+        let f = fixture();
+        let folder = default_folder(&f.paths);
+        let service = BackupService::default();
+        // Made by builds that slugged the host name the old way.
+        as_computer("m-quina");
+        for day in 1..=7 {
+            backup(&f, &format!("2026-11-{day:02}T10:00:00.000Z"));
+        }
+        as_computer("laptop");
+        backup(&f, "2026-11-08T10:00:00.000Z");
+        // The tag derivation changed.
+        as_computer("maquina");
+        PREVIOUS.with(|tags| *tags.borrow_mut() = vec!["m-quina".to_owned()]);
+
+        let all = list(&folder);
+        let old_style = |b: &&BackupInfo| b.computer.as_deref() == Some("m-quina");
+        assert_eq!(all.iter().filter(old_style).count(), 7);
+        assert!(all.iter().filter(old_style).all(|b| !b.other_computer));
+        assert!(
+            all.iter()
+                .filter(|b| b.computer.as_deref() == Some("laptop"))
+                .all(|b| b.other_computer),
+            "another computer's tag is never claimed"
+        );
+
+        // Its own, so they count for the daily check...
+        assert!(
+            service
+                .backup_if_due(&f.db, &f.paths, datetime!(2026-11-07 20:00:00 UTC))
+                .unwrap()
+                .is_none(),
+            "the old-style backup of that day counts"
+        );
+        // ... and they rotate together with the new ones: the oldest go first.
+        backup(&f, "2026-11-09T10:00:00.000Z");
+        let all = list(&folder);
+        let own = all.iter().filter(|b| !b.other_computer).count();
+        assert_eq!(own, 7, "seven kept in all, old-style and new");
+        assert!(!all.iter().any(|b| b.name.starts_with("backup-20261101")));
+        assert_eq!(all.iter().filter(|b| b.other_computer).count(), 1);
+    }
+
+    #[test]
+    fn old_style_backups_of_this_computer_are_moved_with_the_rest() {
+        let f = fixture();
+        let service = BackupService::default();
+        let old = default_folder(&f.paths);
+        as_computer("m-quina");
+        backup(&f, "2026-11-19T10:00:00.000Z");
+        as_computer("laptop");
+        backup(&f, "2026-11-19T11:00:00.000Z");
+        as_computer("maquina");
+        PREVIOUS.with(|tags| *tags.borrow_mut() = vec!["m-quina".to_owned()]);
+        let new = f._dir.path().join("new");
+        service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
+
+        let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+
+        assert_eq!((outcome.report.removed, outcome.report.left_alone), (1, 1));
+        assert_eq!(list(&new).len(), 1);
+        assert_eq!(list(&old).len(), 1, "only the laptop's stays");
     }
 
     #[test]

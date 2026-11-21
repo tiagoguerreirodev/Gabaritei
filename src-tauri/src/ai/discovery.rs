@@ -202,8 +202,11 @@ pub(super) fn capture_with(
             }
         }
     };
-    let stdout = out_rx.recv_timeout(READER_GRACE).unwrap_or_default();
-    let stderr = err_rx.recv_timeout(READER_GRACE).unwrap_or_default();
+    // One grace period for both streams, so the probe never waits for it twice.
+    let readers_until = std::time::Instant::now() + READER_GRACE;
+    let left = || readers_until.saturating_duration_since(std::time::Instant::now());
+    let stdout = out_rx.recv_timeout(left()).unwrap_or_default();
+    let stderr = err_rx.recv_timeout(left()).unwrap_or_default();
     Some(Captured {
         success: status.is_some_and(|s| s.success()),
         stdout,
@@ -397,7 +400,6 @@ esac"#,
 
     #[cfg(unix)]
     #[test]
-    #[cfg(unix)]
     fn capture_returns_after_the_timeout_even_if_a_grandchild_keeps_the_pipes_open() {
         let dir = tempfile::tempdir().unwrap();
         // The background `sleep` outlives the killed shell and keeps stdout and stderr open.
@@ -408,12 +410,13 @@ esac"#,
             .expect("the probe still reports");
         assert!(!out.success);
         assert!(
-            started.elapsed() < Duration::from_secs(4),
+            started.elapsed() < Duration::from_millis(3200),
             "waited {:?}",
             started.elapsed()
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn probes_survive_scripts_written_while_other_threads_fork() {
         // Regression for #60: writing a script and running it at once can hit ETXTBSY.

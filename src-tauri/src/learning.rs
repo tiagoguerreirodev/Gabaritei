@@ -201,14 +201,15 @@ impl Latest {
     }
 }
 
-/// Questions that sit in an unfinished attempt. Practice sessions leave them out: they stay
-/// due until that attempt is finished, and would otherwise be picked again.
+/// The one definition of "held by an open attempt": the questions that sit in an unfinished
+/// attempt. Practice sessions leave them out: they stay due until that attempt is finished,
+/// and would otherwise be picked again. Every query that needs the rule embeds this one.
+const OPEN_ATTEMPT_QUESTIONS_SQL: &str = "SELECT DISTINCT r.question_id FROM responses r
+     JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NULL";
+
 fn open_attempt_questions(conn: &Connection) -> AppResult<HashSet<String>> {
     let ids = conn
-        .prepare(
-            "SELECT DISTINCT r.question_id FROM responses r
-             JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NULL",
-        )?
+        .prepare(OPEN_ATTEMPT_QUESTIONS_SQL)?
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<Result<_, _>>()?;
     Ok(ids)
@@ -248,14 +249,11 @@ pub fn review_session(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec
 /// Questions whose review is due at `now`, the most overdue first, without the ones already
 /// in an unfinished attempt.
 pub fn due_questions(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<String>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT question_id FROM review_state
-         WHERE due_at <= ?1
-           AND question_id NOT IN (
-             SELECT r.question_id FROM responses r
-             JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NULL)
-         ORDER BY due_at, question_id LIMIT ?2",
-    )?;
+         WHERE due_at <= ?1 AND question_id NOT IN ({OPEN_ATTEMPT_QUESTIONS_SQL})
+         ORDER BY due_at, question_id LIMIT ?2"
+    ))?;
     let ids = stmt
         .query_map(params![now, limit], |r| r.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;

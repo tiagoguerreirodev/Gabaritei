@@ -280,6 +280,39 @@ describe("BackupSection", () => {
     );
   });
 
+  it("disables 'Verificar de novo' while the status is read again", async () => {
+    let release: (status: BackupStatus) => void = () => {};
+    let reads = 0;
+    const unavailable: BackupStatus = {
+      folder: "/dados/backups",
+      isDefaultFolder: true,
+      backups: [],
+      lastError: null,
+      leftBehind: null,
+      folderUnavailable: true,
+    };
+    mockIPC((command) => {
+      if (command !== "backup_status") return null;
+      reads += 1;
+      return reads === 1
+        ? unavailable
+        : new Promise<BackupStatus>((resolve) => {
+            release = resolve;
+          });
+    });
+    const user = userEvent.setup();
+    render(() => <BackupSection busy={createBusy()} />);
+    const button = await screen.findByRole("button", { name: "Verificar de novo" });
+
+    await user.click(button);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Verificar de novo" })).toBeDisabled(),
+    );
+    release({ ...unavailable, folderUnavailable: false });
+    await waitFor(() => expect(screen.queryByTestId("folder-unavailable")).not.toBeInTheDocument());
+  });
+
   it("shows the offer the backend remembers when the page opens, and dismissing forgets it", async () => {
     const calls = backend({
       leftBehind: { folder: "/antiga", backups: 2, safety: 0, unavailable: false },

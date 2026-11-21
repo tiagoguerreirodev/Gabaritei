@@ -3220,24 +3220,15 @@ mod tests {
     }
 
     #[test]
-    fn a_slow_manifest_read_does_not_make_backups_wait_or_fail() {
+    fn status_reads_manifests_under_their_own_key_so_backups_are_not_held_up() {
         let f = fixture();
-        let service = Arc::new(BackupService {
-            probe: FolderProbe::with_timeout(Duration::from_secs(5)),
-            ..BackupService::default()
-        });
+        let service = service_with_long_probe();
         let folder = default_folder(&f.paths);
         fs::create_dir_all(&folder).unwrap();
-        // The status is in the middle of a long (healthy) read of the manifests.
-        let (release, work) = blocked();
-        let slow = {
-            let service = service.clone();
-            let key = manifest_key(&folder);
-            std::thread::spawn(move || service.probe.run_for(&key, LONG, work))
-        };
-        eventually(|| occupied(&service.probe));
-
-        // Neither the daily nor the manual backup is refused while it runs.
+        // A manifest read that never ends: the status gives up on the list at once...
+        service.probe.mark_stuck(&manifest_key(&folder));
+        assert!(service.status(&f.db, &f.paths).unwrap().folder_unavailable);
+        // ...but the folder itself answers, so nothing that needs it is refused or waits.
         service
             .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 10:00:00 UTC))
             .unwrap()
@@ -3245,8 +3236,24 @@ mod tests {
         service
             .backup_now(&f.db, &f.paths, "2026-11-19T11:00:00.000Z")
             .unwrap();
-        drop(release);
-        assert_eq!(slow.join().unwrap(), Some(7));
+    }
+
+    #[test]
+    fn a_slow_manifest_read_does_not_hold_the_folders_own_slot() {
+        let service = BackupService {
+            probe: FolderProbe::with_timeout(Duration::from_secs(5)),
+            ..BackupService::default()
+        };
+        let folder = Path::new("/some/backups");
+        let (release, work) = blocked();
+        let key = manifest_key(folder);
+        std::thread::scope(|scope| {
+            let slow = scope.spawn(|| service.probe.run_for(&key, LONG, work));
+            eventually(|| occupied(&service.probe));
+            assert_eq!(service.probe.run(folder, || 1), Some(1));
+            drop(release);
+            assert_eq!(slow.join().unwrap(), Some(7));
+        });
     }
 
     #[test]
@@ -3274,7 +3281,7 @@ mod tests {
     #[test]
     fn a_folder_on_a_volume_that_is_not_mounted_is_unavailable() {
         assert!(matches!(
-            folder_state(Path::new("/Volumes/gabaritei-no-such-volume/backups")),
+            folder_state(Path::new("/Volumes/gabaritei-no-such-volume")),
             FolderState::Unavailable
         ));
     }
@@ -3294,6 +3301,18 @@ mod tests {
             made.is_none(),
             "the untagged one is from before tags, this computer's"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_root_that_is_missing_is_unavailable_not_a_new_folder() {
+        let letter = ('Q'..='Z')
+            .find(|letter| !Path::new(&format!("{letter}:\\")).exists())
+            .expect("an unused drive letter");
+        assert!(matches!(
+            folder_state(Path::new(&format!("{letter}:\\"))),
+            FolderState::Unavailable
+        ));
     }
 
     #[test]

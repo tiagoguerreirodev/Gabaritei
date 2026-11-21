@@ -124,8 +124,8 @@ export const api = {
    * Copies (or moves, with `removeOriginals`) the backups left in the previous folder to the
    * current one. An original is deleted only after its copy was verified.
    */
-  backupMoveLeftBehind: (removeOriginals: boolean) =>
-    call<RelocateOutcome>("backup_move_left_behind", { removeOriginals }),
+  backupRelocateLeftBehind: (removeOriginals: boolean) =>
+    call<RelocateOutcome>("backup_relocate_left_behind", { removeOriginals }),
   /** Forgets the offer to move the backups left in the previous folder. Moves and deletes nothing. */
   backupForgetLeftBehind: () => call<null>("backup_forget_left_behind"),
   /** Replaces the current data with a backup, after a safety backup of the current data. */

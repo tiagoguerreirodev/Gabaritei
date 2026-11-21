@@ -34,6 +34,7 @@ export default function BackupSection(props: {
     return loaded;
   });
   const [restoring, setRestoring] = createSignal<BackupInfo | null>(null);
+  const [confirmingMove, setConfirmingMove] = createSignal(false);
 
   const run = (work: () => Promise<void>) =>
     busy.run(async () => {
@@ -78,7 +79,7 @@ export default function BackupSection(props: {
 
   const relocate = (removeOriginals: boolean) =>
     run(async () => {
-      const { report, status: next } = await api.backupMoveLeftBehind(removeOriginals);
+      const { report, status: next } = await api.backupRelocateLeftBehind(removeOriginals);
       mutate(next);
       setLeftBehind(next.leftBehind);
       setRelocated(true);
@@ -156,7 +157,7 @@ export default function BackupSection(props: {
             <button type="button" disabled={busy.active()} onClick={() => void relocate(false)}>
               Copiar para a pasta nova
             </button>{" "}
-            <button type="button" disabled={busy.active()} onClick={() => void relocate(true)}>
+            <button type="button" disabled={busy.active()} onClick={() => setConfirmingMove(true)}>
               Mover para a pasta nova
             </button>{" "}
             <button
@@ -187,6 +188,43 @@ export default function BackupSection(props: {
             />
           )}
         </Show>
+      </Show>
+      <Show when={confirmingMove()}>
+        <Modal
+          title="Mover os backups para a pasta nova?"
+          onClose={() => !busy.active() && setConfirmingMove(false)}
+          footer={
+            <>
+              <button
+                type="button"
+                disabled={busy.active()}
+                onClick={() => setConfirmingMove(false)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                class="primary danger"
+                disabled={busy.active()}
+                onClick={() => {
+                  setConfirmingMove(false);
+                  void relocate(true);
+                }}
+              >
+                Mover
+              </button>
+            </>
+          }
+        >
+          <p>
+            Cada backup é copiado para a pasta nova e conferido; só então o original é apagado da
+            pasta anterior (os originais serão apagados). Se algum não puder ser conferido, ele
+            continua onde estava.
+          </p>
+          <p class="muted">
+            Se preferir manter os backups nas duas pastas, use <strong>Copiar</strong>.
+          </p>
+        </Modal>
       </Show>
       <Show when={restoring()}>
         {(backup) => (

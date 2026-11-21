@@ -38,18 +38,37 @@ pub struct RelocateReport {
     pub left_alone: u32,
 }
 
+/// Runs one backup's work in its own turn. The caller takes whatever lock keeps backups,
+/// restores and imports apart for the length of `work`, and may skip it by not calling it
+/// (the folder changed meanwhile).
+pub type Turn<'a> = &'a dyn Fn(&mut dyn FnMut());
+
 /// Copies the backups called `names` from `old` to `new` and, when `remove_originals`, removes
-/// each original once its copy is verified.
+/// each original once its copy is verified. Each backup runs inside `turn`, so the lock is held
+/// per backup and not for the whole copy; a turn that does not run `work` stops the rest.
 pub fn relocate(
     old: &Path,
     new: &Path,
     names: &[String],
     remove_originals: bool,
+    turn: Turn<'_>,
 ) -> AppResult<RelocateReport> {
     fs::create_dir_all(new)?;
     let mut report = RelocateReport::default();
-    for name in names {
-        match relocate_one(old, new, name, remove_originals) {
+    for (index, name) in names.iter().enumerate() {
+        let mut result = None;
+        turn(&mut || result = Some(relocate_one(old, new, name, remove_originals)));
+        let Some(result) = result else {
+            // Not run: the folder changed or something else needed the turn for good.
+            let skipped = (names.len() - index) as u32;
+            report.failed += skipped;
+            report.first_failure.get_or_insert_with(|| {
+                "A pasta dos backups mudou durante a cópia; os demais ficaram na pasta anterior."
+                    .to_owned()
+            });
+            break;
+        };
+        match result {
             Ok(Done { copied, removed }) => {
                 if copied {
                     report.copied += 1;
@@ -59,12 +78,12 @@ pub fn relocate(
                 report.removed += u32::from(removed);
             }
             Err(error) => {
-                report.failed += 1;
                 crate::log::error(format!(
                     "could not {} backup {name}: {}",
                     if remove_originals { "move" } else { "copy" },
                     error.detail()
                 ));
+                report.failed += 1;
                 report
                     .first_failure
                     .get_or_insert_with(|| format!("{name}: {error}"));

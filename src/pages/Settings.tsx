@@ -25,7 +25,7 @@ function clone<T>(value: T): T {
 export default function Settings() {
   const [loaded, { refetch }] = createResource(() => api.aiSettings());
   const [legacy] = createResource(() => api.legacyImportStatus());
-  // One flag for both sections of Dados: a restore and an import must never overlap.
+  // One flag for every section of Dados: a restore and an import must never overlap.
   const busy = createBusy();
 
   return (
@@ -41,7 +41,7 @@ export default function Settings() {
       <DataFileSection busy={busy} />
       <DataFolderSection />
       <Show when={legacy()} fallback={<Loading />}>
-        {(current) => <LegacyImport initialReport={current().report} />}
+        {(current) => <LegacyImport initialReport={current().report} busy={busy} />}
       </Show>
     </section>
   );

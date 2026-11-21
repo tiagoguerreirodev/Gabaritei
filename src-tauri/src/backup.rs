@@ -13,11 +13,12 @@ pub mod datafile;
 pub mod relocate;
 pub mod snapshot;
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc};
+use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -522,7 +523,7 @@ fn try_list_names(folder: &Path) -> Option<Vec<ParsedName>> {
 }
 
 /// The notice for the backups `left` in `old`, if there are any.
-fn left_behind(old: &Path, left: &[ParsedName]) -> Option<LeftBehind> {
+fn left_behind(old: &Path, left: &[&ParsedName]) -> Option<LeftBehind> {
     (!left.is_empty()).then(|| LeftBehind {
         folder: old.display().to_string(),
         backups: left.len() as u32,
@@ -564,13 +565,43 @@ fn inspect_old_folder(old: &Path, current: &Path) -> OldFolder {
 /// Runs the filesystem calls on the old folder with a deadline. A drive that is asleep or a
 /// share that is offline can block `read_dir` for minutes, and the callers hold (or are called
 /// by something that holds) the backup lock. The work runs on its own thread; past the deadline
-/// the caller stops waiting and reports the folder as unavailable. A thread stuck in the
-/// operating system can't be cancelled, so while one is stuck, later calls answer at once
-/// instead of starting (and leaking) another.
+/// the caller stops waiting and reports the folder as unavailable (a call can wait for another
+/// healthy one on the same folder and then run, so at most twice the timeout). A thread stuck in
+/// the operating system can't be cancelled, so while one is stuck on a folder, later calls on
+/// that folder answer at once instead of starting (and leaking) another.
 struct FolderProbe {
-    running: Arc<AtomicBool>,
-    stuck: Arc<AtomicBool>,
+    probes: Arc<Probes>,
+    next_id: AtomicU64,
     timeout: Duration,
+}
+
+/// The probes that are running or stuck, by folder.
+type Probes = (Mutex<HashMap<PathBuf, Probe>>, Condvar);
+
+struct Probe {
+    id: u64,
+    stuck: bool,
+}
+
+/// Frees the folder's entry when the worker ends, however it ends (a panic included).
+struct FreeProbe {
+    probes: Arc<Probes>,
+    path: PathBuf,
+    id: u64,
+}
+
+impl Drop for FreeProbe {
+    fn drop(&mut self) {
+        let (mutex, wake) = &*self.probes;
+        let mut probes = lock(mutex);
+        if probes
+            .get(&self.path)
+            .is_some_and(|probe| probe.id == self.id)
+        {
+            probes.remove(&self.path);
+        }
+        wake.notify_all();
+    }
 }
 
 impl Default for FolderProbe {
@@ -582,61 +613,94 @@ impl Default for FolderProbe {
 impl FolderProbe {
     fn with_timeout(timeout: Duration) -> Self {
         Self {
-            running: Arc::default(),
-            stuck: Arc::default(),
+            probes: Arc::default(),
+            next_id: AtomicU64::new(1),
             timeout,
         }
     }
 
-    /// The result of `work`, or `None` when it didn't finish in time (or an earlier one is
-    /// still stuck).
-    fn run<T: Send + 'static>(&self, work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
-        let deadline = std::time::Instant::now() + self.timeout;
-        // A healthy probe from another call is waited for; a stuck one is not.
-        while self.running.load(Ordering::Acquire) {
-            if self.stuck.load(Ordering::Acquire) || std::time::Instant::now() >= deadline {
-                return None;
+    /// The result of `work` on `path`, or `None` when it didn't finish in time (or an earlier
+    /// call on the same path is still stuck).
+    fn run<T: Send + 'static>(
+        &self,
+        path: &Path,
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> Option<T> {
+        let deadline = Instant::now() + self.timeout;
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (mutex, wake) = &*self.probes;
+        {
+            let mut probes = lock(mutex);
+            loop {
+                match probes.get(path) {
+                    None => {
+                        probes.insert(path.to_path_buf(), Probe { id, stuck: false });
+                        break;
+                    }
+                    Some(other) if other.stuck => return None,
+                    // A healthy probe of another call on this folder: wait for it.
+                    Some(_) => {
+                        let left = deadline.saturating_duration_since(Instant::now());
+                        if left.is_zero() {
+                            return None;
+                        }
+                        probes = wake
+                            .wait_timeout(probes, left)
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .0;
+                    }
+                }
             }
-            std::thread::sleep(Duration::from_millis(5));
         }
-        self.running.store(true, Ordering::Release);
         let (done, result) = mpsc::channel();
-        let (running, stuck) = (self.running.clone(), self.stuck.clone());
+        let free = FreeProbe {
+            probes: self.probes.clone(),
+            path: path.to_path_buf(),
+            id,
+        };
         let spawned = std::thread::Builder::new().spawn(move || {
-            let value = work();
-            stuck.store(false, Ordering::Release);
-            running.store(false, Ordering::Release);
-            let _ = done.send(value);
+            let _free = free;
+            let _ = done.send(work());
         });
         if spawned.is_err() {
-            self.running.store(false, Ordering::Release);
+            // The closure (and the guard in it) was dropped: the entry is already free.
             return None;
         }
         match result.recv_timeout(self.timeout) {
             Ok(value) => Some(value),
-            Err(_) => {
-                self.stuck.store(true, Ordering::Release);
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let mut probes = lock(mutex);
+                if let Some(probe) = probes.get_mut(path).filter(|probe| probe.id == id) {
+                    probe.stuck = true;
+                }
                 None
             }
+            // The work panicked; the guard freed the entry.
+            Err(mpsc::RecvTimeoutError::Disconnected) => None,
         }
     }
 
-    /// [`inspect_old_folder`] within the deadline; `None` when it timed out.
+    /// [`inspect_old_folder`] within the deadline; `None` when it timed out. The same folder
+    /// is answered without touching the disk.
     fn inspect(&self, old: &Path, current: &Path) -> Option<OldFolder> {
-        let (old, current) = (old.to_path_buf(), current.to_path_buf());
-        self.run(move || inspect_old_folder(&old, &current))
+        if old == current {
+            return Some(OldFolder::Current);
+        }
+        let (path, current) = (old.to_path_buf(), current.to_path_buf());
+        self.run(old, move || inspect_old_folder(&path, &current))
     }
 }
 
 /// The remembered old folder and what it still holds of this computer's, when there is
 /// something to offer. A stale memory (the folder is the current one now, or has nothing of ours
 /// left) is forgotten here. An unreadable folder stays remembered and is offered as
-/// `unavailable`, so it can be dismissed.
+/// `unavailable`, so it can be dismissed. Also returns every backup name found there (empty
+/// when unavailable), so a move works from what the notice counted and reads the folder once.
 fn pending_old_folder(
     db: &Database,
     probe: &FolderProbe,
     current: &Path,
-) -> AppResult<Option<(PathBuf, LeftBehind)>> {
+) -> AppResult<Option<(PathBuf, LeftBehind, Vec<ParsedName>)>> {
     let Some(old) = db.with(|conn| get_setting::<String>(conn, KEY_LEFT_BEHIND))? else {
         return Ok(None);
     };
@@ -647,22 +711,20 @@ fn pending_old_folder(
         safety: 0,
         unavailable: true,
     };
-    let notice = match probe.inspect(&old, current) {
-        Some(OldFolder::Current) => None,
+    let (notice, names) = match probe.inspect(&old, current) {
+        Some(OldFolder::Current) => (None, Vec::new()),
         Some(OldFolder::Listed(found)) => {
-            let mine: Vec<ParsedName> = found
-                .into_iter()
-                .filter(|backup| !leave_alone(backup))
-                .collect();
-            left_behind(&old, &mine)
+            let mine: Vec<&ParsedName> =
+                found.iter().filter(|backup| !leave_alone(backup)).collect();
+            (left_behind(&old, &mine), found)
         }
         // Not answering in time is the same as unreadable: the drive may come back.
-        Some(OldFolder::Unreadable) | None => Some(unavailable()),
+        Some(OldFolder::Unreadable) | None => (Some(unavailable()), Vec::new()),
     };
     if notice.is_none() {
         forget_old_folder_if(db, &old)?;
     }
-    Ok(notice.map(|notice| (old, notice)))
+    Ok(notice.map(|notice| (old, notice, names)))
 }
 
 /// Forgets the remembered old folder only if it is still `old`. `status` runs without the backup
@@ -746,7 +808,8 @@ impl BackupService {
             let chosen = get_setting::<String>(conn, KEY_FOLDER)?;
             Ok((folder(conn, paths)?, chosen.is_none()))
         })?;
-        let left_behind = pending_old_folder(db, &self.probe, &folder)?.map(|(_, notice)| notice);
+        let left_behind =
+            pending_old_folder(db, &self.probe, &folder)?.map(|(_, notice, _)| notice);
         Ok(BackupStatus {
             backups: list(&folder),
             folder: folder.display().to_string(),
@@ -818,7 +881,8 @@ impl BackupService {
             let new = db.with(|conn| folder(conn, paths))?;
             // Read from the stored setting, so it works after a restart too, and never from a
             // path the frontend sent. It is cleared when the old folder has nothing of ours left.
-            let (old, notice) = pending_old_folder(db, &self.probe, &new)?.ok_or_else(nothing)?;
+            let (old, notice, found) =
+                pending_old_folder(db, &self.probe, &new)?.ok_or_else(nothing)?;
             if notice.unavailable {
                 return Err(AppError::Invalid(
                     "A pasta anterior não está acessível agora. Conecte-a de novo ou dispense o aviso."
@@ -848,10 +912,6 @@ impl BackupService {
             fs::create_dir_all(&new)?;
             // Another computer's backups, and untagged ones on a tagged computer, stay where they are:
             // they may belong to a computer that still uses that folder.
-            let found = match self.probe.inspect(&old, &new) {
-                Some(OldFolder::Listed(found)) => found,
-                _ => Vec::new(),
-            };
             let (others, mine): (Vec<_>, Vec<_>) = found.into_iter().partition(leave_alone);
             let names: Vec<String> = mine.into_iter().map(|backup| backup.name).collect();
             Ok((old, new, names, others.len() as u32))
@@ -881,11 +941,14 @@ impl BackupService {
             // for some backups: then the offer stays so the rest can be tried again. If the folder
             // changed meanwhile, the new change already decided what to remember.
             if still_the_same() {
+                // A folder that stops answering (or can't be read) may still hold what is left:
+                // keep the offer, shown as unavailable, rather than forgetting it.
                 let remaining = (remove_originals || report.failed > 0)
-                    && matches!(
-                        self.probe.inspect(&old, &new),
-                        Some(OldFolder::Listed(found)) if found.iter().any(|b| !leave_alone(b))
-                    );
+                    && match self.probe.inspect(&old, &new) {
+                        Some(OldFolder::Listed(found)) => found.iter().any(|b| !leave_alone(b)),
+                        Some(OldFolder::Current) => false,
+                        Some(OldFolder::Unreadable) | None => true,
+                    };
                 db.with(|conn| remember_old_folder(conn, remaining.then_some(old.as_path())))?;
             }
             let status = self.status(db, paths)?;
@@ -2611,76 +2674,169 @@ mod tests {
         assert!(old.join(&broken).is_dir(), "the original is untouched");
     }
 
-    fn sleeping(ms: u64) -> impl FnOnce() -> u32 + Send + 'static {
-        move || {
-            std::thread::sleep(Duration::from_millis(ms));
+    /// Work that blocks until the returned sender is dropped or used: a stand-in for a read
+    /// stuck on a sleeping drive, released by the test and not by the clock.
+    fn blocked() -> (mpsc::Sender<()>, impl FnOnce() -> u32 + Send + 'static) {
+        let (release, wait) = mpsc::channel::<()>();
+        (release, move || {
+            let _ = wait.recv();
             7
+        })
+    }
+
+    /// Waits (briefly, polling) until `done` is true.
+    fn eventually(done: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(Instant::now() < deadline, "the condition never became true");
+            std::thread::sleep(Duration::from_millis(5));
         }
     }
 
-    #[test]
-    fn the_probe_answers_in_time_gives_up_when_stuck_and_recovers() {
-        let probe = FolderProbe::with_timeout(Duration::from_millis(100));
-        assert_eq!(probe.run(|| 1), Some(1));
-
-        // Stuck: the caller stops waiting at the deadline, not when the work ends.
-        let started = std::time::Instant::now();
-        assert_eq!(probe.run(sleeping(600)), None);
-        assert!(started.elapsed() < Duration::from_millis(400));
-
-        // While it is stuck, another call answers at once and starts no second thread.
-        let started = std::time::Instant::now();
-        assert_eq!(probe.run(|| 2), None);
-        assert!(started.elapsed() < Duration::from_millis(50));
-
-        // Once the stuck work ends, the probe works again.
-        std::thread::sleep(Duration::from_millis(700));
-        assert_eq!(probe.run(|| 3), Some(3));
+    fn occupied(probe: &FolderProbe) -> bool {
+        !lock(&probe.probes.0).is_empty()
     }
 
     #[test]
-    fn a_slow_but_healthy_probe_is_waited_for_by_a_concurrent_call() {
-        let probe = Arc::new(FolderProbe::with_timeout(Duration::from_millis(500)));
+    fn the_probe_answers_gives_up_when_stuck_and_recovers() {
+        let probe = FolderProbe::with_timeout(Duration::from_millis(100));
+        let path = Path::new("/a");
+        assert_eq!(probe.run(path, || 1), Some(1));
+        assert!(!occupied(&probe));
+
+        // Stuck: the caller stops waiting at the deadline, not when the work ends.
+        let (release, work) = blocked();
+        assert_eq!(probe.run(path, work), None);
+
+        // While it is stuck on this folder, another call answers at once and starts nothing.
+        let started = Instant::now();
+        assert_eq!(probe.run(path, || 2), None);
+        assert!(started.elapsed() < Duration::from_millis(90));
+
+        // Once the stuck work ends, the probe works again.
+        drop(release);
+        eventually(|| !occupied(&probe));
+        assert_eq!(probe.run(path, || 3), Some(3));
+    }
+
+    #[test]
+    fn a_probe_stuck_on_one_folder_does_not_stop_another_folder() {
+        let probe = FolderProbe::with_timeout(Duration::from_millis(100));
+        let (release, work) = blocked();
+        assert_eq!(probe.run(Path::new("/offline"), work), None);
+
+        assert_eq!(probe.run(Path::new("/healthy"), || 5), Some(5));
+        // The stuck one is still tracked, and is still what answers for its own folder.
+        assert_eq!(probe.run(Path::new("/offline"), || 6), None);
+        drop(release);
+    }
+
+    #[test]
+    fn a_concurrent_call_waits_for_a_healthy_probe_and_then_runs() {
+        let probe = Arc::new(FolderProbe::with_timeout(Duration::from_secs(10)));
+        let (release, work) = blocked();
         let first = {
             let probe = probe.clone();
-            std::thread::spawn(move || probe.run(sleeping(150)))
+            std::thread::spawn(move || probe.run(Path::new("/a"), work))
         };
-        std::thread::sleep(Duration::from_millis(30));
-        assert_eq!(probe.run(|| 2), Some(2), "waited for the first, then ran");
+        eventually(|| occupied(&probe));
+        let second = {
+            let probe = probe.clone();
+            std::thread::spawn(move || probe.run(Path::new("/a"), || 2))
+        };
+        // The second one is waiting; letting the first finish lets it through.
+        std::thread::sleep(Duration::from_millis(50));
+        drop(release);
         assert_eq!(first.join().unwrap(), Some(7));
+        assert_eq!(second.join().unwrap(), Some(2));
+    }
+
+    #[test]
+    fn a_panicking_probe_does_not_disable_the_next_one() {
+        let probe = FolderProbe::with_timeout(Duration::from_secs(5));
+        let path = Path::new("/a");
+        assert_eq!(probe.run(path, || -> u32 { panic!("boom") }), None);
+        eventually(|| !occupied(&probe));
+        assert_eq!(probe.run(path, || 4), Some(4));
+    }
+
+    #[test]
+    fn the_same_folder_is_answered_without_looking_at_the_disk() {
+        let probe = FolderProbe::with_timeout(Duration::from_millis(100));
+        let (release, work) = blocked();
+        assert_eq!(probe.run(Path::new("/offline"), work), None);
+        assert!(matches!(
+            probe.inspect(Path::new("/offline"), Path::new("/offline")),
+            Some(OldFolder::Current)
+        ));
+        drop(release);
     }
 
     #[test]
     fn an_old_folder_that_does_not_answer_is_offered_as_unavailable_without_blocking() {
         let f = fixture();
-        let (old, _) = make_left_behind(&f, &BackupService::default());
+        let (old, new) = make_left_behind(&f, &BackupService::default());
         let service = BackupService {
             probe: FolderProbe::with_timeout(Duration::from_millis(100)),
             ..BackupService::default()
         };
-        // Something already stuck reading the folder.
-        assert_eq!(service.probe.run(sleeping(800)), None);
+        // Something is already stuck reading the old folder, until the test lets it go.
+        let (release, work) = blocked();
+        assert_eq!(service.probe.run(&old, work), None);
 
-        let started = std::time::Instant::now();
         let notice = service
             .status(&f.db, &f.paths)
             .unwrap()
             .left_behind
             .unwrap();
-        assert!(started.elapsed() < Duration::from_millis(400));
         assert!(notice.unavailable);
         assert_eq!(notice.folder, old.display().to_string());
 
-        // Changing the folder meanwhile keeps the offer (as unavailable) instead of losing it.
+        // Changing the folder while the folder being left (`new` now) doesn't answer keeps the
+        // offer for it (as unavailable) instead of losing it.
+        let (release_new, work_new) = blocked();
+        assert_eq!(service.probe.run(&new, work_new), None);
         let third = f._dir.path().join("third");
         let status = service
             .change_folder(&f.db, &f.paths, Some(&third))
             .unwrap();
-        assert!(status.left_behind.unwrap().unavailable);
+        let left = status.left_behind.unwrap();
+        assert!(left.unavailable);
+        assert_eq!(left.folder, new.display().to_string());
         let error = service
             .relocate_left_behind(&f.db, &f.paths, true)
             .unwrap_err();
         assert!(error.to_string().contains("não está acessível"), "{error}");
+        drop((release, release_new));
+    }
+
+    #[test]
+    fn a_folder_that_stops_answering_after_a_move_keeps_the_offer() {
+        let f = fixture();
+        let service = BackupService {
+            probe: FolderProbe::with_timeout(Duration::from_millis(100)),
+            ..BackupService::default()
+        };
+        let (old, _) = make_left_behind(&f, &service);
+        // Leave one backup the move can't verify, so something remains, then make the folder
+        // stop answering just before the final check.
+        let broken = list(&old).remove(0).name;
+        fs::remove_file(old.join(&broken).join(snapshot::MANIFEST_FILE)).unwrap();
+        let (release, work) = blocked();
+        let stuck = std::cell::RefCell::new(Some(work));
+
+        let outcome = service
+            .relocate_with(&f.db, &f.paths, true, &|| {
+                if let Some(work) = stuck.borrow_mut().take() {
+                    assert_eq!(service.probe.run(&old, work), None);
+                }
+            })
+            .unwrap();
+
+        assert_eq!(outcome.report.failed, 1);
+        let left = outcome.status.left_behind.expect("the offer stays");
+        assert!(left.unavailable);
+        drop(release);
     }
 
     #[test]

@@ -110,7 +110,7 @@ On Windows, `cargo test` needs `GABARITEI_TEST_MANIFEST=1` and `--lib` (the test
 - Every domain rule gets unit tests. The legacy test names in `docs/legacy-analysis.md` and the legacy repo make a good checklist of behaviors to port.
 - Before opening a PR, run Rust tests, clippy and fmt, plus frontend lint, typecheck and tests. Don't open a PR with failing checks.
 - The legacy migration has a test against the real bank, skipped by default because it needs a clone of the legacy repo: `LEGACY_CLONE=../Simulados-Concursos cargo test --manifest-path src-tauri/Cargo.toml real_legacy_bank -- --ignored --nocapture`. Run it when you touch `bank` identity or `migrate`.
-- CI (`.github/workflows/ci.yml`) runs the same checks on every PR and on pushes to `main`. It also fails if `src/bindings/` is out of date, so commit what `cargo test` regenerates.
+- CI (`.github/workflows/ci.yml`) runs the same checks on every PR and on pushes to `main`. It also fails if `src/bindings/` is out of date, so commit what `cargo test` regenerates. There is no macOS job there (10x billing); run `.github/workflows/ci-macos.yml` by hand (`workflow_dispatch`) before a release or after touching the AI runner.
 - UI changes: add a component test where behavior matters. No-spoiler rendering always needs one.
 
 ## Workflow

@@ -187,9 +187,10 @@ fn tag_from(local_host_name: Option<&str>, host_name: &str) -> Option<String> {
     local_host_name.and_then(slug).or_else(|| slug(host_name))
 }
 
-/// UTC stamp (as in backup names) from which the current tag derivation is in use: #126 was
-/// merged at 2026-11-21 15:57 UTC. The tag an earlier build made is only trusted before it.
-const PREVIOUS_TAG_UNTIL: &str = "20261121-155700-000";
+/// UTC stamp (as in backup names) from which the previous tag is no longer trusted. #126 (the
+/// current derivation) was merged at 2026-11-21 15:57 UTC; the cutoff is a day later because a
+/// computer keeps making old-style backups until it runs a new build.
+const PREVIOUS_TAG_UNTIL: &str = "20261122-160000-000";
 
 /// The tag this computer's backups carried before the derivation changed (#126): builds from
 /// `main` since the tags appeared slugged the network host name (`gethostname()`) up to the
@@ -515,7 +516,8 @@ fn try_list_names(folder: &Path) -> Option<Vec<ParsedName>> {
     Some(
         entries
             .filter_map(Result::ok)
-            .filter(|entry| entry.path().is_dir())
+            // `file_type` does not follow links: a link named like a backup is not one.
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
             .filter_map(|entry| parse(&entry.file_name().into_string().ok()?))
             .collect(),
     )
@@ -734,19 +736,29 @@ impl BackupService {
             // be deleted along with the original on a move.
             // The new folder may not exist (a removed folder or drive), so look at its deepest
             // existing ancestor: if that is inside the old folder, so is the new one.
-            let nested = match (
-                fs::canonicalize(&old),
-                new.ancestors()
-                    .find(|ancestor| ancestor.exists())
-                    .map(fs::canonicalize),
-            ) {
-                (Ok(old), Some(Ok(existing))) => existing.starts_with(&old),
-                _ => false,
-            };
-            if nested {
-                return Err(AppError::Invalid(
-                    "A pasta nova fica dentro da pasta anterior. Escolha outra pasta.".into(),
-                ));
+            // `symlink_metadata` does not follow links, so a link whose target is missing is
+            // that ancestor too; one that can't be resolved can't be shown to be outside the old
+            // folder, so it is refused (with its own message: it may lead anywhere).
+            if let Ok(old) = fs::canonicalize(&old)
+                && let Some(existing) = new
+                    .ancestors()
+                    .find(|ancestor| ancestor.symlink_metadata().is_ok())
+            {
+                match fs::canonicalize(existing) {
+                    Ok(existing) if existing.starts_with(&old) => {
+                        return Err(AppError::Invalid(
+                            "A pasta nova fica dentro da pasta anterior. Escolha outra pasta."
+                                .into(),
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(_) => {
+                        return Err(AppError::Invalid(
+                            "Não foi possível verificar a pasta nova (um atalho quebrado ou sem permissão). Escolha outra pasta."
+                                .into(),
+                        ));
+                    }
+                }
             }
             // Created here, under the lock, and not by the copy: the folder could have been
             // removed since it was chosen (an unplugged drive).
@@ -2207,17 +2219,17 @@ mod tests {
         let f = fixture();
         let folder = default_folder(&f.paths);
         as_computer("m-quina");
-        backup(&f, "2026-11-21T15:00:00.000Z");
+        backup(&f, "2026-11-22T15:00:00.000Z");
         // Another computer whose tag happens to equal this one's old tag, made later.
-        backup(&f, "2026-11-21T16:00:00.000Z");
+        backup(&f, "2026-11-22T17:00:00.000Z");
         as_computer("maquina");
         PREVIOUS.with(|tag| *tag.borrow_mut() = Some("m-quina".to_owned()));
 
         let all = list(&folder);
         let at = |stamp: &str| all.iter().find(|b| b.name.contains(stamp)).unwrap();
-        assert!(!at("20261121-150000").other_computer);
+        assert!(!at("20261122-150000").other_computer);
         assert!(
-            at("20261121-160000").other_computer,
+            at("20261122-170000").other_computer,
             "made after the cutoff"
         );
     }
@@ -2384,6 +2396,61 @@ mod tests {
             "nothing was created inside the old folder"
         );
         assert_eq!(list(&old).len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_folder_behind_a_dangling_link_into_the_old_one_is_refused() {
+        let f = fixture();
+        let service = BackupService::default();
+        let old = default_folder(&f.paths);
+        backup(&f, "2026-11-19T10:00:00.000Z");
+        // `link` points into the old folder at a place that does not exist yet.
+        let link = f._dir.path().join("link");
+        std::os::unix::fs::symlink(old.join("missing"), &link).unwrap();
+        service
+            .change_folder(&f.db, &f.paths, Some(&f._dir.path().join("elsewhere")))
+            .unwrap();
+        f.db.with(|conn| {
+            // Chosen while the link still resolved to nothing; set directly, as a stale setting.
+            set_setting(conn, KEY_FOLDER, &link.join("sub").display().to_string())
+        })
+        .unwrap();
+
+        let error = service
+            .relocate_left_behind(&f.db, &f.paths, true)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("possível verificar a pasta nova"),
+            "{error}"
+        );
+
+        assert!(
+            !old.join("missing").exists(),
+            "nothing was created through the link"
+        );
+        assert_eq!(list(&old).len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_named_like_a_backup_is_not_a_backup_for_the_notice() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, _) = make_left_behind(&f, &service);
+        let real = list(&old).remove(0).name;
+        std::os::unix::fs::symlink(old.join(&real), old.join("backup-20261101-000000-000"))
+            .unwrap();
+
+        let notice = service
+            .status(&f.db, &f.paths)
+            .unwrap()
+            .left_behind
+            .unwrap();
+
+        assert_eq!(notice.backups, 2, "the link is not counted");
     }
 
     #[test]

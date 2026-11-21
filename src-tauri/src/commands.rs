@@ -457,6 +457,18 @@ pub fn ai_settings(db: State<'_, Database>, secrets: State<'_, Secrets>) -> AppR
     db.with(|conn| settings::load(conn, &secrets))
 }
 
+/// The models and efforts each agent offers, from the agents' own CLIs. The lists are cached for
+/// the session; `refresh` reads them again.
+#[tauri::command(async)]
+pub fn ai_catalog(
+    db: State<'_, Database>,
+    cache: State<'_, crate::ai::catalog::CatalogCache>,
+    refresh: bool,
+) -> AppResult<crate::ai::catalog::Catalog> {
+    let cli_paths = db.with(|conn| settings::load_cli_paths(conn))?;
+    Ok(crate::ai::catalog::catalog(&cache, &cli_paths, refresh))
+}
+
 /// Validates and saves the AI settings, and returns them as saved.
 #[tauri::command]
 pub fn save_ai_settings(
@@ -732,6 +744,9 @@ mod tests {
                 .expect("mock app builds");
             app.manage(db);
             app.manage(Secrets::memory());
+            app.manage(crate::ai::catalog::CatalogCache::new(vec![Box::new(
+                crate::ai::catalog::claude::ClaudeSource,
+            )]));
             app.manage(BackupService::default());
             let data = tempfile::tempdir().unwrap();
             app.manage(AppPaths::new(data.path()));
@@ -1081,6 +1096,23 @@ mod tests {
             .call("backup_restore", json!({ "name": "../escape" }))
             .unwrap_err();
         assert_eq!(error["message"], json!("Backup não encontrado."));
+    }
+
+    #[test]
+    fn ai_catalog_returns_each_agents_list_in_camel_case() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
+        let catalog = app
+            .call("ai_catalog", json!({ "refresh": false }))
+            .expect("loads");
+        assert_eq!(catalog["agents"][0]["agent"], json!("claude"));
+        assert_eq!(catalog["agents"][0]["status"]["kind"], json!("unavailable"));
+        assert!(
+            catalog["agents"][0]["status"]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("Claude Code")
+        );
+        assert_eq!(catalog["agents"][0]["models"], json!([]));
     }
 
     #[test]

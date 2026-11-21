@@ -4,13 +4,14 @@
 //! needs are read and the rest is ignored. Verified in
 //! `docs/superpowers/specs/2026-11-21-catalog-spike-findings.md`.
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use serde::Deserialize;
 
 use super::{AgentCatalog, CatalogSource, CatalogStatus, ModelOption};
 use crate::ai::agent::{Agent, Effort};
 use crate::ai::discovery;
+use crate::ai::settings::CliPaths;
 
 /// The largest answer read from the CLI. The real list is under 1 MiB.
 const MAX_OUTPUT: u64 = 8 << 20;
@@ -60,24 +61,16 @@ pub(super) fn parse_models(json: &str) -> Result<Vec<ModelOption>, String> {
         .collect())
 }
 
-pub struct CodexSource {
-    /// Where the `codex` executable is, resolved at load time (the user may change the path).
-    cli: Box<dyn Fn() -> Option<PathBuf> + Send + Sync>,
-}
+/// Reads the model list from the `codex` CLI.
+pub struct CodexSource;
 
-impl CodexSource {
-    pub fn new(cli: Box<dyn Fn() -> Option<PathBuf> + Send + Sync>) -> Self {
-        Self { cli }
-    }
-
-    fn unavailable(reason: &str) -> AgentCatalog {
-        AgentCatalog {
-            agent: Agent::Codex,
-            status: CatalogStatus::Unavailable {
-                reason: reason.to_owned(),
-            },
-            models: Vec::new(),
-        }
+fn unavailable(reason: &str) -> AgentCatalog {
+    AgentCatalog {
+        agent: Agent::Codex,
+        status: CatalogStatus::Unavailable {
+            reason: reason.to_owned(),
+        },
+        models: Vec::new(),
     }
 }
 
@@ -86,16 +79,15 @@ impl CatalogSource for CodexSource {
         Agent::Codex
     }
 
-    fn load(&self) -> AgentCatalog {
-        let Some(cli) = (self.cli)() else {
-            return Self::unavailable(
-                "O Codex não foi encontrado. Confira Configurações › Agentes.",
-            );
+    fn load(&self, cli_paths: &CliPaths) -> AgentCatalog {
+        let custom = cli_paths.get(Agent::Codex).map(Path::new);
+        let Some(cli) = discovery::find_cli(Agent::Codex, custom) else {
+            return unavailable("O Codex não foi encontrado. Confira Configurações › Agentes.");
         };
         let Some(output) = discovery::capture_limited(&cli, &["debug", "models"], MAX_OUTPUT)
             .filter(|output| output.success)
         else {
-            return Self::unavailable(
+            return unavailable(
                 "Não foi possível ler a lista de modelos do Codex. Veja se ele está instalado e conectado.",
             );
         };
@@ -105,7 +97,7 @@ impl CatalogSource for CodexSource {
                 status: CatalogStatus::Ready,
                 models,
             },
-            Err(_) => Self::unavailable("A lista de modelos do Codex veio num formato inesperado."),
+            Err(_) => unavailable("A lista de modelos do Codex veio num formato inesperado."),
         }
     }
 }

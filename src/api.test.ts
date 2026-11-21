@@ -31,6 +31,21 @@ describe("api", () => {
     await expect(api.appInfo()).rejects.toThrow("Ocorreu um erro inesperado. Tente novamente.");
   });
 
+  it("sends the catalog refresh flag", async () => {
+    const sent: unknown[] = [];
+    mockIPC((command, args) => {
+      sent.push([command, args]);
+      return { agents: [] };
+    });
+
+    await api.aiCatalog();
+    await api.aiCatalog(true);
+    expect(sent).toEqual([
+      ["ai_catalog", { refresh: false }],
+      ["ai_catalog", { refresh: true }],
+    ]);
+  });
+
   it("sends the include-blanks flag of the learning overview in camelCase", async () => {
     const sent: unknown[] = [];
     mockIPC((command, args) => {

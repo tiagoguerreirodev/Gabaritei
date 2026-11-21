@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use super::*;
+use crate::ai::settings::CliPaths;
 
 /// A source that counts how often it is asked and answers with a fixed catalog.
 struct FakeSource {
@@ -17,7 +18,7 @@ impl CatalogSource for FakeSource {
         self.agent
     }
 
-    fn load(&self) -> AgentCatalog {
+    fn load(&self, _cli_paths: &CliPaths) -> AgentCatalog {
         self.loads.fetch_add(1, Ordering::SeqCst);
         std::thread::sleep(self.delay);
         self.result.clone()
@@ -50,8 +51,8 @@ fn cache_with(result: AgentCatalog, delay: Duration) -> (CatalogCache, Arc<Atomi
 #[test]
 fn get_loads_each_source_once() {
     let (cache, loads) = cache_with(ready(Agent::Codex, "m1"), Duration::ZERO);
-    let first = cache.get();
-    let second = cache.get();
+    let first = cache.get(&CliPaths::default());
+    let second = cache.get(&CliPaths::default());
     assert_eq!(first, second);
     assert_eq!(loads.load(Ordering::SeqCst), 1);
     assert_eq!(first.agents[0].models[0].id, "m1");
@@ -60,8 +61,8 @@ fn get_loads_each_source_once() {
 #[test]
 fn refresh_loads_again() {
     let (cache, loads) = cache_with(ready(Agent::Codex, "m1"), Duration::ZERO);
-    cache.get();
-    cache.refresh();
+    cache.get(&CliPaths::default());
+    cache.refresh(&CliPaths::default());
     assert_eq!(loads.load(Ordering::SeqCst), 2);
 }
 
@@ -72,7 +73,7 @@ fn concurrent_refreshes_share_one_load() {
     let handles: Vec<_> = (0..2)
         .map(|_| {
             let cache = Arc::clone(&cache);
-            std::thread::spawn(move || cache.refresh())
+            std::thread::spawn(move || cache.refresh(&CliPaths::default()))
         })
         .collect();
     let results: Vec<Catalog> = handles.into_iter().map(|h| h.join().unwrap()).collect();
@@ -90,13 +91,13 @@ fn unavailable_source_is_kept_in_the_result_not_an_error() {
         models: Vec::new(),
     };
     let (cache, _) = cache_with(unavailable.clone(), Duration::ZERO);
-    let catalog = cache.get();
+    let catalog = cache.get(&CliPaths::default());
     assert_eq!(catalog.agents, vec![unavailable]);
 }
 
 #[test]
 fn claude_source_has_no_list_and_explains_it_in_pt_br() {
-    let catalog = claude::ClaudeSource.load();
+    let catalog = claude::ClaudeSource.load(&CliPaths::default());
     assert_eq!(claude::ClaudeSource.agent(), Agent::Claude);
     assert_eq!(catalog.agent, Agent::Claude);
     assert!(catalog.models.is_empty());
@@ -151,10 +152,14 @@ fn parse_rejects_text_that_is_not_the_catalog() {
 mod codex_cli {
     use super::*;
     use crate::ai::runner::tests::write_script;
-    use std::path::PathBuf;
 
-    fn source_for(script: PathBuf) -> codex::CodexSource {
-        codex::CodexSource::new(Box::new(move || Some(script.clone())))
+    /// Loads the Codex list with `script` as the user's chosen executable.
+    fn load_with(script: &std::path::Path) -> AgentCatalog {
+        let paths = CliPaths {
+            claude: None,
+            codex: Some(script.to_string_lossy().into_owned()),
+        };
+        codex::CodexSource.load(&paths)
     }
 
     fn unavailable_reason(catalog: &AgentCatalog) -> &str {
@@ -175,7 +180,7 @@ mod codex_cli {
                 "[ \"$1\" = debug ] && [ \"$2\" = models ] || exit 2\ncat <<'JSON'\n{CODEX_JSON}\nJSON"
             ),
         );
-        let catalog = source_for(script).load();
+        let catalog = load_with(&script);
         assert_eq!(catalog.agent, Agent::Codex);
         assert_eq!(catalog.status, CatalogStatus::Ready);
         assert_eq!(catalog.models.len(), 2);
@@ -183,7 +188,11 @@ mod codex_cli {
 
     #[test]
     fn missing_cli_is_unavailable_with_a_pt_br_reason() {
-        let catalog = codex::CodexSource::new(Box::new(|| None)).load();
+        let paths = CliPaths {
+            claude: None,
+            codex: Some("/nonexistent/codex".to_owned()),
+        };
+        let catalog = codex::CodexSource.load(&paths);
         assert!(catalog.models.is_empty());
         assert!(unavailable_reason(&catalog).contains("Codex não foi encontrado"));
     }
@@ -192,7 +201,7 @@ mod codex_cli {
     fn failing_cli_is_unavailable() {
         let dir = tempfile::tempdir().unwrap();
         let script = write_script(dir.path(), "codex", "echo 'erro' >&2\nexit 1");
-        let catalog = source_for(script).load();
+        let catalog = load_with(&script);
         assert!(unavailable_reason(&catalog).contains("lista de modelos do Codex"));
     }
 
@@ -200,7 +209,7 @@ mod codex_cli {
     fn invalid_output_is_unavailable() {
         let dir = tempfile::tempdir().unwrap();
         let script = write_script(dir.path(), "codex", "echo 'not json'");
-        let catalog = source_for(script).load();
+        let catalog = load_with(&script);
         assert!(unavailable_reason(&catalog).contains("formato inesperado"));
     }
 
@@ -212,7 +221,18 @@ mod codex_cli {
             "codex",
             "head -c 9000000 /dev/zero | tr '\\0' 'a'",
         );
-        let catalog = source_for(script).load();
+        let catalog = load_with(&script);
         assert!(unavailable_reason(&catalog).contains("formato inesperado"));
     }
+}
+
+#[test]
+fn catalog_reloads_only_when_asked() {
+    let (cache, loads) = cache_with(ready(Agent::Codex, "m1"), Duration::ZERO);
+    let paths = CliPaths::default();
+    catalog(&cache, &paths, false);
+    catalog(&cache, &paths, false);
+    assert_eq!(loads.load(Ordering::SeqCst), 1);
+    catalog(&cache, &paths, true);
+    assert_eq!(loads.load(Ordering::SeqCst), 2);
 }

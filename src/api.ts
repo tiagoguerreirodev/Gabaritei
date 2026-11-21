@@ -8,6 +8,7 @@ import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Agent } from "./bindings/Agent";
 import type { AiSettings } from "./bindings/AiSettings";
+import type { Catalog } from "./bindings/Catalog";
 import type { AiSettingsInput } from "./bindings/AiSettingsInput";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { AttemptView } from "./bindings/AttemptView";
@@ -136,6 +137,8 @@ export const api = {
   importData: () => call<boolean>("import_data"),
   /** CLI paths, role configuration and RemNote (never the token). Writes defaults on first use. */
   aiSettings: () => call<AiSettings>("ai_settings"),
+  /** Models and efforts each agent offers, from the CLIs. Cached; `refresh` reads them again. */
+  aiCatalog: (refresh = false) => call<Catalog>("ai_catalog", { refresh }),
   /** Validates and saves the AI settings; returns them as saved. */
   saveAiSettings: (input: AiSettingsInput) => call<AiSettings>("save_ai_settings", { input }),
   /** Saves the RemNote token in the OS keychain (`null` or blank removes it). */

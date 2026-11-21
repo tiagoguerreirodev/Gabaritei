@@ -95,6 +95,11 @@ pub struct AiSettings {
     pub has_remnote_token: bool,
 }
 
+/// Just the CLI path overrides (no defaults written, no keychain access).
+pub fn load_cli_paths(conn: &Connection) -> AppResult<CliPaths> {
+    Ok(get_setting(conn, KEY_CLI_PATHS)?.unwrap_or_default())
+}
+
 /// Loads the settings, writing the defaults the first time (spec §7: set on first run).
 pub fn load(conn: &Connection, secrets: &Secrets) -> AppResult<AiSettings> {
     let roles = match get_setting::<RoleSettings>(conn, KEY_ROLES)? {

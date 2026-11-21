@@ -4,6 +4,7 @@
 
 use super::{AgentCatalog, CatalogSource, CatalogStatus};
 use crate::ai::agent::Agent;
+use crate::ai::settings::CliPaths;
 
 pub struct ClaudeSource;
 
@@ -12,7 +13,7 @@ impl CatalogSource for ClaudeSource {
         Agent::Claude
     }
 
-    fn load(&self) -> AgentCatalog {
+    fn load(&self, _cli_paths: &CliPaths) -> AgentCatalog {
         AgentCatalog {
             agent: Agent::Claude,
             status: CatalogStatus::Unavailable {

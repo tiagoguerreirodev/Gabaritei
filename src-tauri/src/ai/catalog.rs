@@ -14,6 +14,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use super::agent::{Agent, Effort};
+use super::settings::CliPaths;
 
 /// One model an agent can run, with the efforts it supports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -60,8 +61,9 @@ pub struct Catalog {
 /// Where one agent's list comes from.
 pub trait CatalogSource: Send + Sync {
     fn agent(&self) -> Agent;
-    /// Reads the list. Never fails: an unreadable list is `Unavailable`.
-    fn load(&self) -> AgentCatalog;
+    /// Reads the list, using the executable the user chose in `cli_paths` if any. Never fails:
+    /// an unreadable list is `Unavailable`.
+    fn load(&self, cli_paths: &CliPaths) -> AgentCatalog;
 }
 
 /// Session cache of the lists. Managed Tauri state.
@@ -81,26 +83,30 @@ impl CatalogCache {
         }
     }
 
-    fn load_all(&self) -> Catalog {
+    fn load_all(&self, cli_paths: &CliPaths) -> Catalog {
         Catalog {
-            agents: self.sources.iter().map(|source| source.load()).collect(),
+            agents: self
+                .sources
+                .iter()
+                .map(|source| source.load(cli_paths))
+                .collect(),
         }
     }
 
     /// The cached lists, loading them the first time.
-    pub fn get(&self) -> Catalog {
+    pub fn get(&self, cli_paths: &CliPaths) -> Catalog {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(catalog) = state.as_ref() {
             return catalog.clone();
         }
-        let catalog = self.load_all();
+        let catalog = self.load_all(cli_paths);
         self.generation.fetch_add(1, Ordering::SeqCst);
         *state = Some(catalog.clone());
         catalog
     }
 
     /// Reloads the lists. Callers that arrive while a reload is running share its result.
-    pub fn refresh(&self) -> Catalog {
+    pub fn refresh(&self, cli_paths: &CliPaths) -> Catalog {
         let seen = self.generation.load(Ordering::SeqCst);
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if self.generation.load(Ordering::SeqCst) != seen
@@ -108,10 +114,19 @@ impl CatalogCache {
         {
             return catalog.clone();
         }
-        let catalog = self.load_all();
+        let catalog = self.load_all(cli_paths);
         self.generation.fetch_add(1, Ordering::SeqCst);
         *state = Some(catalog.clone());
         catalog
+    }
+}
+
+/// The lists for the UI: the cached ones, or freshly read ones when `refresh` is set.
+pub fn catalog(cache: &CatalogCache, cli_paths: &CliPaths, refresh: bool) -> Catalog {
+    if refresh {
+        cache.refresh(cli_paths)
+    } else {
+        cache.get(cli_paths)
     }
 }
 

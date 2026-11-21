@@ -223,6 +223,13 @@ fn is_other_computer(tag: Option<&str>) -> bool {
     tag.is_some() && tag != computer_tag().as_deref()
 }
 
+/// Whether a backup in a shared folder is not this computer's to copy or delete: another
+/// computer's, or (on a computer that has a tag) an untagged one, which can't be told apart.
+/// Rotation leaves these alone for the same reason.
+fn leave_alone(info: &BackupInfo) -> bool {
+    info.other_computer || (info.computer.is_none() && computer_tag().is_some())
+}
+
 /// The default backup folder.
 pub fn default_folder(paths: &AppPaths) -> PathBuf {
     paths.data_dir().join("backups")
@@ -283,20 +290,26 @@ pub fn set_folder(conn: &Connection, paths: &AppPaths, chosen: Option<&Path>) ->
         ));
     }
     // Inside a backup (or its hidden build folder) rotation could later delete the chosen folder.
-    let inside_a_backup = chosen.components().any(|part| {
-        part.as_os_str()
-            .to_str()
-            .is_some_and(|name| name.starts_with(".tmp-") || parse(name).is_some())
-    });
-    if inside_a_backup {
-        return Err(AppError::Invalid(
-            "Escolha uma pasta que não esteja dentro de um backup.".into(),
-        ));
+    let inside_a_backup = |path: &Path| {
+        path.components().any(|part| {
+            part.as_os_str()
+                .to_str()
+                .is_some_and(|name| name.starts_with(".tmp-") || parse(name).is_some())
+        })
+    };
+    let refuse =
+        || AppError::Invalid("Escolha uma pasta que não esteja dentro de um backup.".into());
+    if inside_a_backup(chosen) {
+        return Err(refuse());
     }
     let not_writable = || {
         AppError::Invalid("Não foi possível gravar na pasta escolhida. Escolha outra pasta.".into())
     };
     fs::create_dir_all(chosen).map_err(|_| not_writable())?;
+    // A link (or a Windows junction) can lead into a backup; look at where it really points.
+    if fs::canonicalize(chosen).is_ok_and(|real| inside_a_backup(&real)) {
+        return Err(refuse());
+    }
     tempfile::tempfile_in(chosen).map_err(|_| not_writable())?;
     set_setting(conn, KEY_FOLDER, &text)
 }
@@ -448,9 +461,9 @@ impl BackupService {
                     "A pasta nova fica dentro da pasta anterior. Escolha outra pasta.".into(),
                 ));
             }
-            // Another computer's backups stay where they are: it may still use that folder.
-            let (others, mine): (Vec<_>, Vec<_>) =
-                list(&old).into_iter().partition(|info| info.other_computer);
+            // Another computer's backups, and untagged ones on a tagged computer, stay where they are:
+            // they may belong to a computer that still uses that folder.
+            let (others, mine): (Vec<_>, Vec<_>) = list(&old).into_iter().partition(leave_alone);
             let names: Vec<String> = mine.into_iter().map(|info| info.name).collect();
             let mut report = relocate::relocate(&old, &new, &names, remove_originals)?;
             report.left_alone = others.len() as u32;
@@ -460,7 +473,7 @@ impl BackupService {
             let remaining: Vec<BackupInfo> = if remove_originals {
                 list(&old)
                     .into_iter()
-                    .filter(|info| !info.other_computer)
+                    .filter(|info| !leave_alone(info))
                     .collect()
             } else {
                 Vec::new()
@@ -1547,6 +1560,47 @@ mod tests {
         .unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_link_into_a_backup_does_not_get_past_the_folder_check() {
+        let f = fixture();
+        let root = f.paths.data_dir().join("shared");
+        let real = root.join("backup-20261119-210000-123");
+        fs::create_dir_all(&real).unwrap();
+        let link = f.paths.data_dir().join("innocent");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        f.db.with(|conn| {
+            assert!(set_folder(conn, &f.paths, Some(&link)).is_err());
+            assert!(set_folder(conn, &f.paths, Some(&link.join("sub"))).is_err());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn a_new_folder_that_is_a_plain_subfolder_of_the_old_one_is_not_moved_into() {
+        let f = fixture();
+        let service = BackupService::default();
+        let old = default_folder(&f.paths);
+        let info = create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T10:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        // Allowed by `set_folder` (not inside a backup), but a move would delete the copy
+        // together with the original, so the relocation refuses it.
+        service
+            .change_folder(&f.db, &f.paths, Some(&old.join("nested")))
+            .unwrap();
+
+        assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
+        snapshot::verify(&old.join(&info.name)).unwrap();
+    }
+
     #[test]
     fn a_logged_delete_removes_the_tree_and_tolerates_a_missing_one() {
         let f = fixture();
@@ -1968,6 +2022,47 @@ mod tests {
         assert_eq!(outcome.report.left_alone, 1);
         assert!(old.join(&theirs.name).is_dir(), "the laptop's backup stays");
         assert!(!new.join(&theirs.name).exists());
+        assert_eq!(outcome.status.left_behind, None);
+    }
+
+    #[test]
+    fn untagged_backups_are_not_ours_to_move_on_a_tagged_computer() {
+        let f = fixture();
+        let service = BackupService::default();
+        let old = default_folder(&f.paths);
+        // Made before tags existed (or by a computer without a tag): it can't be told whose.
+        tests::TAG.with(|tag| *tag.borrow_mut() = Some(None));
+        let untagged = create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T09:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        as_computer("desktop");
+        create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T10:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        let new = f._dir.path().join("synced");
+        service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
+
+        let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+
+        assert_eq!(outcome.report.removed, 1);
+        assert_eq!(outcome.report.left_alone, 1);
+        assert!(
+            old.join(&untagged.name).is_dir(),
+            "never deleted from the old folder"
+        );
+        assert!(!new.join(&untagged.name).exists(), "and not copied either");
         assert_eq!(outcome.status.left_behind, None);
     }
 

@@ -223,6 +223,13 @@ fn is_other_computer(tag: Option<&str>) -> bool {
     tag.is_some() && tag != computer_tag().as_deref()
 }
 
+/// Whether a backup in a shared folder is not this computer's to copy or delete: another
+/// computer's, or (on a computer that has a tag) an untagged one, which can't be told apart.
+/// Rotation leaves these alone for the same reason.
+fn leave_alone(info: &BackupInfo) -> bool {
+    info.other_computer || (info.computer.is_none() && computer_tag().is_some())
+}
+
 /// The default backup folder.
 pub fn default_folder(paths: &AppPaths) -> PathBuf {
     paths.data_dir().join("backups")
@@ -437,9 +444,10 @@ impl BackupService {
                     "A pasta nova fica dentro da pasta anterior. Escolha outra pasta.".into(),
                 ));
             }
-            // Another computer's backups stay where they are: it may still use that folder.
+            // Another computer's backups, and untagged ones on a tagged computer, stay where they are:
+            // they may belong to a computer that still uses that folder.
             let (others, mine): (Vec<_>, Vec<_>) =
-                list(&old).into_iter().partition(|info| info.other_computer);
+                list(&old).into_iter().partition(|info| leave_alone(info));
             let names: Vec<String> = mine.into_iter().map(|info| info.name).collect();
             let mut report = relocate::relocate(&old, &new, &names, remove_originals)?;
             report.left_alone = others.len() as u32;
@@ -449,7 +457,7 @@ impl BackupService {
             let remaining: Vec<BackupInfo> = if remove_originals {
                 list(&old)
                     .into_iter()
-                    .filter(|info| !info.other_computer)
+                    .filter(|info| !leave_alone(info))
                     .collect()
             } else {
                 Vec::new()
@@ -1901,6 +1909,47 @@ mod tests {
         assert_eq!(outcome.report.left_alone, 1);
         assert!(old.join(&theirs.name).is_dir(), "the laptop's backup stays");
         assert!(!new.join(&theirs.name).exists());
+        assert_eq!(outcome.status.left_behind, None);
+    }
+
+    #[test]
+    fn untagged_backups_are_not_ours_to_move_on_a_tagged_computer() {
+        let f = fixture();
+        let service = BackupService::default();
+        let old = default_folder(&f.paths);
+        // Made before tags existed (or by a computer without a tag): it can't be told whose.
+        tests::TAG.with(|tag| *tag.borrow_mut() = Some(None));
+        let untagged = create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T09:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        as_computer("desktop");
+        create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T10:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        let new = f._dir.path().join("synced");
+        service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
+
+        let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+
+        assert_eq!(outcome.report.removed, 1);
+        assert_eq!(outcome.report.left_alone, 1);
+        assert!(
+            old.join(&untagged.name).is_dir(),
+            "never deleted from the old folder"
+        );
+        assert!(!new.join(&untagged.name).exists(), "and not copied either");
         assert_eq!(outcome.status.left_behind, None);
     }
 

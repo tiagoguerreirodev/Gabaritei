@@ -26,7 +26,7 @@ failed: number,
  */
 firstFailure: string | null, 
 /**
- * Backups of another computer in the old folder, which are never copied or moved: that
- * computer may still use the folder.
+ * Backups of another computer (or untagged ones on a tagged computer) in the old folder,
+ * which are never copied or moved: that computer may still use the folder.
  */
 leftAlone: number, };

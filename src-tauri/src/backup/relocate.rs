@@ -8,7 +8,7 @@
 //! hidden name (atomic, so it never shows as a half-deleted backup) and then deleted. Any
 //! failure before that leaves the original untouched.
 
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::path::Path;
 
 use serde::Serialize;
@@ -33,8 +33,8 @@ pub struct RelocateReport {
     pub failed: u32,
     /// Why the first failed one failed (pt-BR, with the backup's name).
     pub first_failure: Option<String>,
-    /// Backups of another computer in the old folder, which are never copied or moved: that
-    /// computer may still use the folder.
+    /// Backups of another computer (or untagged ones on a tagged computer) in the old folder,
+    /// which are never copied or moved: that computer may still use the folder.
     pub left_alone: u32,
 }
 
@@ -126,8 +126,9 @@ fn relocate_one(old: &Path, new: &Path, name: &str, remove: bool) -> AppResult<D
 }
 
 /// Takes the original out of the folder in one step (a rename), then deletes it. Failing to
-/// delete afterwards (a sync client holding a file) leaves only a hidden leftover that the next
-/// backup's cleanup removes, never a half-deleted backup in the list.
+/// delete afterwards (a sync client holding a file) leaves only a hidden `.tmp-` leftover, never
+/// a half-deleted backup in the list. The leftover is removed when this runs again for the same
+/// name, or by the backup cleanup if that folder becomes the backup folder again.
 fn remove_original(old: &Path, name: &str, source: &Path) -> AppResult<()> {
     let aside = old.join(format!(".tmp-{name}"));
     let _ = fs::remove_dir_all(&aside);
@@ -158,7 +159,8 @@ fn copy_snapshot(source: &Path, manifest: &Manifest, dest: &Path) -> AppResult<(
             fs::create_dir_all(parent)?;
         }
         fs::copy(&from, &to)?;
-        File::open(&to)?.sync_all()?;
+        // Opened for writing: Windows refuses to flush a read-only handle.
+        OpenOptions::new().write(true).open(&to)?.sync_all()?;
     }
     sync_dir(dest);
     Ok(())

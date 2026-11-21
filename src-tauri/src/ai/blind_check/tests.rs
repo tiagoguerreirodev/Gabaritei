@@ -706,8 +706,19 @@ if [ "$n" = 1 ]; then cp "$dir/answer-1.json" "$out"; else sleep 60; fi"#,
         .unwrap();
         let token = CancelToken::new();
         let canceller = token.clone();
+        let counter = dir.path().join("counter");
         std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(1500));
+            // Cancel once the second call (the check) has started, not after a fixed time:
+            // under load the generation can take longer than any guess.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            while std::time::Instant::now() < deadline {
+                if std::fs::read_to_string(&counter).is_ok_and(|n| n.trim() == "2") {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            // Let the check call get going before cancelling it.
+            std::thread::sleep(std::time::Duration::from_millis(200));
             canceller.cancel();
         });
         let original = s.dir.path().join("Lei.md");

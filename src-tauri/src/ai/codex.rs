@@ -38,6 +38,10 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         "-c".into(),
         format!("web_search={}", if spec.web { "live" } else { "disabled" }),
     ];
+    if spec.fast {
+        args.push("-c".into());
+        args.push(r#"service_tier="priority""#.into());
+    }
     // The user's own Codex config (hooks, MCP servers, instructions) is ignored, except when the
     // user chose to reuse it for RemNote.
     if !matches!(spec.remnote, Some(RemNoteAccess::CodexConfig)) {

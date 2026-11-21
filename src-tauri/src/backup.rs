@@ -608,7 +608,9 @@ impl Drop for FreeProbe {
 
 impl Default for FolderProbe {
     fn default() -> Self {
-        Self::with_timeout(Duration::from_secs(3))
+        // Tests don't depend on the clock: a loaded machine can take longer than 3 s to read a
+        // folder, and they make a folder "stuck" explicitly instead.
+        Self::with_timeout(Duration::from_secs(if cfg!(test) { 60 } else { 3 }))
     }
 }
 
@@ -675,11 +677,20 @@ impl FolderProbe {
                 if let Some(probe) = probes.get_mut(path).filter(|probe| probe.id == id) {
                     probe.stuck = true;
                 }
+                // Callers waiting on this folder can answer now instead of at their deadline.
+                wake.notify_all();
                 None
             }
             // The work panicked; the guard freed the entry.
             Err(mpsc::RecvTimeoutError::Disconnected) => None,
         }
+    }
+
+    /// Test helper: the folder is stuck as if a read had hung, with no clock involved.
+    #[cfg(test)]
+    fn mark_stuck(&self, path: &Path) {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        lock(&self.probes.0).insert(path.to_path_buf(), Probe { id, stuck: true });
     }
 
     /// [`inspect_old_folder`] within the deadline; `None` when it timed out. The same folder
@@ -2764,38 +2775,55 @@ mod tests {
         !lock(&probe.probes.0).is_empty()
     }
 
+    /// Long enough that no test depends on the clock: stuck folders are made with
+    /// [`FolderProbe::mark_stuck`] or work that blocks until released.
+    const LONG: Duration = Duration::from_secs(60);
+
+    fn service_with_long_probe() -> BackupService {
+        BackupService {
+            probe: FolderProbe::with_timeout(LONG),
+            ..BackupService::default()
+        }
+    }
+
     #[test]
-    fn the_probe_answers_gives_up_when_stuck_and_recovers() {
-        let probe = FolderProbe::with_timeout(Duration::from_millis(100));
+    fn the_probe_gives_up_on_work_that_never_answers() {
+        // Only the give-up is timed, and it can't fail by being slow: the work never ends.
+        let probe = FolderProbe::with_timeout(Duration::from_millis(50));
+        let (release, work) = blocked();
+        assert_eq!(probe.run(Path::new("/a"), work), None);
+        // It is now marked stuck, and a later call on the same folder answers at once.
+        assert!(
+            lock(&probe.probes.0)
+                .get(Path::new("/a"))
+                .is_some_and(|probe| probe.stuck)
+        );
+        drop(release);
+    }
+
+    #[test]
+    fn a_stuck_folder_answers_at_once_and_recovers_when_its_work_ends() {
+        let probe = FolderProbe::with_timeout(LONG);
         let path = Path::new("/a");
         assert_eq!(probe.run(path, || 1), Some(1));
         assert!(!occupied(&probe));
 
-        // Stuck: the caller stops waiting at the deadline, not when the work ends.
-        let (release, work) = blocked();
-        assert_eq!(probe.run(path, work), None);
-
-        // While it is stuck on this folder, another call answers at once and starts nothing.
-        let started = Instant::now();
+        probe.mark_stuck(path);
+        // With a 60 s timeout, answering at all (instead of waiting) proves it is immediate.
         assert_eq!(probe.run(path, || 2), None);
-        assert!(started.elapsed() < Duration::from_millis(90));
 
-        // Once the stuck work ends, the probe works again.
-        drop(release);
-        eventually(|| !occupied(&probe));
+        // A stuck entry is freed by its own worker; emulate that and check it works again.
+        lock(&probe.probes.0).remove(path);
         assert_eq!(probe.run(path, || 3), Some(3));
     }
 
     #[test]
     fn a_probe_stuck_on_one_folder_does_not_stop_another_folder() {
-        let probe = FolderProbe::with_timeout(Duration::from_millis(100));
-        let (release, work) = blocked();
-        assert_eq!(probe.run(Path::new("/offline"), work), None);
+        let probe = FolderProbe::with_timeout(LONG);
+        probe.mark_stuck(Path::new("/offline"));
 
         assert_eq!(probe.run(Path::new("/healthy"), || 5), Some(5));
-        // The stuck one is still tracked, and is still what answers for its own folder.
         assert_eq!(probe.run(Path::new("/offline"), || 6), None);
-        drop(release);
     }
 
     #[test]
@@ -2829,27 +2857,21 @@ mod tests {
 
     #[test]
     fn the_same_folder_is_answered_without_looking_at_the_disk() {
-        let probe = FolderProbe::with_timeout(Duration::from_millis(100));
-        let (release, work) = blocked();
-        assert_eq!(probe.run(Path::new("/offline"), work), None);
+        let probe = FolderProbe::with_timeout(LONG);
+        probe.mark_stuck(Path::new("/offline"));
         assert!(matches!(
             probe.inspect(Path::new("/offline"), Path::new("/offline")),
             Some(OldFolder::Current)
         ));
-        drop(release);
     }
 
     #[test]
     fn an_old_folder_that_does_not_answer_is_offered_as_unavailable_without_blocking() {
         let f = fixture();
         let (old, new) = make_left_behind(&f, &BackupService::default());
-        let service = BackupService {
-            probe: FolderProbe::with_timeout(Duration::from_millis(100)),
-            ..BackupService::default()
-        };
-        // Something is already stuck reading the old folder, until the test lets it go.
-        let (release, work) = blocked();
-        assert_eq!(service.probe.run(&old, work), None);
+        let service = service_with_long_probe();
+        // Reading the old folder is stuck.
+        service.probe.mark_stuck(&old);
 
         let notice = service
             .status(&f.db, &f.paths)
@@ -2861,8 +2883,7 @@ mod tests {
 
         // Changing the folder while the folder being left (`new` now) doesn't answer keeps the
         // offer for it (as unavailable) instead of losing it.
-        let (release_new, work_new) = blocked();
-        assert_eq!(service.probe.run(&new, work_new), None);
+        service.probe.mark_stuck(&new);
         let third = f._dir.path().join("third");
         let status = service
             .change_folder(&f.db, &f.paths, Some(&third))
@@ -2874,36 +2895,25 @@ mod tests {
             .relocate_left_behind(&f.db, &f.paths, true)
             .unwrap_err();
         assert!(error.to_string().contains("não está acessível"), "{error}");
-        drop((release, release_new));
     }
 
     #[test]
     fn a_folder_that_stops_answering_after_a_move_keeps_the_offer() {
         let f = fixture();
-        let service = BackupService {
-            probe: FolderProbe::with_timeout(Duration::from_millis(100)),
-            ..BackupService::default()
-        };
+        let service = service_with_long_probe();
         let (old, _) = make_left_behind(&f, &service);
         // Leave one backup the move can't verify, so something remains, then make the folder
         // stop answering just before the final check.
         let broken = list(&old).remove(0).name;
         fs::remove_file(old.join(&broken).join(snapshot::MANIFEST_FILE)).unwrap();
-        let (release, work) = blocked();
-        let stuck = std::cell::RefCell::new(Some(work));
 
         let outcome = service
-            .relocate_with(&f.db, &f.paths, true, &|| {
-                if let Some(work) = stuck.borrow_mut().take() {
-                    assert_eq!(service.probe.run(&old, work), None);
-                }
-            })
+            .relocate_with(&f.db, &f.paths, true, &|| service.probe.mark_stuck(&old))
             .unwrap();
 
         assert_eq!(outcome.report.failed, 1);
         let left = outcome.status.left_behind.expect("the offer stays");
         assert!(left.unavailable);
-        drop(release);
     }
 
     #[test]

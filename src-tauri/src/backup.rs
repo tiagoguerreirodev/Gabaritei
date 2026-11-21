@@ -282,6 +282,17 @@ pub fn set_folder(conn: &Connection, paths: &AppPaths, chosen: Option<&Path>) ->
             "Escolha uma pasta fora da pasta de imagens do Gabaritei.".into(),
         ));
     }
+    // Inside a backup (or its hidden build folder) rotation could later delete the chosen folder.
+    let inside_a_backup = chosen.components().any(|part| {
+        part.as_os_str()
+            .to_str()
+            .is_some_and(|name| name.starts_with(".tmp-") || parse(name).is_some())
+    });
+    if inside_a_backup {
+        return Err(AppError::Invalid(
+            "Escolha uma pasta que não esteja dentro de um backup.".into(),
+        ));
+    }
     let not_writable = || {
         AppError::Invalid("Não foi possível gravar na pasta escolhida. Escolha outra pasta.".into())
     };
@@ -1494,6 +1505,38 @@ mod tests {
     }
 
     #[test]
+    fn the_folder_cannot_be_inside_a_backup_or_a_temporary_folder() {
+        let f = fixture();
+        let root = f.paths.data_dir().join("shared");
+        f.db.with(|conn| {
+            for inside in [
+                root.join("backup-20261119-210000-123").join("sub"),
+                root.join("manual-20261119-210000-123-pc")
+                    .join("a")
+                    .join("b"),
+                root.join("safety-20261119-210000-123"),
+                root.join(".tmp-backup-20261119-210000-123"),
+                root.join(".tmp-whatever").join("sub"),
+            ] {
+                assert!(
+                    set_folder(conn, &f.paths, Some(&inside)).is_err(),
+                    "{}",
+                    inside.display()
+                );
+                assert!(
+                    !inside.exists(),
+                    "nothing was created: {}",
+                    inside.display()
+                );
+            }
+            // A folder merely named like a backup prefix is fine.
+            set_folder(conn, &f.paths, Some(&root.join("backups-do-pc")))?;
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn backup_names_round_trip() {
         assert_eq!(stamp("2026-11-19T21:00:00.123Z"), "20261119-210000-123");
         assert_eq!(
@@ -1859,11 +1902,13 @@ mod tests {
         )
         .unwrap();
         let inside = old.join(&info.name).join("sub");
-        service
-            .change_folder(&f.db, &f.paths, Some(&inside))
-            .unwrap();
-
-        assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
+        // Refused up front by `set_folder` (#109), so nothing is left to move into it.
+        assert!(
+            service
+                .change_folder(&f.db, &f.paths, Some(&inside))
+                .is_err()
+        );
+        assert!(!inside.exists());
         snapshot::verify(&old.join(&info.name)).unwrap();
     }
 

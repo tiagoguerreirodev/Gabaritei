@@ -33,7 +33,7 @@ The Release workflow builds the Windows and macOS installers but leaves them as 
 
 ## Decisions (agent calls, approved with the design)
 - `version` has no `v` prefix; the tag is `v<version>`.
-- `version` is a required input; there is no build-only mode.
+- `version` is an optional input: empty means the `package.json` version, and a typed value must equal it (owner decision after the first PR; it replaced 'required'). The format stays `X.Y.Z` without a `v`; the tag is `v<version>`. There is no build-only mode. A `prepare` job resolves and checks it once, and the other jobs use its output.
 - Fail if `v<version>` already exists; never overwrite.
 - No pre-release flag.
 - Runs are never cancelled in progress.

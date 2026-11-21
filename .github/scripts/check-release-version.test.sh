@@ -16,7 +16,8 @@ failures=0
 # run <label> <expected: ok|fail> <VERSION> <PUBLISH>
 run() {
   local label=$1 expected=$2 version=$3 publish=$4 out status
-  out=$(VERSION="$version" PUBLISH="$publish" bash "$SCRIPT" 2>&1)
+  : > "$TMP/output"
+  out=$(VERSION="$version" PUBLISH="$publish" GITHUB_OUTPUT="$TMP/output" bash "$SCRIPT" 2>&1)
   status=$?
   if { [ "$expected" = ok ] && [ $status -eq 0 ]; } || { [ "$expected" = fail ] && [ $status -eq 1 ]; }; then
     echo "PASS: $label"
@@ -28,8 +29,10 @@ run() {
   LAST_OUT=$out
 }
 
-run "empty version is rejected" fail "" true
+run "empty version resolves to package.json" ok "" true
+if [ "$(cat "$TMP/output")" = "version=1.2.3" ]; then echo "PASS: resolved version is output"; else echo "FAIL: resolved version is output ($(cat "$TMP/output"))"; failures=$((failures + 1)); fi
 run "matching version" ok "1.2.3" true
+if [ "$(cat "$TMP/output")" = "version=1.2.3" ]; then echo "PASS: typed version is output"; else echo "FAIL: typed version is output ($(cat "$TMP/output"))"; failures=$((failures + 1)); fi
 run "mismatching version" fail "1.2.4" true
 run "v prefix rejected" fail "v1.2.3" true
 run "v prefix error explains" fail "v1.2.3" true
@@ -47,5 +50,8 @@ git tag v1.2.3
 git push -q origin v1.2.3
 run "existing tag fails when publishing" fail "1.2.3" true
 run "existing tag ignored when not publishing" ok "1.2.3" false
+run "existing tag fails for the resolved version too" fail "" true
+printf '{"name":"x","version":"banana"}\n' > package.json
+run "malformed package.json version is rejected" fail "" false
 
 [ $failures -eq 0 ] && echo "all passed" || { echo "$failures failed"; exit 1; }

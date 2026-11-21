@@ -446,8 +446,7 @@ impl BackupService {
             }
             // Another computer's backups, and untagged ones on a tagged computer, stay where they are:
             // they may belong to a computer that still uses that folder.
-            let (others, mine): (Vec<_>, Vec<_>) =
-                list(&old).into_iter().partition(|info| leave_alone(info));
+            let (others, mine): (Vec<_>, Vec<_>) = list(&old).into_iter().partition(leave_alone);
             let names: Vec<String> = mine.into_iter().map(|info| info.name).collect();
             let mut report = relocate::relocate(&old, &new, &names, remove_originals)?;
             report.left_alone = others.len() as u32;

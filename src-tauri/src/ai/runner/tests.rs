@@ -204,17 +204,29 @@ exit 1"#,
             ),
         );
         let mut job = spec(Agent::Codex, cli);
-        // The timeout counts from the spawn. The first execution of a freshly built
-        // script can take a while on macOS, so leave room for it to record the pid.
-        job.timeout = Duration::from_secs(3);
-        let started = Instant::now();
-        assert_eq!(run(&job).0, Err(RunError::TimedOut));
-        assert!(started.elapsed() < Duration::from_secs(10));
-        let pid: u32 = std::fs::read_to_string(&pidfile)
-            .expect("the script never recorded its child's pid before the timeout")
-            .trim()
-            .parse()
-            .unwrap();
+        // The timeout counts from the spawn, and the first execution of a freshly built
+        // script can be slow (macOS, a busy parallel test run). Try short timeouts first and
+        // grow them until the script had time to record its child's pid; every attempt must
+        // still end in a timeout.
+        let mut pid = None;
+        for timeout in [
+            Duration::from_millis(500),
+            Duration::from_secs(3),
+            Duration::from_secs(15),
+        ] {
+            let _ = std::fs::remove_file(&pidfile);
+            job.timeout = timeout;
+            let started = Instant::now();
+            assert_eq!(run(&job).0, Err(RunError::TimedOut));
+            assert!(started.elapsed() < timeout + Duration::from_secs(10));
+            pid = std::fs::read_to_string(&pidfile)
+                .ok()
+                .and_then(|text| text.trim().parse::<u32>().ok());
+            if pid.is_some() {
+                break;
+            }
+        }
+        let pid = pid.expect("the script never recorded its child's pid, even with a long timeout");
         std::thread::sleep(Duration::from_millis(200));
         assert!(!pid_is_alive(pid), "the child process outlived the run");
     }

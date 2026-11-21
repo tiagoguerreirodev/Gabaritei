@@ -45,8 +45,9 @@ pub struct RelocateReport {
 /// (the folder changed meanwhile).
 pub type Turn<'a> = &'a dyn Fn(&mut dyn FnMut());
 
-/// Copies the backups called `names` from `old` to `new` and, when `remove_originals`, removes
-/// each original once its copy is verified. Each backup runs inside `turn`, so the lock is held
+/// Copies the backups called `names` from `old` to `new` (which must exist: the caller creates it
+/// under its lock) and, when `remove_originals`, removes each original once its copy is
+/// verified. Each backup runs inside `turn`, so the lock is held
 /// per backup and not for the whole copy; a turn that does not run `work` stops the rest.
 pub fn relocate(
     old: &Path,
@@ -55,7 +56,6 @@ pub fn relocate(
     remove_originals: bool,
     turn: Turn<'_>,
 ) -> AppResult<RelocateReport> {
-    fs::create_dir_all(new)?;
     let mut report = RelocateReport::default();
     for (index, name) in names.iter().enumerate() {
         let mut result = None;

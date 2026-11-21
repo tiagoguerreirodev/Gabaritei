@@ -518,12 +518,13 @@ fn write_import(
             topics: prepared.topics as u32,
             images: images.len() as u32,
         };
-        // Last fallible step before the commit, so a failure above (bad data, a conflicting
-        // row) rolls back without leaving image files behind. Only a failing commit can
-        // still orphan them: harmless, because they are content-addressed and a retry reuses
-        // them.
-        write_images(images_dir, images)?;
+        // The last step before the commit that touches the database is done; writing the
+        // images is the last fallible one, so a failure above (bad data, a conflicting row, the
+        // status setting) rolls back without leaving image files behind. Only a failing commit
+        // can still orphan them: harmless, because they are content-addressed and a retry
+        // reuses them.
         set_setting(tx, STATUS_KEY, &report)?;
+        write_images(images_dir, images)?;
         Ok(LegacyImportOutcome {
             report,
             already_imported: false,

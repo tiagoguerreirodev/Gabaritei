@@ -28,6 +28,8 @@ pub struct ModelOption {
     /// The name shown in the UI.
     pub label: String,
     pub efforts: Vec<Effort>,
+    /// Whether the model has a Fast Mode tier (Codex only; the Claude list is never ready).
+    pub supports_fast: bool,
 }
 
 /// Whether an agent's list could be read.

@@ -34,6 +34,7 @@ fn ready(agent: Agent, id: &str) -> AgentCatalog {
             id: id.to_owned(),
             label: id.to_owned(),
             efforts: vec![Effort::Low, Effort::High],
+            supports_fast: false,
         }],
     }
 }
@@ -141,6 +142,13 @@ fn parse_maps_efforts_and_drops_unknown_ones() {
     );
     // "turbo" is not a known effort and the repeated "max" is kept once.
     assert_eq!(models[1].efforts, vec![Effort::Max]);
+}
+
+#[test]
+fn parse_marks_models_that_have_a_priority_tier() {
+    let models = codex::parse_models(CODEX_JSON).unwrap();
+    assert!(models[0].supports_fast);
+    assert!(!models[1].supports_fast);
 }
 
 #[test]

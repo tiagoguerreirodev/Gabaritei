@@ -1375,6 +1375,7 @@ mod tests {
                     id: "m1".into(),
                     label: "M1".into(),
                     efforts: vec![crate::ai::Effort::Low],
+                    supports_fast: false,
                 }],
             }
         }

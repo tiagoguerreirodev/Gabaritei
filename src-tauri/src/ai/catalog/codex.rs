@@ -28,6 +28,13 @@ struct RawModel {
     visibility: Option<String>,
     #[serde(default)]
     supported_reasoning_levels: Vec<RawLevel>,
+    #[serde(default)]
+    service_tiers: Vec<RawTier>,
+}
+
+#[derive(Deserialize)]
+struct RawTier {
+    id: String,
 }
 
 #[derive(Deserialize)]
@@ -52,10 +59,12 @@ pub(super) fn parse_models(json: &str) -> Result<Vec<ModelOption>, String> {
                     efforts.push(effort);
                 }
             }
+            let supports_fast = model.service_tiers.iter().any(|tier| tier.id == "priority");
             ModelOption {
                 label: model.display_name.unwrap_or_else(|| model.slug.clone()),
                 id: model.slug,
                 efforts,
+                supports_fast,
             }
         })
         .collect())

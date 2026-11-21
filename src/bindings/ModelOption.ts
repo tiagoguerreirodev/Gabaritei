@@ -12,4 +12,8 @@ id: string,
 /**
  * The name shown in the UI.
  */
-label: string, efforts: Array<Effort>, };
+label: string, efforts: Array<Effort>, 
+/**
+ * Whether the model has a Fast Mode tier (Codex only; the Claude list is never ready).
+ */
+supportsFast: boolean, };

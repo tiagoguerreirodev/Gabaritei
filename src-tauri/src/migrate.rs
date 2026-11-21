@@ -452,7 +452,9 @@ pub fn import_legacy_bank(
 
 /// Writes the prepared bank in one transaction. The "already imported" check happens inside it,
 /// so two imports that both passed the early check cannot both write: the database lock
-/// serializes the transactions and the second one returns the first one's report.
+/// serializes the transactions and the second one returns the first one's report. This keeps
+/// the function safe on its own, whatever the caller (the command also runs it under the backup
+/// lock, which already keeps two imports apart).
 fn write_import(
     db: &Database,
     images_dir: &Path,
@@ -774,6 +776,7 @@ mod tests {
         assert_eq!(outcome.report, winner);
         assert_eq!(f.count("questions"), 2);
         assert_eq!(f.count("collections"), 2);
+        assert_eq!(f.count("collection_items"), 3);
         assert!(!f.images_dir.exists(), "the loser copied no image");
     }
 

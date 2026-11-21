@@ -168,3 +168,8 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Release workflow scripts
+        run: |
+          bash .github/scripts/check-release-version.test.sh
+          bash .github/scripts/check-release-absent.test.sh

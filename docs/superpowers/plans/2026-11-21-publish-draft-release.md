@@ -1,5 +1,7 @@
 # Publish a Draft Release Implementation Plan
 
+> **Superseded in part:** after the first PR the owner removed the `pull_request` trigger and made `version` optional with the `package.json` version as the default (no build-only mode). The design doc has the final behavior; this plan is kept as written.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A manual dispatch of `release.yml` on `main` with a `version` input publishes a draft GitHub Release `v<version>` with the Windows `.exe` and macOS `.dmg` attached.

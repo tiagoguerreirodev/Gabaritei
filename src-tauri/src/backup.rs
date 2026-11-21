@@ -153,8 +153,8 @@ const MAX_TAG: usize = 24;
 
 /// This computer's tag, put at the end of the names of the backups it makes
 /// (`backup-20261119-210000-123-<tag>`), so two computers sharing one synced backup folder keep
-/// apart: each rotates only its own backups. Derived from the host name when the app runs (on macOS the stable `LocalHostName`),
-/// reduced to lowercase letters, digits and single hyphens. `None` when the host name has
+/// apart: each rotates only its own backups. Derived from the host name when the app runs (on
+/// macOS the stable `LocalHostName`), reduced to lowercase letters, digits and single hyphens. `None` when the host name has
 /// nothing usable; those backups are untagged, like the ones made before tags existed.
 pub fn computer_tag() -> Option<String> {
     #[cfg(test)]
@@ -224,7 +224,14 @@ fn unaccented(c: char) -> char {
 fn slug(text: &str) -> Option<String> {
     let name = text.split('.').next().unwrap_or_default();
     let mut out = String::new();
-    for c in name.chars().flat_map(char::to_lowercase).map(unaccented) {
+    // Combining marks (an accent written apart from its letter) are dropped, not turned into a
+    // hyphen: `a` + U+0301 is `a`.
+    let letters = name
+        .chars()
+        .filter(|c| !('\u{300}'..='\u{36f}').contains(c))
+        .flat_map(char::to_lowercase)
+        .map(unaccented);
+    for c in letters {
         if c.is_ascii_alphanumeric() {
             out.push(c);
         } else if !out.is_empty() && !out.ends_with('-') {
@@ -289,6 +296,13 @@ fn is_other_computer(tag: Option<&str>) -> bool {
     tag.is_some() && tag != computer_tag().as_deref()
 }
 
+/// Whether a backup in a shared folder is not this computer's to copy or delete: another
+/// computer's, or (on a computer that has a tag) an untagged one, which can't be told apart.
+/// Rotation leaves these alone for the same reason.
+fn leave_alone(info: &BackupInfo) -> bool {
+    info.other_computer || (info.computer.is_none() && computer_tag().is_some())
+}
+
 /// The default backup folder.
 pub fn default_folder(paths: &AppPaths) -> PathBuf {
     paths.data_dir().join("backups")
@@ -349,29 +363,39 @@ pub fn set_folder(conn: &Connection, paths: &AppPaths, chosen: Option<&Path>) ->
         ));
     }
     // Inside a backup (or its hidden build folder) rotation could later delete the chosen folder.
-    let inside_a_backup = chosen.components().any(|part| {
-        part.as_os_str()
-            .to_str()
-            .is_some_and(|name| name.starts_with(".tmp-") || parse(name).is_some())
-    });
-    if inside_a_backup {
-        return Err(AppError::Invalid(
-            "Escolha uma pasta que não esteja dentro de um backup.".into(),
-        ));
+    let inside_a_backup = |path: &Path| {
+        path.components().any(|part| {
+            part.as_os_str()
+                .to_str()
+                .is_some_and(|name| name.starts_with(".tmp-") || parse(name).is_some())
+        })
+    };
+    let refuse =
+        || AppError::Invalid("Escolha uma pasta que não esteja dentro de um backup.".into());
+    if inside_a_backup(chosen) {
+        return Err(refuse());
     }
     let not_writable = || {
         AppError::Invalid("Não foi possível gravar na pasta escolhida. Escolha outra pasta.".into())
     };
     fs::create_dir_all(chosen).map_err(|_| not_writable())?;
+    // A link (or a Windows junction) can lead into a backup; look at where it really points.
+    if fs::canonicalize(chosen).is_ok_and(|real| inside_a_backup(&real)) {
+        return Err(refuse());
+    }
     tempfile::tempfile_in(chosen).map_err(|_| not_writable())?;
     set_setting(conn, KEY_FOLDER, &text)
 }
 
 /// Backups in `folder`, newest first. Folders that aren't complete backups are ignored.
 pub fn list(folder: &Path) -> Vec<BackupInfo> {
-    let Ok(entries) = fs::read_dir(folder) else {
-        return Vec::new();
-    };
+    try_list(folder).unwrap_or_default()
+}
+
+/// Like [`list`], but `None` when the folder can't be read at all (a drive that is unplugged, a
+/// share that is offline), which is not the same as a folder with no backups.
+fn try_list(folder: &Path) -> Option<Vec<BackupInfo>> {
+    let entries = fs::read_dir(folder).ok()?;
     let mut found: Vec<BackupInfo> = entries
         .filter_map(Result::ok)
         .filter_map(|entry| {
@@ -389,7 +413,7 @@ pub fn list(folder: &Path) -> Vec<BackupInfo> {
         })
         .collect();
     found.sort_by(|a, b| b.name.cmp(&a.name));
-    found
+    Some(found)
 }
 
 /// The notice for backups `left` in `old`, if there are any.
@@ -423,16 +447,32 @@ fn pending_old_folder(db: &Database, current: &Path) -> AppResult<Option<(PathBu
     let mine: Vec<BackupInfo> = if same_folder(&old, current) {
         Vec::new()
     } else {
-        list(&old)
+        // An unreadable folder hides the offer for now but keeps it: the drive may come back.
+        let Some(found) = try_list(&old) else {
+            return Ok(None);
+        };
+        found
             .into_iter()
-            .filter(|info| !info.other_computer)
+            .filter(|info| !leave_alone(info))
             .collect()
     };
     let notice = left_behind(&old, &mine);
     if notice.is_none() {
-        db.with(|conn| remember_old_folder(conn, None))?;
+        forget_old_folder_if(db, &old)?;
     }
     Ok(notice.map(|notice| (old, notice)))
+}
+
+/// Forgets the remembered old folder only if it is still `old`. `status` runs without the backup
+/// lock, so a folder change could have stored a newer one since it was read; that one stays.
+fn forget_old_folder_if(db: &Database, old: &Path) -> AppResult<()> {
+    db.with(|conn| {
+        let stored = get_setting::<String>(conn, KEY_LEFT_BEHIND)?;
+        if stored.as_deref() == Some(old.display().to_string().as_str()) {
+            remember_old_folder(conn, None)?;
+        }
+        Ok(())
+    })
 }
 
 /// Whether two paths are the same folder, even when one is spelled differently.
@@ -508,7 +548,7 @@ impl BackupService {
             db.with(|conn| set_folder(conn, paths, chosen))?;
             let new = db.with(|conn| folder(conn, paths))?;
             let has_backups =
-                !same_folder(&old, &new) && list(&old).iter().any(|i| !i.other_computer);
+                !same_folder(&old, &new) && list(&old).iter().any(|i| !leave_alone(i));
             db.with(|conn| remember_old_folder(conn, has_backups.then_some(old.as_path())))?;
             self.status(db, paths)
         })
@@ -524,8 +564,20 @@ impl BackupService {
         paths: &AppPaths,
         remove_originals: bool,
     ) -> AppResult<RelocateOutcome> {
-        // The lock is taken per backup, not for the whole copy: a backup, restore or export can
-        // run between two of them, and the folders are read again each time.
+        self.relocate_with(db, paths, remove_originals, &|| {})
+    }
+
+    /// [`Self::relocate_left_behind`] with `between` called after each backup's turn, once the
+    /// lock is released. Tests use it to change things between two backups.
+    fn relocate_with(
+        &self,
+        db: &Database,
+        paths: &AppPaths,
+        remove_originals: bool,
+        between: &dyn Fn(),
+    ) -> AppResult<RelocateOutcome> {
+        // The lock is taken per backup, not for the whole copy: a scheduled backup can run between
+        // two of them, and the folders are read again each time.
         let (old, new, names, others) = self.exclusive(|| {
             let nothing = || AppError::Invalid("Não há backups na pasta anterior.".into());
             let new = db.with(|conn| folder(conn, paths))?;
@@ -543,9 +595,9 @@ impl BackupService {
                     "A pasta nova fica dentro da pasta anterior. Escolha outra pasta.".into(),
                 ));
             }
-            // Another computer's backups stay where they are: it may still use that folder.
-            let (others, mine): (Vec<_>, Vec<_>) =
-                list(&old).into_iter().partition(|info| info.other_computer);
+            // Another computer's backups, and untagged ones on a tagged computer, stay where they are:
+            // they may belong to a computer that still uses that folder.
+            let (others, mine): (Vec<_>, Vec<_>) = list(&old).into_iter().partition(leave_alone);
             let names: Vec<String> = mine.into_iter().map(|info| info.name).collect();
             Ok((old, new, names, others.len() as u32))
         })?;
@@ -565,6 +617,7 @@ impl BackupService {
                     work();
                 }
             });
+            between();
         })?;
         report.left_alone = others;
         self.exclusive(|| {
@@ -573,7 +626,7 @@ impl BackupService {
             // changed meanwhile, the new change already decided what to remember.
             if still_the_same() {
                 let remaining =
-                    remove_originals && list(&old).iter().any(|info| !info.other_computer);
+                    remove_originals && list(&old).iter().any(|info| !leave_alone(info));
                 db.with(|conn| remember_old_folder(conn, remaining.then_some(old.as_path())))?;
             }
             let status = self.status(db, paths)?;
@@ -1660,6 +1713,47 @@ mod tests {
         .unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_link_into_a_backup_does_not_get_past_the_folder_check() {
+        let f = fixture();
+        let root = f.paths.data_dir().join("shared");
+        let real = root.join("backup-20261119-210000-123");
+        fs::create_dir_all(&real).unwrap();
+        let link = f.paths.data_dir().join("innocent");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        f.db.with(|conn| {
+            assert!(set_folder(conn, &f.paths, Some(&link)).is_err());
+            assert!(set_folder(conn, &f.paths, Some(&link.join("sub"))).is_err());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn a_new_folder_that_is_a_plain_subfolder_of_the_old_one_is_not_moved_into() {
+        let f = fixture();
+        let service = BackupService::default();
+        let old = default_folder(&f.paths);
+        let info = create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T10:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        // Allowed by `set_folder` (not inside a backup), but a move would delete the copy
+        // together with the original, so the relocation refuses it.
+        service
+            .change_folder(&f.db, &f.paths, Some(&old.join("nested")))
+            .unwrap();
+
+        assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
+        snapshot::verify(&old.join(&info.name)).unwrap();
+    }
+
     #[test]
     fn a_logged_delete_removes_the_tree_and_tolerates_a_missing_one() {
         let f = fixture();
@@ -1678,6 +1772,13 @@ mod tests {
         assert_eq!(slug("Çãõ"), Some("cao".into()));
         // Letters with no plain form still separate words instead of vanishing.
         assert_eq!(slug("日本-pc"), Some("pc".into()));
+    }
+
+    #[test]
+    fn accents_written_as_separate_marks_are_dropped_too() {
+        // "Máquina" as `a` + U+0301, the way macOS and some keyboards write it.
+        assert_eq!(slug("Ma\u{301}quina"), Some("maquina".into()));
+        assert_eq!(slug("A\u{327}a\u{303}o"), Some("aao".into()));
     }
 
     #[test]
@@ -1916,6 +2017,57 @@ mod tests {
     }
 
     #[test]
+    fn changing_the_folder_between_two_backups_stops_the_move_and_keeps_the_rest() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, new) = make_left_behind(&f, &service);
+        let third = f._dir.path().join("third");
+        let turns = std::cell::Cell::new(0);
+
+        let outcome = service
+            .relocate_with(&f.db, &f.paths, true, &|| {
+                turns.set(turns.get() + 1);
+                if turns.get() == 1 {
+                    // Between the first backup and the second.
+                    service
+                        .change_folder(&f.db, &f.paths, Some(&third))
+                        .unwrap();
+                }
+            })
+            .unwrap();
+
+        assert_eq!((outcome.report.removed, outcome.report.failed), (1, 1));
+        assert_eq!(list(&old).len(), 1, "the second original was not touched");
+        assert_eq!(list(&new).len(), 1);
+        assert!(list(&third).is_empty());
+        // The change made meanwhile decided what is offered: the old folder (`new` here) is
+        // the one with the moved backup, and the notice was not overwritten by the move.
+        let left = outcome.status.left_behind.map(|left| left.folder);
+        assert_eq!(left, Some(new.display().to_string()));
+    }
+
+    #[test]
+    fn dismissing_the_offer_between_two_backups_stops_the_move() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, _) = make_left_behind(&f, &service);
+        let turns = std::cell::Cell::new(0);
+
+        let outcome = service
+            .relocate_with(&f.db, &f.paths, true, &|| {
+                turns.set(turns.get() + 1);
+                if turns.get() == 1 {
+                    service.forget_left_behind(&f.db).unwrap();
+                }
+            })
+            .unwrap();
+
+        assert_eq!((outcome.report.removed, outcome.report.failed), (1, 1));
+        assert_eq!(list(&old).len(), 1);
+        assert_eq!(outcome.status.left_behind, None);
+    }
+
+    #[test]
     fn the_offer_to_move_survives_a_restart() {
         let f = fixture();
         let (old, new) = make_left_behind(&f, &BackupService::default());
@@ -1935,6 +2087,40 @@ mod tests {
         assert_eq!(list(&new).len(), 2);
         assert_eq!(restarted.status(&f.db, &f.paths).unwrap().left_behind, None);
         assert!(list(&old).is_empty());
+    }
+
+    #[test]
+    fn an_unreadable_old_folder_hides_the_offer_without_forgetting_it() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, _) = make_left_behind(&f, &service);
+        // Like an unplugged drive or an offline share: the folder can't be read for now.
+        let away = f._dir.path().join("away");
+        fs::rename(&old, &away).unwrap();
+
+        assert_eq!(service.status(&f.db, &f.paths).unwrap().left_behind, None);
+
+        fs::rename(&away, &old).unwrap();
+        let back = service.status(&f.db, &f.paths).unwrap().left_behind;
+        assert_eq!(back.map(|left| left.backups), Some(2), "still offered");
+    }
+
+    #[test]
+    fn forgetting_a_stale_offer_never_erases_a_newer_one() {
+        let f = fixture();
+        f.db.with(|conn| remember_old_folder(conn, Some(Path::new("/newer"))))
+            .unwrap();
+        forget_old_folder_if(&f.db, Path::new("/older")).unwrap();
+        let stored =
+            f.db.with(|conn| get_setting::<String>(conn, KEY_LEFT_BEHIND))
+                .unwrap();
+        assert_eq!(stored.as_deref(), Some("/newer"));
+
+        forget_old_folder_if(&f.db, Path::new("/newer")).unwrap();
+        let stored =
+            f.db.with(|conn| get_setting::<String>(conn, KEY_LEFT_BEHIND))
+                .unwrap();
+        assert_eq!(stored, None);
     }
 
     #[test]
@@ -2196,6 +2382,47 @@ mod tests {
         assert_eq!(outcome.report.left_alone, 1);
         assert!(old.join(&theirs.name).is_dir(), "the laptop's backup stays");
         assert!(!new.join(&theirs.name).exists());
+        assert_eq!(outcome.status.left_behind, None);
+    }
+
+    #[test]
+    fn untagged_backups_are_not_ours_to_move_on_a_tagged_computer() {
+        let f = fixture();
+        let service = BackupService::default();
+        let old = default_folder(&f.paths);
+        // Made before tags existed (or by a computer without a tag): it can't be told whose.
+        tests::TAG.with(|tag| *tag.borrow_mut() = Some(None));
+        let untagged = create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T09:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        as_computer("desktop");
+        create(
+            &f.db,
+            &f.paths,
+            &old,
+            BackupKind::Backup,
+            "2026-11-19T10:00:00.000Z",
+            false,
+        )
+        .unwrap();
+        let new = f._dir.path().join("synced");
+        service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
+
+        let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+
+        assert_eq!(outcome.report.removed, 1);
+        assert_eq!(outcome.report.left_alone, 1);
+        assert!(
+            old.join(&untagged.name).is_dir(),
+            "never deleted from the old folder"
+        );
+        assert!(!new.join(&untagged.name).exists(), "and not copied either");
         assert_eq!(outcome.status.left_behind, None);
     }
 

@@ -78,7 +78,7 @@ function backend(
         return null;
       case "backup_restore":
         return null;
-      case "backup_move_left_behind":
+      case "backup_relocate_left_behind":
         status = { ...status, leftBehind: null };
         return {
           report: {
@@ -202,6 +202,9 @@ describe("BackupSection", () => {
     const notice = await screen.findByTestId("left-behind");
 
     await user.click(within(notice).getByRole("button", { name: "Mover para a pasta nova" }));
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Mover" }),
+    );
 
     const toast = await screen.findByText(/2 backups movidos para a pasta nova/);
     expect(toast).toHaveTextContent("1 backup não foi movido (backup-x: A cópia não confere");
@@ -260,11 +263,34 @@ describe("BackupSection", () => {
     const notice = await screen.findByTestId("left-behind");
 
     await user.click(within(notice).getByRole("button", { name: label }));
+    if (remove) {
+      // Moving deletes the originals, so it asks first.
+      const dialog = await screen.findByRole("dialog");
+      expect(calls.some((c) => c.command === "backup_relocate_left_behind")).toBe(false);
+      await user.click(within(dialog).getByRole("button", { name: "Mover" }));
+    }
 
     expect(await screen.findByText(message)).toBeInTheDocument();
-    const call = calls.find((c) => c.command === "backup_move_left_behind");
+    const call = calls.find((c) => c.command === "backup_relocate_left_behind");
     expect(call?.args).toEqual({ removeOriginals: remove });
     expect(screen.queryByTestId("left-behind")).not.toBeInTheDocument();
+  });
+
+  it("does not move anything when the confirmation is cancelled", async () => {
+    const calls = backend({}, {}, { folder: "/dados/backups", backups: 3, safety: 1 });
+    const user = userEvent.setup();
+    render(() => <BackupSection busy={createBusy()} />);
+    await user.click(await screen.findByRole("button", { name: "Escolher pasta…" }));
+    const notice = await screen.findByTestId("left-behind");
+
+    await user.click(within(notice).getByRole("button", { name: "Mover para a pasta nova" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("os originais serão apagados");
+    await user.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.some((c) => c.command === "backup_relocate_left_behind")).toBe(false);
+    expect(screen.getByTestId("left-behind")).toBeInTheDocument();
   });
 
   it("also says what is left behind when going back to the default folder", async () => {

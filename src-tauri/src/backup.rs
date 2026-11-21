@@ -502,7 +502,21 @@ impl BackupService {
         paths: &AppPaths,
         remove_originals: bool,
     ) -> AppResult<RelocateOutcome> {
-        self.exclusive(|| {
+        self.relocate_with(db, paths, remove_originals, &|| {})
+    }
+
+    /// [`Self::relocate_left_behind`] with `between` called after each backup's turn, once the
+    /// lock is released. Tests use it to change things between two backups.
+    fn relocate_with(
+        &self,
+        db: &Database,
+        paths: &AppPaths,
+        remove_originals: bool,
+        between: &dyn Fn(),
+    ) -> AppResult<RelocateOutcome> {
+        // The lock is taken per backup, not for the whole copy: a scheduled backup can run between
+        // two of them, and the folders are read again each time.
+        let (old, new, names, others) = self.exclusive(|| {
             let nothing = || AppError::Invalid("Não há backups na pasta anterior.".into());
             let new = db.with(|conn| folder(conn, paths))?;
             // Read from the stored setting, so it works after a restart too, and never from a
@@ -523,14 +537,37 @@ impl BackupService {
             // they may belong to a computer that still uses that folder.
             let (others, mine): (Vec<_>, Vec<_>) = list(&old).into_iter().partition(leave_alone);
             let names: Vec<String> = mine.into_iter().map(|info| info.name).collect();
-            let mut report = relocate::relocate(&old, &new, &names, remove_originals)?;
-            report.left_alone = others.len() as u32;
+            Ok((old, new, names, others.len() as u32))
+        })?;
+        let still_the_same = || {
+            let current = db.with(|conn| {
+                Ok((
+                    folder(conn, paths)?,
+                    get_setting::<String>(conn, KEY_LEFT_BEHIND)?,
+                ))
+            });
+            matches!(current, Ok((folder, Some(stored)))
+                if same_folder(&folder, &new) && stored == old.display().to_string())
+        };
+        let mut report = relocate::relocate(&old, &new, &names, remove_originals, &|work| {
+            self.exclusive(|| {
+                if still_the_same() {
+                    work();
+                }
+            });
+            between();
+        })?;
+        report.left_alone = others;
+        self.exclusive(|| {
             // After a move, what is still here is what could not be moved (the other computer's
-            // backups are reported apart). A copy leaves the originals on purpose.
-            // A copy that failed for some backups keeps the offer too, so it can be tried again.
-            let remaining = (remove_originals || report.failed > 0)
-                && list(&old).iter().any(|info| !leave_alone(info));
-            db.with(|conn| remember_old_folder(conn, remaining.then_some(old.as_path())))?;
+            // backups are reported apart). A copy leaves the originals on purpose, unless it failed
+            // for some backups: then the offer stays so the rest can be tried again. If the folder
+            // changed meanwhile, the new change already decided what to remember.
+            if still_the_same() {
+                let remaining = (remove_originals || report.failed > 0)
+                    && list(&old).iter().any(|info| !leave_alone(info));
+                db.with(|conn| remember_old_folder(conn, remaining.then_some(old.as_path())))?;
+            }
             let status = self.status(db, paths)?;
             Ok(RelocateOutcome { report, status })
         })
@@ -1855,6 +1892,81 @@ mod tests {
     }
 
     #[test]
+    fn each_backup_is_moved_in_its_own_turn_and_a_refused_turn_stops_the_rest() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, new) = make_left_behind(&f, &service);
+        let names: Vec<String> = list(&old).into_iter().map(|info| info.name).collect();
+        assert_eq!(names.len(), 2);
+
+        let turns = std::cell::Cell::new(0);
+        let report = relocate::relocate(&old, &new, &names, true, &|work| {
+            turns.set(turns.get() + 1);
+            // The second turn is refused (say the folder changed meanwhile).
+            if turns.get() == 1 {
+                work();
+            }
+        })
+        .unwrap();
+
+        assert_eq!(turns.get(), 2, "one turn per backup, not one for all");
+        assert_eq!((report.copied, report.removed, report.failed), (1, 1, 1));
+        assert!(report.first_failure.is_some());
+        assert_eq!(list(&old).len(), 1, "the refused one stays where it was");
+    }
+
+    #[test]
+    fn changing_the_folder_between_two_backups_stops_the_move_and_keeps_the_rest() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, new) = make_left_behind(&f, &service);
+        let third = f._dir.path().join("third");
+        let turns = std::cell::Cell::new(0);
+
+        let outcome = service
+            .relocate_with(&f.db, &f.paths, true, &|| {
+                turns.set(turns.get() + 1);
+                if turns.get() == 1 {
+                    // Between the first backup and the second.
+                    service
+                        .change_folder(&f.db, &f.paths, Some(&third))
+                        .unwrap();
+                }
+            })
+            .unwrap();
+
+        assert_eq!((outcome.report.removed, outcome.report.failed), (1, 1));
+        assert_eq!(list(&old).len(), 1, "the second original was not touched");
+        assert_eq!(list(&new).len(), 1);
+        assert!(list(&third).is_empty());
+        // The change made meanwhile decided what is offered: the old folder (`new` here) is
+        // the one with the moved backup, and the notice was not overwritten by the move.
+        let left = outcome.status.left_behind.map(|left| left.folder);
+        assert_eq!(left, Some(new.display().to_string()));
+    }
+
+    #[test]
+    fn dismissing_the_offer_between_two_backups_stops_the_move() {
+        let f = fixture();
+        let service = BackupService::default();
+        let (old, _) = make_left_behind(&f, &service);
+        let turns = std::cell::Cell::new(0);
+
+        let outcome = service
+            .relocate_with(&f.db, &f.paths, true, &|| {
+                turns.set(turns.get() + 1);
+                if turns.get() == 1 {
+                    service.forget_left_behind(&f.db).unwrap();
+                }
+            })
+            .unwrap();
+
+        assert_eq!((outcome.report.removed, outcome.report.failed), (1, 1));
+        assert_eq!(list(&old).len(), 1);
+        assert_eq!(outcome.status.left_behind, None);
+    }
+
+    #[test]
     fn the_offer_to_move_survives_a_restart() {
         let f = fixture();
         let (old, new) = make_left_behind(&f, &BackupService::default());
@@ -2123,8 +2235,14 @@ mod tests {
         let alias = f._dir.path().join("alias");
         std::os::unix::fs::symlink(&old, &alias).unwrap();
 
-        let report =
-            relocate::relocate(&old, &alias, std::slice::from_ref(&info.name), true).unwrap();
+        let report = relocate::relocate(
+            &old,
+            &alias,
+            std::slice::from_ref(&info.name),
+            true,
+            &|work| work(),
+        )
+        .unwrap();
 
         assert_eq!(report.failed, 1);
         assert_eq!(report.removed, 0);

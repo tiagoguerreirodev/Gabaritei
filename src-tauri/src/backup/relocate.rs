@@ -8,7 +8,9 @@
 //! hidden name (atomic, so it never shows as a half-deleted backup) and then deleted. Any
 //! failure before that leaves the original untouched.
 
-use std::fs::{self, File, OpenOptions};
+#[cfg(unix)]
+use std::fs::File;
+use std::fs::{self, OpenOptions};
 use std::path::Path;
 
 use serde::Serialize;

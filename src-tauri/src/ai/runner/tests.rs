@@ -204,12 +204,14 @@ exit 1"#,
             ),
         );
         let mut job = spec(Agent::Codex, cli);
-        job.timeout = Duration::from_millis(400);
+        // The timeout counts from the spawn. The first execution of a freshly built
+        // script can take a while on macOS, so leave room for it to record the pid.
+        job.timeout = Duration::from_secs(3);
         let started = Instant::now();
         assert_eq!(run(&job).0, Err(RunError::TimedOut));
         assert!(started.elapsed() < Duration::from_secs(10));
         let pid: u32 = std::fs::read_to_string(&pidfile)
-            .unwrap()
+            .expect("the script never recorded its child's pid before the timeout")
             .trim()
             .parse()
             .unwrap();

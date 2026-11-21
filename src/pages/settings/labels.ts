@@ -27,7 +27,7 @@ export const roleLabels: Record<Role, { name: string; hint: string }> = {
 };
 
 export const agents: Agent[] = ["codex", "claude"];
-export const efforts: Effort[] = ["low", "medium", "high", "xhigh", "max"];
+export const efforts: Effort[] = ["low", "medium", "high", "xhigh", "max", "ultra"];
 export const roleOrder: { role: Role; key: "generate" | "blindCheck" | "recheck" | "explain" }[] = [
   { role: "generate", key: "generate" },
   { role: "blind_check", key: "blindCheck" },

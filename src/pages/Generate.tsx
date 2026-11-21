@@ -2,6 +2,8 @@ import { A } from "@solidjs/router";
 import { For, Match, Show, Switch, createResource, createSignal, untrack } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { api } from "../api";
+import { catalogState, roleProblem } from "../catalog";
+import { CatalogNotice } from "../components/ModelOptions";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { GenerateRequest } from "../bindings/GenerateRequest";
 import type { QuestionType } from "../bindings/QuestionType";
@@ -126,6 +128,13 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
   });
   const [submitting, setSubmitting] = createSignal(false);
   const remnoteOn = () => props.settings.remnote.mode !== "off";
+  const generator = () => form.generator ?? props.settings.roles.generate;
+  const checker = () => form.checker ?? props.settings.roles.blindCheck;
+  const problems = () =>
+    [
+      ["Gerador", roleProblem(catalogState(), generator())],
+      ["Conferente", roleProblem(catalogState(), checker())],
+    ].flatMap(([label, problem]) => (problem ? [`${label}: ${problem}`] : []));
 
   const attach = async () => {
     try {
@@ -274,7 +283,15 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
           onChange={(config) => setForm("checker", config)}
         />
       </div>
-      <button type="submit" class="primary" disabled={submitting()}>
+      <CatalogNotice agents={[generator().agent, checker().agent]} />
+      <For each={problems()}>
+        {(problem) => (
+          <p role="alert" class="error">
+            {problem}
+          </p>
+        )}
+      </For>
+      <button type="submit" class="primary" disabled={submitting() || problems().length > 0}>
         {submitting() ? "Iniciando…" : "Gerar"}
       </button>
     </form>

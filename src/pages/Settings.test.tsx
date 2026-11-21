@@ -1,9 +1,11 @@
-import { render, screen, within } from "@solidjs/testing-library";
+import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { AiSettingsInput } from "../bindings/AiSettingsInput";
+import type { Catalog } from "../bindings/Catalog";
+import { resetCatalog } from "../catalog";
 import { Toaster } from "../components/toasts";
 import Settings from "./Settings";
 
@@ -19,6 +21,7 @@ function backend(
   initial: AiSettings = defaults,
   importing?: Promise<boolean>,
   backingUp?: Promise<unknown>,
+  catalog?: Catalog,
 ) {
   const calls: { command: string; args: unknown }[] = [];
   let stored = initial;
@@ -47,6 +50,9 @@ function backend(
         return importing ?? false;
       case "legacy_import_status":
         return { report: null, bankEmpty: false };
+      case "ai_catalog":
+        if (!catalog) throw new Error("no catalog");
+        return catalog;
       case "ai_settings":
         return stored;
       case "save_ai_settings": {
@@ -80,6 +86,23 @@ function backend(
   return calls;
 }
 
+const listed: Catalog = {
+  agents: [
+    {
+      agent: "codex",
+      status: { kind: "ready" },
+      models: [{ id: "gpt-6.2-sol", label: "GPT-6.2-Sol", efforts: ["low", "xhigh", "ultra"] }],
+    },
+    {
+      agent: "claude",
+      status: { kind: "unavailable", reason: "O Claude Code não informa a lista de modelos." },
+      models: [],
+    },
+  ],
+};
+
+beforeEach(() => resetCatalog());
+
 describe("Configurações", () => {
   it("shows the four roles with the defaults", async () => {
     backend();
@@ -107,10 +130,12 @@ describe("Configurações", () => {
         <Toaster />
       </>
     ));
-    const model = await screen.findByLabelText("Modelo: Explicação sob demanda");
-    await user.clear(model);
-    await user.type(model, "claude-sonnet-5-5");
-    await user.selectOptions(screen.getByLabelText("Agente: Explicação sob demanda"), "claude");
+    await user.selectOptions(
+      await screen.findByLabelText("Agente: Explicação sob demanda"),
+      "claude",
+    );
+    // Switching the agent clears the model, so the old agent's name is never kept.
+    await user.type(screen.getByLabelText("Modelo: Explicação sob demanda"), "claude-sonnet-5-5");
     await user.click(screen.getByRole("button", { name: "Salvar configurações" }));
 
     const save = calls.find((c) => c.command === "save_ai_settings");
@@ -231,5 +256,38 @@ describe("Configurações", () => {
     render(() => <Settings />);
     expect(await screen.findByRole("note")).toBeTruthy();
     expect(screen.getByRole("note").textContent).toMatch(/não consegue limitar/);
+  });
+
+  it("feeds the model and effort selectors from the catalog, and reloads them on Atualizar", async () => {
+    const calls = backend(defaults, undefined, undefined, listed);
+    const user = userEvent.setup();
+    render(() => <Settings />);
+    const model = await screen.findByRole("combobox", { name: "Modelo: Gerar questões" });
+    expect(within(model).getByRole("option", { name: "GPT-6.2-Sol" })).toBeTruthy();
+    const effort = screen.getByRole("combobox", { name: "Esforço: Gerar questões" });
+    expect(
+      within(effort)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Baixo", "Extra alto", "Ultra"]);
+
+    await user.click(screen.getByRole("button", { name: "Atualizar listas" }));
+    await waitFor(() => {
+      const refreshes = calls.filter(
+        (c) => c.command === "ai_catalog" && (c.args as { refresh: boolean }).refresh,
+      );
+      expect(refreshes).toHaveLength(1);
+    });
+  });
+
+  it("blocks saving while a role uses a model the list no longer has", async () => {
+    const stale: AiSettings = {
+      ...defaults,
+      roles: { ...defaults.roles, explain: { agent: "codex", model: "antigo", effort: "low" } },
+    };
+    backend(stale, undefined, undefined, listed);
+    render(() => <Settings />);
+    expect(await screen.findByText(/“antigo” não está mais disponível/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Salvar configurações" })).toBeDisabled();
   });
 });

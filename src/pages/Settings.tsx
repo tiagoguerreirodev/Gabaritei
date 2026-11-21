@@ -14,7 +14,7 @@ import DataFileSection from "./settings/DataFileSection";
 import { createBusy } from "./settings/busy";
 import AgentsSection from "./settings/AgentsSection";
 import RemNoteSection from "./settings/RemNoteSection";
-import RolesSection from "./settings/RolesSection";
+import RolesSection, { rolesBlocked } from "./settings/RolesSection";
 
 /** A deep copy where no two places share an object (unlike `structuredClone`). */
 function clone<T>(value: T): T {
@@ -86,7 +86,12 @@ function Form(props: { initial: AiSettings; onReload: () => void }) {
         beforeTest={() => save(true)}
       />
       <p>
-        <button type="button" class="primary" disabled={saving()} onClick={() => void save(false)}>
+        <button
+          type="button"
+          class="primary"
+          disabled={saving() || rolesBlocked(draft.roles)}
+          onClick={() => void save(false)}
+        >
           {saving() ? "Salvando…" : "Salvar configurações"}
         </button>
       </p>

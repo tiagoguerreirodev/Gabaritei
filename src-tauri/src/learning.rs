@@ -215,6 +215,19 @@ fn open_attempt_questions(conn: &Connection) -> AppResult<HashSet<String>> {
     Ok(ids)
 }
 
+/// How many reviews due at `now` sit in an unfinished attempt: they stay due, but a new
+/// practice session leaves them out. The Home summary and the Learning overview both use this.
+pub fn due_in_open_attempt(conn: &Connection, now: &str) -> AppResult<u32> {
+    Ok(conn.query_row(
+        &format!(
+            "SELECT COUNT(*) FROM review_state
+             WHERE due_at <= ?1 AND question_id IN ({OPEN_ATTEMPT_QUESTIONS_SQL})"
+        ),
+        [now],
+        |r| r.get(0),
+    )?)
+}
+
 /// Questions of the error notebook for a practice session, most recent error first, without
 /// the ones already in an unfinished attempt.
 pub fn error_questions(
@@ -366,11 +379,7 @@ pub fn overview(conn: &Connection, now: &str, include_blanks: bool) -> AppResult
         !only_upcoming || upcoming_only <= MAX_UPCOMING_ROWS
     });
     let due = due_dates.values().filter(|d| d.as_str() <= now).count() as u32;
-    let in_open_attempt = open_attempt_questions(conn)?;
-    let due_in_open_attempt = due_dates
-        .iter()
-        .filter(|(q, d)| d.as_str() <= now && in_open_attempt.contains(*q))
-        .count() as u32;
+    let due_in_open_attempt = due_in_open_attempt(conn, now)?;
     Ok(LearningOverview {
         due,
         due_in_open_attempt,

@@ -60,6 +60,11 @@ pub fn relocate(
             }
             Err(error) => {
                 report.failed += 1;
+                crate::log::error(format!(
+                    "could not {} backup {name}: {}",
+                    if remove_originals { "move" } else { "copy" },
+                    error.detail()
+                ));
                 report
                     .first_failure
                     .get_or_insert_with(|| format!("{name}: {error}"));
@@ -96,7 +101,7 @@ fn relocate_one(old: &Path, new: &Path, name: &str, remove: bool) -> AppResult<D
         false
     } else {
         let building = new.join(format!(".tmp-{name}"));
-        let _ = fs::remove_dir_all(&building);
+        super::remove_dir_logged(&building);
         let made = copy_snapshot(&source, &original, &building)
             .and_then(|()| snapshot::verify(&building))
             .and_then(|copy| {
@@ -109,7 +114,7 @@ fn relocate_one(old: &Path, new: &Path, name: &str, remove: bool) -> AppResult<D
                 }
             });
         if let Err(error) = made {
-            let _ = fs::remove_dir_all(&building);
+            super::remove_dir_logged(&building);
             return Err(error);
         }
         sync_dir(new);
@@ -130,9 +135,9 @@ fn relocate_one(old: &Path, new: &Path, name: &str, remove: bool) -> AppResult<D
 /// backup's cleanup removes, never a half-deleted backup in the list.
 fn remove_original(old: &Path, name: &str, source: &Path) -> AppResult<()> {
     let aside = old.join(format!(".tmp-{name}"));
-    let _ = fs::remove_dir_all(&aside);
+    super::remove_dir_logged(&aside);
     fs::rename(source, &aside)?;
-    let _ = fs::remove_dir_all(&aside);
+    super::remove_dir_logged(&aside);
     Ok(())
 }
 

@@ -33,8 +33,23 @@ impl From<&AppError> for ErrorPayload {
     }
 }
 
+impl AppError {
+    /// The technical text for logs: the detail of an unexpected failure, or the user message.
+    /// It never holds stored values (see the `From` impls below).
+    pub fn detail(&self) -> &str {
+        match self {
+            Self::Invalid(message) | Self::Internal(message) => message,
+        }
+    }
+}
+
 impl Serialize for AppError {
+    /// Every error that reaches the frontend passes through here, so an unexpected one is
+    /// written to the app log first: the user only sees a generic message.
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if let Self::Internal(detail) = self {
+            crate::log::error(format!("unexpected error: {detail}"));
+        }
         ErrorPayload::from(self).serialize(serializer)
     }
 }
@@ -42,7 +57,9 @@ impl Serialize for AppError {
 /// Result type for domain functions and commands.
 pub type AppResult<T> = Result<T, AppError>;
 
-/// Unexpected failures from libraries become [`AppError::Internal`], keeping the detail.
+/// Unexpected failures from libraries become [`AppError::Internal`]. The text is kept for the
+/// log, so it must not echo stored values: SQLite and JSON messages can quote the data that
+/// failed, and those two are described without the quoted part.
 macro_rules! internal_from {
     ($($source:ty),* $(,)?) => {
         $(impl From<$source> for AppError {
@@ -53,7 +70,34 @@ macro_rules! internal_from {
     };
 }
 
-internal_from!(rusqlite::Error, std::io::Error, serde_json::Error);
+internal_from!(std::io::Error);
+
+impl From<serde_json::Error> for AppError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Internal(format!(
+            "invalid JSON ({:?} at line {}, column {})",
+            error.classify(),
+            error.line(),
+            error.column()
+        ))
+    }
+}
+
+impl From<rusqlite::Error> for AppError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Internal(match &error {
+            // SQLite's own text names the failed constraint or file problem, not the values.
+            rusqlite::Error::SqliteFailure(code, message) => format!(
+                "database error {:?}: {}",
+                code.code,
+                message.as_deref().unwrap_or("no message")
+            ),
+            rusqlite::Error::QueryReturnedNoRows => "database query returned no rows".into(),
+            // Other variants can carry a value or a nested error with one.
+            _ => "database error (detail withheld: it may contain stored values)".into(),
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -66,6 +110,47 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&error).unwrap(),
             json!({ "message": "Informe um assunto." })
+        );
+    }
+
+    #[test]
+    fn the_detail_of_a_json_error_never_echoes_the_content() {
+        #[derive(Debug, serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Shape {
+            _known: u32,
+        }
+        let error = serde_json::from_str::<Shape>(r#"{"SEGREDO-DA-QUESTAO": 1}"#).unwrap_err();
+        assert!(error.to_string().contains("SEGREDO-DA-QUESTAO"), "premise");
+        let app: AppError = error.into();
+        assert!(
+            !app.detail().contains("SEGREDO-DA-QUESTAO"),
+            "{}",
+            app.detail()
+        );
+        assert!(app.detail().contains("JSON"));
+    }
+
+    #[test]
+    fn the_detail_of_a_database_error_names_the_failure_not_the_values() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute("CREATE TABLE t (id TEXT PRIMARY KEY)", [])
+            .unwrap();
+        conn.execute("INSERT INTO t VALUES ('VALOR-GUARDADO')", [])
+            .unwrap();
+        let error = conn
+            .execute("INSERT INTO t VALUES ('VALOR-GUARDADO')", [])
+            .unwrap_err();
+        let app: AppError = error.into();
+        assert!(app.detail().contains("UNIQUE"), "{}", app.detail());
+        assert!(!app.detail().contains("VALOR-GUARDADO"));
+    }
+
+    #[test]
+    fn detail_is_the_message_for_invalid_errors() {
+        assert_eq!(
+            AppError::Invalid("Informe um assunto.".into()).detail(),
+            "Informe um assunto."
         );
     }
 

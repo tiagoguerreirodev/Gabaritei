@@ -617,7 +617,7 @@ fn begin(folder: &Path, kind: BackupKind, now: &str) -> AppResult<Pending> {
         ));
     }
     let building = folder.join(format!(".tmp-{name}"));
-    let _ = fs::remove_dir_all(&building);
+    remove_dir_logged(&building);
     fs::create_dir(&building)?;
     Ok(Pending {
         name,
@@ -630,7 +630,7 @@ fn begin(folder: &Path, kind: BackupKind, now: &str) -> AppResult<Pending> {
 impl Pending {
     /// Removes the temporary folder after a failure.
     fn abandon(&self) {
-        let _ = fs::remove_dir_all(&self.building);
+        remove_dir_logged(&self.building);
     }
 
     /// Renames the temporary folder to its final name (the backup now exists) and, if asked,
@@ -666,6 +666,17 @@ fn is_stale(path: &Path) -> bool {
         .is_some_and(|age| age > INTERVAL)
 }
 
+/// Deletes a folder tree, writing a failure to the app log. A backup's cleanup must not fail
+/// the backup (a sync client can hold a file open), but a leftover that never goes away should
+/// be findable. A folder that is already gone is fine.
+pub(crate) fn remove_dir_logged(path: &Path) {
+    if let Err(error) = fs::remove_dir_all(path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        crate::log::error(format!("could not delete {}: {error}", path.display()));
+    }
+}
+
 /// Deletes this computer's oldest backups of `kind` beyond the limit, and its temporary
 /// folders left by a crash. Backups and temporary folders of another computer sharing the
 /// folder are never touched, and neither are untagged ones from before tags existed (they
@@ -691,7 +702,7 @@ fn prune(folder: &Path, kind: BackupKind) {
                 .is_some_and(|parsed| parsed.tag.is_some() && parsed.tag != own);
             let mine = parsed.is_some_and(|parsed| parsed.tag == own);
             if mine || (!theirs && is_stale(&entry.path())) {
-                let _ = fs::remove_dir_all(entry.path());
+                remove_dir_logged(&entry.path());
             }
         } else if parse(&name).is_some_and(|parsed| parsed.kind == kind && parsed.tag == own) {
             names.push(name);
@@ -701,7 +712,7 @@ fn prune(folder: &Path, kind: BackupKind) {
     names.sort();
     let excess = names.len().saturating_sub(kind.keep());
     for name in &names[..excess] {
-        let _ = fs::remove_dir_all(folder.join(name));
+        remove_dir_logged(&folder.join(name));
     }
 }
 
@@ -1534,6 +1545,17 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn a_logged_delete_removes_the_tree_and_tolerates_a_missing_one() {
+        let f = fixture();
+        let tree = f.paths.data_dir().join("tree");
+        fs::create_dir_all(tree.join("a")).unwrap();
+        fs::write(tree.join("a").join("file"), b"x").unwrap();
+        remove_dir_logged(&tree);
+        assert!(!tree.exists());
+        remove_dir_logged(&tree);
     }
 
     #[test]

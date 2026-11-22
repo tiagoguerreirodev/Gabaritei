@@ -1,6 +1,13 @@
-import { A } from "@solidjs/router";
+import { A, useLocation } from "@solidjs/router";
 import { Match, Show, Switch } from "solid-js";
-import { dismissGeneration, generationStatus, waitingDrafts } from "../generation";
+import { api } from "../api";
+import {
+  GENERATION_STAGES,
+  dismissGeneration,
+  generationStage,
+  generationStatus,
+  waitingDrafts,
+} from "../generation";
 
 /**
  * Shows, on any page, that a package is being generated, how a failed or cancelled run ended,
@@ -42,6 +49,7 @@ function WaitingNotice() {
 }
 
 function RunStatus() {
+  const location = useLocation();
   return (
     <Show when={generationStatus()}>
       {(status) => (
@@ -49,9 +57,19 @@ function RunStatus() {
           <Match when={status().running}>
             <p class="generation-banner" role="status">
               <span>
-                Gerando um pacote… <span class="muted">{status().progress?.label ?? ""}</span>
+                Gerando um pacote… etapa {generationStage() + 1} de {GENERATION_STAGES.length}:{" "}
+                {GENERATION_STAGES[generationStage()]?.label}.{" "}
+                <span class="muted">{status().progress?.label ?? ""}</span>
               </span>
-              <A href="/gerar">Acompanhar</A>
+              {/* The Gerar page shows the stages and its own Cancelar button. */}
+              <span class="banner-actions">
+                <A href="/gerar">Acompanhar</A>
+                <Show when={location.pathname !== "/gerar"}>
+                  <button type="button" onClick={() => void api.generationCancel()}>
+                    Cancelar
+                  </button>
+                </Show>
+              </span>
             </p>
           </Match>
           <Match when={status().outcome?.kind !== "draft" && status().outcome}>

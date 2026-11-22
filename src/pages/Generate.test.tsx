@@ -123,6 +123,11 @@ async function fillTopic(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText("Assunto"), "Controle de constitucionalidade");
 }
 
+/** Opens the "Opções avançadas" disclosure (it starts collapsed). */
+async function openAdvanced(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByText(/Opções avançadas/));
+}
+
 beforeEach(() => {
   window.location.hash = "";
   resetCatalog();
@@ -207,6 +212,7 @@ describe("Gerar", () => {
     renderPage();
     await fillTopic(user);
 
+    await openAdvanced(user);
     await user.click(screen.getByRole("checkbox", { name: "Pesquisar na web" }));
     await user.click(screen.getByRole("checkbox", { name: "RemNote" }));
     await user.click(screen.getByRole("button", { name: "Anexar arquivos" }));
@@ -226,6 +232,7 @@ describe("Gerar", () => {
   it("explains that RemNote is off in Configurações", async () => {
     backend(idle, { ...settings, remnote: { mode: "off", url: "", tools: [] } });
     renderPage();
+    await openAdvanced(userEvent.setup());
     expect(await screen.findByRole("checkbox", { name: "RemNote" })).toBeDisabled();
     expect(screen.getByText(/ligue em Configurações/)).toBeVisible();
   });
@@ -244,6 +251,82 @@ describe("Gerar", () => {
     expect(screen.queryByRole("form", { name: "Nova geração" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(calls.some((c) => c.command === "generation_cancel")).toBe(true);
+  });
+
+  it("marks the current stage of a running generation", async () => {
+    backend({
+      running: true,
+      startedAt: "2026-11-20T10:00:00.000Z",
+      progress: { kind: "thinking", label: "Resolvendo as contestações…" },
+      outcome: null,
+    });
+    renderPage();
+    const stages = within(await screen.findByRole("list", { name: "Etapas da geração" }));
+    const items = stages.getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    expect(items[0]).not.toHaveAttribute("aria-current");
+    expect(items[0]).toHaveTextContent("(concluída)");
+    expect(items[2]).toHaveAttribute("aria-current", "step");
+    expect(items[2]).toHaveTextContent("Resolvendo as contestações (em andamento)");
+    expect(
+      screen.getAllByRole("status").some((el) => /Etapa 3 de 3/.test(el.textContent ?? "")),
+    ).toBe(true);
+  });
+
+  it("shows the steps with the current one marked, following the form", async () => {
+    backend();
+    const user = userEvent.setup();
+    renderPage();
+    const steps = await screen.findByRole("list", { name: "Etapas" });
+    const current = () => within(steps).getByRole("listitem", { current: "step" });
+    expect(
+      within(steps)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual([
+      expect.stringContaining("Assunto"),
+      expect.stringContaining("Opções"),
+      expect.stringContaining("Fontes"),
+      expect.stringContaining("Revisão"),
+    ]);
+    expect(current()).toHaveTextContent("Assunto");
+    await fillTopic(user);
+    expect(current()).toHaveTextContent("Fontes");
+    await user.clear(screen.getByLabelText("Quantidade"));
+    expect(current()).toHaveTextContent("Opções");
+  });
+
+  it("keeps the advanced options collapsed until opened", async () => {
+    backend();
+    const user = userEvent.setup();
+    renderPage();
+    const summary = await screen.findByText(/Opções avançadas/);
+    const details = summary.closest("details")!;
+    expect(details).not.toHaveAttribute("open");
+    expect(screen.getByLabelText("Quantidade")).toBeVisible();
+    expect(screen.getByLabelText("Quantidade")).toBeRequired();
+    expect(screen.getByLabelText("Estilo da banca")).not.toBeVisible();
+    await user.click(summary);
+    expect(details).toHaveAttribute("open");
+    expect(screen.getByLabelText("Estilo da banca")).toBeVisible();
+  });
+
+  it("explains in text what is missing instead of starting", async () => {
+    const calls = backend();
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Gerar" }));
+    expect(await screen.findByText("Informe a área, a matéria e o assunto.")).toBeVisible();
+    expect(calls.some((c) => c.command === "generation_start")).toBe(false);
+
+    await fillTopic(user);
+    await user.clear(screen.getByLabelText("Quantidade"));
+    await user.click(screen.getByRole("button", { name: "Gerar" }));
+    expect(
+      await screen.findByText("A quantidade deve ser um número inteiro de 1 a 30."),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Quantidade")).toBeInvalid();
+    expect(calls.some((c) => c.command === "generation_start")).toBe(false);
   });
 
   it("links to the finished package and lets the user dismiss the result", async () => {

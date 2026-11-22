@@ -10,6 +10,7 @@ import type { QuestionType } from "../bindings/QuestionType";
 import type { TopicTree } from "../bindings/TopicTree";
 import { ErrorState, Loading } from "../components/states";
 import { showError } from "../components/toasts";
+import GenerationProgress from "../components/GenerationProgress";
 import { dismissGeneration, generationStatus } from "../generation";
 import RolePicker from "./generate/RolePicker";
 import TopicPicker from "./generate/TopicPicker";
@@ -62,13 +63,10 @@ function GenerateView(props: { tree: TopicTree; settings: AiSettings }) {
       <Match when={status()?.running}>
         <section class="card" aria-labelledby="running-title">
           <h2 id="running-title">Gerando o pacote…</h2>
-          <p role="status">{status()?.progress?.label ?? "Preparando…"}</p>
+          <GenerationProgress />
           <p class="muted">
             Isto pode levar alguns minutos. Você pode usar outras páginas enquanto isso.
           </p>
-          <button type="button" onClick={() => void api.generationCancel()}>
-            Cancelar
-          </button>
         </section>
       </Match>
       <Match when={true}>
@@ -79,6 +77,36 @@ function GenerateView(props: { tree: TopicTree; settings: AiSettings }) {
   );
 }
 
+const STEPS = ["Assunto", "Opções", "Fontes", "Revisão"] as const;
+
+/**
+ * The steps from topic to review, as an ordered list. `current` is a 0-based index; earlier
+ * steps read as done. The state is text and a shape, never colour alone.
+ */
+function StepList(props: { current: number }) {
+  return (
+    <ol class="step-list" aria-label="Etapas">
+      <For each={STEPS}>
+        {(step, index) => (
+          <li
+            classList={{ done: index() < props.current, current: index() === props.current }}
+            aria-current={index() === props.current ? "step" : undefined}
+          >
+            {step}
+            <span class="sr-only">
+              {index() < props.current
+                ? " (concluída)"
+                : index() === props.current
+                  ? " (etapa atual)"
+                  : ""}
+            </span>
+          </li>
+        )}
+      </For>
+    </ol>
+  );
+}
+
 function Outcome() {
   return (
     <Show when={generationStatus()?.outcome}>
@@ -86,6 +114,7 @@ function Outcome() {
         <section class="card" aria-label="Resultado da última geração">
           <Switch>
             <Match when={outcome().kind === "draft"}>
+              <StepList current={3} />
               <p>O pacote ficou pronto.</p>
               <A
                 href={`/revisar-pacote?id=${encodeURIComponent(
@@ -127,6 +156,7 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
     checker: untrack(() => clone(props.settings.roles.blindCheck)),
   });
   const [submitting, setSubmitting] = createSignal(false);
+  const [attempted, setAttempted] = createSignal(false);
   const remnoteOn = () => props.settings.remnote.mode !== "off";
   const generator = () => form.generator ?? props.settings.roles.generate;
   const checker = () => form.checker ?? props.settings.roles.blindCheck;
@@ -146,8 +176,22 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
     }
   };
 
+  const topicError = () =>
+    form.topic.area.trim() && form.topic.matter.trim() && form.topic.topic.trim()
+      ? null
+      : "Informe a área, a matéria e o assunto.";
+  const countError = () =>
+    Number.isInteger(form.count) && form.count >= 1 && form.count <= 30
+      ? null
+      : "A quantidade deve ser um número inteiro de 1 a 30.";
+  const fieldErrors = () => [topicError(), countError()].flatMap((error) => (error ? [error] : []));
+  /** Which step the user is on: the first one that still needs something. */
+  const current = () => (topicError() ? 0 : countError() ? 1 : 2);
+
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
+    setAttempted(true);
+    if (fieldErrors().length > 0) return;
     setSubmitting(true);
     try {
       await api.generationStart(clone(unwrap(form)));
@@ -159,17 +203,33 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
   };
 
   return (
-    <form class="card wide" onSubmit={(event) => void submit(event)} aria-label="Nova geração">
+    <form
+      class="card wide generate-form"
+      onSubmit={(event) => void submit(event)}
+      aria-label="Nova geração"
+      noValidate
+    >
       <h2>Nova geração</h2>
+      <StepList current={current()} />
+      <p class="muted">Campos obrigatórios: assunto e quantidade. O resto tem valores prontos.</p>
+
       <div class="form-grid">
         <span class="label" id="topic-label">
-          Assunto
+          Assunto <span class="required">(obrigatório)</span>
         </span>
         <TopicPicker
           tree={props.tree}
           value={form.topic}
           onChange={(topic) => setForm("topic", topic)}
         />
+        <Show when={attempted() && topicError()}>
+          {(message) => (
+            <p class="field-error" role="alert">
+              <span aria-hidden="true">✕ </span>
+              {message()}
+            </p>
+          )}
+        </Show>
 
         <label for="gen-count">Quantidade</label>
         <input
@@ -177,23 +237,24 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
           type="number"
           min="1"
           max="30"
+          required
+          aria-required="true"
+          aria-invalid={attempted() && countError() ? "true" : undefined}
+          aria-describedby="gen-count-hint"
           value={form.count}
           onInput={(event) => setForm("count", Number(event.currentTarget.value))}
         />
-        <p class="hint muted">De 1 a 30. Cada questão passa pela conferência às cegas.</p>
-
-        <label for="gen-board">Estilo da banca</label>
-        <input
-          id="gen-board"
-          type="text"
-          list="gen-boards"
-          placeholder="Opcional"
-          value={form.board ?? ""}
-          onInput={(event) => setForm("board", event.currentTarget.value || null)}
-        />
-        <datalist id="gen-boards">
-          <For each={BOARDS}>{(board) => <option value={board} />}</For>
-        </datalist>
+        <p class="hint muted" id="gen-count-hint">
+          Obrigatório. De 1 a 30. Cada questão passa pela conferência às cegas.
+        </p>
+        <Show when={attempted() && countError()}>
+          {(message) => (
+            <p class="field-error" role="alert">
+              <span aria-hidden="true">✕ </span>
+              {message()}
+            </p>
+          )}
+        </Show>
 
         <label for="gen-format">Formato</label>
         <select
@@ -207,82 +268,100 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
           <option value="multiple">Só múltipla escolha</option>
           <option value="boolean">Só Certo/Errado</option>
         </select>
-
-        <label for="gen-instructions">Instruções</label>
-        <textarea
-          id="gen-instructions"
-          rows="3"
-          placeholder="Opcional: foco, nível, tipo de pegadinha…"
-          value={form.instructions ?? ""}
-          onInput={(event) => setForm("instructions", event.currentTarget.value || null)}
-        />
-
-        <span class="label">Fontes</span>
-        <div>
-          <label>
-            <input
-              type="checkbox"
-              checked={form.sources.remnote}
-              disabled={!remnoteOn()}
-              onChange={(event) => setForm("sources", "remnote", event.currentTarget.checked)}
-            />{" "}
-            RemNote
-          </label>
-          <Show when={!remnoteOn()}>
-            <span class="muted"> (ligue em Configurações)</span>
-          </Show>
-          <br />
-          <label>
-            <input
-              type="checkbox"
-              checked={form.sources.web}
-              onChange={(event) => setForm("sources", "web", event.currentTarget.checked)}
-            />{" "}
-            Pesquisar na web
-          </label>
-          <button type="button" onClick={() => void attach()}>
-            Anexar arquivos
-          </button>
-          <Show when={form.sources.attachments.length > 0}>
-            <ul class="attachments" aria-label="Anexos">
-              <For each={form.sources.attachments}>
-                {(path) => (
-                  <li>
-                    {fileName(path)}{" "}
-                    <button
-                      type="button"
-                      class="link-button"
-                      aria-label={`Remover ${fileName(path)}`}
-                      onClick={() =>
-                        setForm(
-                          "sources",
-                          "attachments",
-                          form.sources.attachments.filter((p) => p !== path),
-                        )
-                      }
-                    >
-                      remover
-                    </button>
-                  </li>
-                )}
-              </For>
-            </ul>
-          </Show>
-        </div>
-
-        <span class="label">Gerador</span>
-        <RolePicker
-          label="Gerador"
-          value={form.generator ?? props.settings.roles.generate}
-          onChange={(config) => setForm("generator", config)}
-        />
-        <span class="label">Conferente</span>
-        <RolePicker
-          label="Conferente"
-          value={form.checker ?? props.settings.roles.blindCheck}
-          onChange={(config) => setForm("checker", config)}
-        />
       </div>
+
+      <details class="advanced">
+        <summary>Opções avançadas: estilo da banca, instruções, fontes e modelos</summary>
+        <div class="form-grid">
+          <label for="gen-board">Estilo da banca</label>
+          <input
+            id="gen-board"
+            type="text"
+            list="gen-boards"
+            placeholder="Opcional"
+            value={form.board ?? ""}
+            onInput={(event) => setForm("board", event.currentTarget.value || null)}
+          />
+          <datalist id="gen-boards">
+            <For each={BOARDS}>{(board) => <option value={board} />}</For>
+          </datalist>
+
+          <label for="gen-instructions">Instruções</label>
+          <textarea
+            id="gen-instructions"
+            rows="3"
+            placeholder="Opcional: foco, nível, tipo de pegadinha…"
+            value={form.instructions ?? ""}
+            onInput={(event) => setForm("instructions", event.currentTarget.value || null)}
+          />
+
+          <span class="label">Fontes</span>
+          <div>
+            <label>
+              <input
+                type="checkbox"
+                checked={form.sources.remnote}
+                disabled={!remnoteOn()}
+                onChange={(event) => setForm("sources", "remnote", event.currentTarget.checked)}
+              />{" "}
+              RemNote
+            </label>
+            <Show when={!remnoteOn()}>
+              <span class="muted"> (ligue em Configurações)</span>
+            </Show>
+            <br />
+            <label>
+              <input
+                type="checkbox"
+                checked={form.sources.web}
+                onChange={(event) => setForm("sources", "web", event.currentTarget.checked)}
+              />{" "}
+              Pesquisar na web
+            </label>
+            <button type="button" onClick={() => void attach()}>
+              Anexar arquivos
+            </button>
+            <Show when={form.sources.attachments.length > 0}>
+              <ul class="attachments" aria-label="Anexos">
+                <For each={form.sources.attachments}>
+                  {(path) => (
+                    <li>
+                      {fileName(path)}{" "}
+                      <button
+                        type="button"
+                        class="link-button"
+                        aria-label={`Remover ${fileName(path)}`}
+                        onClick={() =>
+                          setForm(
+                            "sources",
+                            "attachments",
+                            form.sources.attachments.filter((p) => p !== path),
+                          )
+                        }
+                      >
+                        remover
+                      </button>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+          </div>
+
+          <span class="label">Gerador</span>
+          <RolePicker
+            label="Gerador"
+            value={form.generator ?? props.settings.roles.generate}
+            onChange={(config) => setForm("generator", config)}
+          />
+          <span class="label">Conferente</span>
+          <RolePicker
+            label="Conferente"
+            value={form.checker ?? props.settings.roles.blindCheck}
+            onChange={(config) => setForm("checker", config)}
+          />
+        </div>
+      </details>
       <CatalogNotice agents={[generator().agent, checker().agent]} />
       <For each={problems()}>
         {(problem) => (
@@ -291,6 +370,12 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
           </p>
         )}
       </For>
+      <Show when={attempted() && fieldErrors().length > 0}>
+        <p class="field-error" role="alert">
+          <span aria-hidden="true">✕ </span>
+          Falta preencher {fieldErrors().length === 1 ? "um campo" : "dois campos"} para gerar.
+        </p>
+      </Show>
       <button type="submit" class="primary" disabled={submitting() || problems().length > 0}>
         {submitting() ? "Iniciando…" : "Gerar"}
       </button>

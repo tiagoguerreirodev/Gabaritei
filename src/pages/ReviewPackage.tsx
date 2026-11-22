@@ -4,6 +4,7 @@ import { api } from "../api";
 import type { DraftSummary } from "../bindings/DraftSummary";
 import type { ImportMode } from "../bindings/ImportMode";
 import type { LineState } from "../bindings/LineState";
+import Modal from "../components/Modal";
 import RichText from "../components/RichText";
 import { ErrorState, Loading } from "../components/states";
 import { showError, showToast } from "../components/toasts";
@@ -101,6 +102,9 @@ function Package(props: { id: string }) {
 function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
   const navigate = useNavigate();
   const [busy, setBusy] = createSignal(false);
+  const [onlyFlagged, setOnlyFlagged] = createSignal(false);
+  const [expanded, setExpanded] = createSignal<ReadonlySet<number>>(new Set());
+  const [confirmingDiscard, setConfirmingDiscard] = createSignal(false);
   const s = () => props.summary;
   const waiting = () => s().status === "review";
   const checking = () => s().checking;
@@ -176,8 +180,55 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
     });
   };
 
+  const flagged = () => s().lines.filter((line) => line.content !== null);
+  const allExpanded = () => flagged().every((line) => expanded().has(line.position));
+  const setAll = (open: boolean) =>
+    setExpanded(open ? new Set(flagged().map((line) => line.position)) : new Set<number>());
+  const toggleLine = (position: number, open: boolean) =>
+    setExpanded((current) => {
+      if (current.has(position) === open) return current;
+      const next = new Set(current);
+      if (open) next.add(position);
+      else next.delete(position);
+      return next;
+    });
+  const visibleLines = () =>
+    onlyFlagged() ? s().lines.filter((line) => line.content !== null) : s().lines;
+
   return (
     <>
+      <section class="card wide verdict-summary" aria-labelledby="verdict-title">
+        <h2 id="verdict-title">Resumo da conferência</h2>
+        <dl class="verdict-counts">
+          <div class="verdict-ok">
+            <dt>
+              <span aria-hidden="true">✓ </span>Conferidas
+            </dt>
+            <dd>{number(confirmed())}</dd>
+          </div>
+          <div class="verdict-disputed">
+            <dt>
+              <span aria-hidden="true">▲ </span>Contestadas
+            </dt>
+            <dd>{number(s().disputed)}</dd>
+          </div>
+          <div class="verdict-problems">
+            <dt>
+              <span aria-hidden="true">✕ </span>Problemas
+            </dt>
+            <dd>{number(s().problems.length)}</dd>
+          </div>
+          <Show when={s().unchecked > 0}>
+            <div>
+              <dt>
+                <span aria-hidden="true">○ </span>Sem conferência
+              </dt>
+              <dd>{number(s().unchecked)}</dd>
+            </div>
+          </Show>
+        </dl>
+      </section>
+
       <section class="card wide" aria-labelledby="package-title">
         <h2 id="package-title">
           {s().topic.area} › {s().topic.matter} › {s().topic.topic}
@@ -222,8 +273,23 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
           {s().disputed > 0 ? `, ${number(s().disputed)} contestadas` : ""}
           {s().unchecked > 0 ? `, ${number(s().unchecked)} sem conferência` : ""}.
         </p>
+        <Show when={flagged().length > 0}>
+          <div class="curate-toolbar">
+            <label>
+              <input
+                type="checkbox"
+                checked={onlyFlagged()}
+                onChange={(event) => setOnlyFlagged(event.currentTarget.checked)}
+              />{" "}
+              Mostrar só as sinaladas ({number(flagged().length)})
+            </label>
+            <button type="button" onClick={() => setAll(!allExpanded())}>
+              {allExpanded() ? "Recolher todas" : "Expandir todas"}
+            </button>
+          </div>
+        </Show>
         <ul class="question-lines" aria-label="Questões do pacote">
-          <For each={s().lines}>
+          <For each={visibleLines()}>
             {(line) => (
               <li class={`line-${line.state}`}>
                 <Show
@@ -235,7 +301,10 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
                   }
                 >
                   {(content) => (
-                    <details>
+                    <details
+                      open={expanded().has(line.position)}
+                      onToggle={(event) => toggleLine(line.position, event.currentTarget.open)}
+                    >
                       <summary>
                         Q{line.position} · {lineText[line.state]}
                         {line.hasProblem ? " · com problema" : ""}
@@ -313,10 +382,43 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
               Conferir de novo
             </button>
           </Show>
-          <button type="button" disabled={busy() || checking()} onClick={() => void discard()}>
+          <button
+            type="button"
+            disabled={busy() || checking()}
+            onClick={() => setConfirmingDiscard(true)}
+          >
             Descartar
           </button>
         </div>
+        <Show when={confirmingDiscard()}>
+          <Modal
+            title="Descartar o pacote?"
+            onClose={() => setConfirmingDiscard(false)}
+            footer={
+              <>
+                <button type="button" onClick={() => setConfirmingDiscard(false)}>
+                  Voltar
+                </button>
+                <button
+                  type="button"
+                  class="primary danger"
+                  disabled={busy()}
+                  onClick={() => {
+                    setConfirmingDiscard(false);
+                    void discard();
+                  }}
+                >
+                  Descartar pacote
+                </button>
+              </>
+            }
+          >
+            <p>
+              As {number(s().count)} questões deste pacote serão apagadas e nada entra no banco.
+              Para aproveitar parte delas, use “Importar só as confirmadas”.
+            </p>
+          </Modal>
+        </Show>
         <Show when={s().problems.length > 0}>
           <p class="muted">
             “Importar tudo” fica bloqueado enquanto houver problemas. As questões sem problemas e

@@ -127,7 +127,11 @@ describe("Revisar pacote", () => {
     for (const secret of ["Gabarito", "Explicação", "Referências", "answerId"]) {
       expect(text).not.toContain(secret);
     }
-    expect(document.querySelector("textarea, [role=radio], [role=radiogroup], input")).toBeNull();
+    expect(
+      document.querySelector(
+        "textarea, [role=radio], [role=radiogroup], input:not([type=checkbox])",
+      ),
+    ).toBeNull();
   });
 
   it("explains why an agreed line expands and uses C/E for Certo/Errado", async () => {
@@ -201,11 +205,107 @@ describe("Revisar pacote", () => {
     );
   });
 
+  it("puts the verdict counts at the top", async () => {
+    backend({ ...summary, problems: [{ position: 2, message: "Algo errado." }] });
+    renderAt("/revisar-pacote?id=d1");
+    const region = within(await screen.findByRole("region", { name: "Resumo da conferência" }));
+    expect(region.getByText("Conferidas").closest("div")).toHaveTextContent("3");
+    expect(region.getByText("Contestadas").closest("div")).toHaveTextContent("1");
+    expect(region.getByText("Problemas").closest("div")).toHaveTextContent("1");
+    // It comes before the package details.
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(headings[0]).toBe("Resumo da conferência");
+  });
+
+  describe("curating flagged questions", () => {
+    const flaggedLine = (position: number, stem: string) => ({
+      position,
+      state: "disputed" as const,
+      hasProblem: false,
+      content: {
+        type: "multiple" as const,
+        stem,
+        options: [
+          { id: "a", text: `Opção A de ${stem}` },
+          { id: "b", text: `Opção B de ${stem}` },
+        ],
+      },
+    });
+    const two: DraftSummary = {
+      ...summary,
+      disputed: 2,
+      lines: [
+        { position: 1, state: "agreed", hasProblem: false, content: null },
+        flaggedLine(2, "Primeiro enunciado"),
+        { position: 3, state: "agreed", hasProblem: false, content: null },
+        flaggedLine(4, "Segundo enunciado"),
+      ],
+    };
+
+    it("filters to the flagged lines only", async () => {
+      backend(two);
+      const user = userEvent.setup();
+      renderAt("/revisar-pacote?id=d1");
+      const lines = within(await screen.findByRole("list", { name: "Questões do pacote" }));
+      expect(lines.getAllByRole("listitem", { hidden: true }).length).toBeGreaterThanOrEqual(4);
+      expect(lines.getByText("Q1 · conferida")).toBeVisible();
+
+      await user.click(screen.getByRole("checkbox", { name: /Mostrar só as sinaladas \(2\)/ }));
+      expect(lines.queryByText("Q1 · conferida")).not.toBeInTheDocument();
+      expect(lines.getByText("Q2 · contestada")).toBeVisible();
+      expect(lines.getByText("Q4 · contestada")).toBeVisible();
+
+      await user.click(screen.getByRole("checkbox", { name: /Mostrar só as sinaladas/ }));
+      expect(lines.getByText("Q1 · conferida")).toBeVisible();
+    });
+
+    it("expands and collapses every flagged line, never showing key or explanation", async () => {
+      backend(two);
+      const user = userEvent.setup();
+      renderAt("/revisar-pacote?id=d1");
+      await screen.findByText("Q2 · contestada");
+      const open = () => document.querySelectorAll("details[open]").length;
+      expect(open()).toBe(0);
+
+      await user.click(screen.getByRole("button", { name: "Expandir todas" }));
+      expect(open()).toBe(2);
+      expect(screen.getByText("Opção A de Segundo enunciado")).toBeVisible();
+      for (const secret of ["Gabarito", "Explicação", "Referências", "answerId"]) {
+        expect(document.body.textContent ?? "").not.toContain(secret);
+      }
+
+      await user.click(screen.getByRole("button", { name: "Recolher todas" }));
+      expect(open()).toBe(0);
+    });
+
+    it("hides the toolbar when nothing is flagged", async () => {
+      backend({ ...summary, lines: summary.lines.map((line) => ({ ...line, content: null })) });
+      renderAt("/revisar-pacote?id=d1");
+      await screen.findByText("Q2 · contestada");
+      expect(screen.queryByRole("button", { name: "Expandir todas" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    });
+  });
+
+  it("asks before discarding, and keeps the package when the user goes back", async () => {
+    const calls = backend();
+    const user = userEvent.setup();
+    renderAt("/revisar-pacote?id=d1");
+    await user.click(await screen.findByRole("button", { name: "Descartar" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Descartar o pacote?" }));
+    await user.click(dialog.getByRole("button", { name: "Voltar" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.some((c) => c.command === "draft_discard")).toBe(false);
+  });
+
   it("discards the package", async () => {
     const calls = backend();
     const user = userEvent.setup();
     renderAt("/revisar-pacote?id=d1");
     await user.click(await screen.findByRole("button", { name: "Descartar" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Descartar o pacote?" }));
+    expect(calls.some((c) => c.command === "draft_discard")).toBe(false);
+    await user.click(dialog.getByRole("button", { name: "Descartar pacote" }));
     await screen.findByRole("heading", { name: "Gerar" });
     expect(calls.some((c) => c.command === "draft_discard")).toBe(true);
     const commands = calls.map((c) => c.command);

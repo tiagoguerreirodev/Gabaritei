@@ -1226,3 +1226,13 @@ button {
   justify-content: flex-end;
   margin-top: 0.75rem;
 }
+
+.menu-count {
+  margin-left: 0.5rem;
+  padding: 0 0.45rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 0.8rem;
+  font-weight: 600;
+}

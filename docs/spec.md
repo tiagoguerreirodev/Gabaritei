@@ -83,6 +83,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 **Preview (*Revisar pacote*)**
 - Shows the topic, count, format mix, validation problems and agreed/disputed counts. Each question appears as "Q3 · disputed" with no content.
 - Actions: **Import**, **Discard**.
+- A draft stays until it is imported or discarded. While any draft waits, a banner on every page links to the review, and *Revisar pacote* appears in the sidebar with the number of drafts waiting. Opening the review or leaving the page does not remove either.
 
 ### 3.3 Solving (*Resolver*)
 - **Start a session from** a collection; a topic with N questions (unseen first, then least recently answered); or errors and due reviews (`O-F1`–`O-F3`).

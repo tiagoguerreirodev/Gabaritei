@@ -47,7 +47,7 @@ describe("App shell", () => {
     const user = userEvent.setup();
     render(() => <App />);
 
-    for (const route of routes.filter((r) => r.menu !== "none")) {
+    for (const route of routes.filter((r) => r.menu === "main" || r.menu === "footer")) {
       await user.click(screen.getByRole("link", { name: route.label }));
       expect(await screen.findByRole("heading", { level: 1, name: route.label })).toBeVisible();
       expect(screen.getByRole("link", { name: route.label })).toHaveClass("active");

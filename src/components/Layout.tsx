@@ -2,14 +2,25 @@ import { A } from "@solidjs/router";
 import { For, Show, createResource, onMount, type ParentProps } from "solid-js";
 import { api } from "../api";
 import { routes, type AppRoute } from "../routes";
-import { watchGeneration } from "../generation";
+import { waitingDrafts, watchGeneration } from "../generation";
 import GenerationBanner from "./GenerationBanner";
 import { Toaster } from "./toasts";
 
-function MenuLink(props: { route: AppRoute }) {
+function MenuLink(props: { route: AppRoute; count?: number }) {
   return (
-    <A href={props.route.path} end activeClass="active" class="menu-link">
+    <A
+      href={props.route.path}
+      end
+      activeClass="active"
+      class="menu-link"
+      aria-label={props.count ? `${props.route.label}, ${props.count} esperando` : undefined}
+    >
       {props.route.label}
+      <Show when={props.count}>
+        <span class="menu-count" aria-hidden="true">
+          {props.count}
+        </span>
+      </Show>
     </A>
   );
 }
@@ -25,6 +36,13 @@ export default function Layout(props: ParentProps) {
         <nav aria-label="Menu principal">
           <For each={routes.filter((route) => route.menu === "main")}>
             {(route) => <MenuLink route={route} />}
+          </For>
+          <For each={routes.filter((route) => route.menu === "waiting")}>
+            {(route) => (
+              <Show when={waitingDrafts().length > 0}>
+                <MenuLink route={route} count={waitingDrafts().length} />
+              </Show>
+            )}
           </For>
         </nav>
         <div class="sidebar-footer">

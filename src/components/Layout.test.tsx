@@ -2,20 +2,20 @@ import { HashRouter } from "@solidjs/router";
 import { render, screen, waitFor } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetGenerationWatch } from "../generation";
 import { routeDefinitions, routes } from "../routes";
 import Layout from "./Layout";
 
 const idle = { running: false, startedAt: null, progress: null, outcome: null };
 
-function backend() {
+function backend(waiting: unknown[] = []) {
   mockIPC((command) => {
     switch (command) {
       case "generation_status":
         return idle;
       case "drafts_waiting":
-        return [];
+        return waiting;
       case "app_info":
         return { name: "Gabaritei", version: "0.2.0" };
       default:
@@ -37,7 +37,59 @@ beforeEach(() => {
   backend();
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+const draft = (id: string) => ({
+  id,
+  topic: { area: "A", matter: "M", topic: "T" },
+  count: 3,
+  createdAt: "2026-01-01T00:00:00Z",
+  disputed: 0,
+  checking: false,
+});
+
 describe("Sidebar", () => {
+  it("keeps focus on the toggle, and its title follows the state", async () => {
+    const user = userEvent.setup();
+    renderAt("/");
+    const toggle = screen.getByRole("button", { name: "Menu lateral" });
+    expect(toggle).toHaveAttribute("title", "Recolher menu");
+    await user.click(toggle);
+    expect(toggle).toHaveFocus();
+    expect(toggle).toHaveAttribute("title", "Expandir menu");
+    await user.click(toggle);
+    expect(toggle).toHaveFocus();
+    expect(toggle).toHaveAttribute("title", "Recolher menu");
+  });
+
+  it("renders expanded and still toggles when storage throws", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const user = userEvent.setup();
+    renderAt("/");
+    const toggle = screen.getByRole("button", { name: "Menu lateral" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(document.querySelector(".shell")).toHaveClass("sidebar-collapsed");
+  });
+
+  it("names the review link with its count, expanded and collapsed", async () => {
+    backend([draft("a"), draft("b")]);
+    const user = userEvent.setup();
+    renderAt("/");
+    const link = await screen.findByRole("link", { name: "Revisar pacote, 2 esperando" });
+    expect(link).toHaveAttribute("title", "Revisar pacote, 2 esperando");
+    await user.click(screen.getByRole("button", { name: "Menu lateral" }));
+    expect(screen.getByRole("link", { name: "Revisar pacote, 2 esperando" })).toBeInTheDocument();
+  });
+
   it("is a toggle with aria-expanded and aria-controls that remembers the choice", async () => {
     const user = userEvent.setup();
     renderAt("/");

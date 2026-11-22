@@ -24,59 +24,61 @@ export default function RolesSection(props: {
           Atualizar listas
         </button>
       </p>
-      <table class="roles-table">
-        <thead>
-          <tr>
-            <th scope="col">Função</th>
-            <th scope="col">Agente</th>
-            <th scope="col">Modelo</th>
-            <th scope="col">Esforço</th>
-          </tr>
-        </thead>
-        <tbody>
-          <For each={roleOrder}>
-            {({ role, key }) => {
-              const config = () => props.roles[key];
-              const name = roleLabels[role].name;
-              const change = (next: RoleConfig) => props.onChange(key, next);
-              return (
-                <tr>
-                  <th scope="row">
-                    {name}
-                    <span class="muted role-hint">{roleLabels[role].hint}</span>
-                  </th>
-                  <td>
-                    <select
-                      aria-label={`Agente: ${name}`}
-                      value={config().agent}
-                      onChange={(event) =>
-                        change(
-                          roleForAgent(
-                            catalogState(),
-                            event.currentTarget.value as Agent,
-                            config(),
-                          ),
-                        )
-                      }
-                    >
-                      <For each={agents}>
-                        {(agent) => <option value={agent}>{agentLabels[agent]}</option>}
-                      </For>
-                    </select>
-                  </td>
-                  <td>
-                    <ModelField label={name} value={config()} onChange={change} />
-                  </td>
-                  <td>
-                    <EffortField label={name} value={config()} onChange={change} />
-                    <FastField label={name} value={config()} onChange={change} />
-                  </td>
-                </tr>
-              );
-            }}
-          </For>
-        </tbody>
-      </table>
+      <div class="table-scroll">
+        <table class="roles-table">
+          <thead>
+            <tr>
+              <th scope="col">Função</th>
+              <th scope="col">Agente</th>
+              <th scope="col">Modelo</th>
+              <th scope="col">Esforço</th>
+            </tr>
+          </thead>
+          <tbody>
+            <For each={roleOrder}>
+              {({ role, key }) => {
+                const config = () => props.roles[key];
+                const name = roleLabels[role].name;
+                const change = (next: RoleConfig) => props.onChange(key, next);
+                return (
+                  <tr>
+                    <th scope="row">
+                      {name}
+                      <span class="muted role-hint">{roleLabels[role].hint}</span>
+                    </th>
+                    <td>
+                      <select
+                        aria-label={`Agente: ${name}`}
+                        value={config().agent}
+                        onChange={(event) =>
+                          change(
+                            roleForAgent(
+                              catalogState(),
+                              event.currentTarget.value as Agent,
+                              config(),
+                            ),
+                          )
+                        }
+                      >
+                        <For each={agents}>
+                          {(agent) => <option value={agent}>{agentLabels[agent]}</option>}
+                        </For>
+                      </select>
+                    </td>
+                    <td>
+                      <ModelField label={name} value={config()} onChange={change} />
+                    </td>
+                    <td>
+                      <EffortField label={name} value={config()} onChange={change} />
+                      <FastField label={name} value={config()} onChange={change} />
+                    </td>
+                  </tr>
+                );
+              }}
+            </For>
+          </tbody>
+        </table>
+      </div>
       <CatalogNotice agents={[...new Set(roleOrder.map(({ key }) => props.roles[key].agent))]} />
       <For each={roleOrder}>
         {({ role, key }) => (

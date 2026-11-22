@@ -1,6 +1,6 @@
 .shell {
   display: grid;
-  grid-template-columns: var(--sidebar-width) 1fr;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -37,12 +37,7 @@
   background: var(--bg);
 }
 
-.menu-link.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-}
-
+.menu-link.active,
 .sidebar-footer {
   margin-top: auto;
   display: flex;
@@ -218,7 +213,7 @@ button {
 }
 
 .menu-count {
-  margin-left: var(--space-2);
+  margin-left: auto;
   padding: 0 0.45rem;
   border-radius: var(--radius-pill);
   background: var(--accent);
@@ -228,10 +223,6 @@ button {
 }
 
 /* ---- Sidebar: icons + labels, collapsible ---- */
-
-.shell {
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-}
 
 .content {
   min-width: 0;
@@ -279,17 +270,12 @@ button {
   flex: none;
 }
 
-.menu-link[aria-current="page"] {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
+.table-scroll {
+  overflow-x: auto;
 }
 
-.menu-count {
-  margin-left: auto;
-}
-
-/* Collapsed to icons: the label stays in the accessibility tree (clipped, not removed). */
+/* Icon-only: collapsed by choice, and always on narrow windows. The label stays in the
+   accessibility tree (clipped, not removed) and shows as a tooltip on hover or keyboard focus. */
 .sidebar-collapsed {
   --sidebar-width: 4.25rem;
 }
@@ -320,10 +306,34 @@ button {
 
 .sidebar-collapsed .menu-count {
   position: absolute;
-  top: 0;
-  right: 0;
+  top: -0.25rem;
+  right: -0.25rem;
   margin: 0;
   padding: 0 0.3rem;
+  border: 1px solid transparent;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* The sidebar does not clip (overflow stays visible), so the tooltip can reach into the page. */
+.sidebar-collapsed .menu-link:hover .menu-label,
+.sidebar-collapsed .menu-link:focus-visible .menu-label {
+  top: 50%;
+  left: calc(100% + var(--space-2));
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
+  transform: translateY(-50%);
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-toast);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  z-index: 30;
+  pointer-events: none;
 }
 
 /* Narrow windows (down to about 640px): always icons only; the toggle has nothing to do. */
@@ -332,23 +342,23 @@ button {
     --sidebar-width: 4.25rem;
   }
 
-  .brand {
+  .shell .brand {
     flex-direction: column;
     padding: 0;
   }
 
-  .brand-name,
-  .version,
-  .sidebar-toggle {
+  .shell .brand-name,
+  .shell .version,
+  .shell .sidebar-toggle {
     display: none;
   }
 
-  .menu-link {
+  .shell .menu-link {
     justify-content: center;
     padding-inline: var(--space-2);
   }
 
-  .menu-label {
+  .shell .menu-label {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -357,12 +367,35 @@ button {
     white-space: nowrap;
   }
 
-  .menu-count {
+  .shell .menu-count {
     position: absolute;
-    top: 0;
-    right: 0;
+    top: -0.25rem;
+    right: -0.25rem;
     margin: 0;
     padding: 0 0.3rem;
+    border: 1px solid transparent;
+    box-shadow: 0 0 0 2px var(--surface);
+  }
+
+  .shell .menu-link:hover .menu-label,
+  .shell .menu-link:focus-visible .menu-label {
+    top: 50%;
+    left: calc(100% + var(--space-2));
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    transform: translateY(-50%);
+    padding: var(--space-1) var(--space-2);
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-toast);
+    font-size: var(--text-sm);
+    font-weight: 400;
+    z-index: 30;
+    pointer-events: none;
   }
 
   .content {

@@ -63,9 +63,9 @@ export const LearningIcon = () => (
 );
 export const SettingsIcon = () => (
   <Icon>
-    <path d="M5 7h14M5 17h14" />
-    <circle cx="9" cy="7" r="2" fill="var(--surface)" />
-    <circle cx="15" cy="17" r="2" fill="var(--surface)" />
+    <path d="M5 7h2M11 7h8M5 17h8M17 17h2" />
+    <circle cx="9" cy="7" r="2" fill="none" />
+    <circle cx="15" cy="17" r="2" fill="none" />
   </Icon>
 );
 export const SidebarIcon = () => (

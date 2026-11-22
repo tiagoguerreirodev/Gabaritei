@@ -35,14 +35,16 @@ function writeCollapsed(value: boolean) {
 }
 
 function MenuLink(props: { route: AppRoute; count?: number }) {
+  const name = () =>
+    props.count ? `${props.route.label}, ${props.count} esperando` : props.route.label;
   return (
     <A
       href={props.route.path}
       end
       activeClass="active"
       class="menu-link"
-      title={props.route.label}
-      aria-label={props.count ? `${props.route.label}, ${props.count} esperando` : undefined}
+      title={name()}
+      aria-label={props.count ? name() : undefined}
     >
       {menuIcons[props.route.path]?.()}
       <span class="menu-label">{props.route.label}</span>
@@ -88,6 +90,7 @@ export default function Layout(props: ParentProps) {
           <button
             type="button"
             class="sidebar-toggle"
+            title={collapsed() ? "Expandir menu" : "Recolher menu"}
             aria-expanded={!collapsed()}
             aria-controls="sidebar-menu"
             onClick={toggle}

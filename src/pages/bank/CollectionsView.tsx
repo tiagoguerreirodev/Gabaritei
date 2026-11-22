@@ -83,7 +83,9 @@ export default function CollectionsView() {
 
       <Switch>
         <Match when={result.error as unknown}>
-          {(error) => <ErrorState error={error()} onRetry={() => void refetch()} />}
+          {(error) => (
+            <ErrorState error={error()} onRetry={() => refetch()} busy={result.loading} />
+          )}
         </Match>
         <Match when={!current()}>
           <Loading variant="skeleton" label="Carregando cadernos…" />

@@ -68,7 +68,9 @@ export default function CollectionDetailModal(props: {
       >
         <Switch>
           <Match when={detail.error as unknown}>
-            {(error) => <ErrorState error={error()} onRetry={() => void refetch()} />}
+            {(error) => (
+              <ErrorState error={error()} onRetry={() => refetch()} busy={detail.loading} />
+            )}
           </Match>
           <Match when={detail.loading}>
             <Loading />

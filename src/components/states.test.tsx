@@ -1,5 +1,6 @@
 import { render, screen } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
+import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import MasteryBar from "./MasteryBar";
 import { EmptyState, ErrorState, Loading } from "./states";
@@ -14,7 +15,7 @@ describe("Loading", () => {
     const { container } = render(() => <Loading variant="skeleton" label="Calculando…" />);
     const status = screen.getByRole("status");
     expect(status).toHaveTextContent("Calculando…");
-    expect(status).toHaveAttribute("aria-busy", "true");
+    expect(status).not.toHaveAttribute("aria-busy");
     expect(container.querySelectorAll(".skeleton-line[aria-hidden='true']")).toHaveLength(3);
   });
 });
@@ -54,6 +55,20 @@ describe("ErrorState", () => {
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
+  it("disables the button while busy and announces each new error again", async () => {
+    const [error, setError] = createSignal<unknown>(new Error("Falhou."));
+    const [busy, setBusy] = createSignal(false);
+    render(() => <ErrorState error={error()} onRetry={() => undefined} busy={busy()} />);
+    const first = screen.getByRole("alert");
+    setBusy(true);
+    expect(screen.getByRole("button", { name: "Tentando…" })).toBeDisabled();
+    setBusy(false);
+    expect(screen.getByRole("alert")).toBe(first);
+    setError(new Error("Falhou."));
+    expect(screen.getByRole("alert")).not.toBe(first);
+    expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeEnabled();
+  });
+
   it("has no retry button without a callback", () => {
     render(() => <ErrorState error="Erro." />);
     expect(screen.queryByRole("button")).toBeNull();
@@ -69,6 +84,12 @@ describe("MasteryBar", () => {
     expect(meter).toHaveAttribute("aria-valuemax", "100");
     expect(meter).toHaveAttribute("aria-valuetext", "70% de aproveitamento");
     expect(screen.getByText("70%")).toBeVisible();
+  });
+
+  it("hides the visible name and number from assistive tech, the meter carries both", () => {
+    render(() => <MasteryBar name="Direito" achievement={0.7} />);
+    expect(screen.getByText("Direito")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText("70%")).toHaveAttribute("aria-hidden", "true");
   });
 
   it("says so when nothing was evaluated", () => {

@@ -113,4 +113,13 @@ input[type="radio"] {
     box-shadow: none;
     border-bottom: 4px solid Highlight;
   }
+
+  .mastery-fill {
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+
+  .skeleton-line {
+    border: 1px solid CanvasText;
+  }
 }

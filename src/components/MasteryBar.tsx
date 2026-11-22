@@ -11,7 +11,9 @@ export default function MasteryBar(props: { name: string; achievement: number | 
     props.achievement === null ? 0 : Math.round(Math.min(1, Math.max(0, props.achievement)) * 100);
   return (
     <div class="mastery">
-      <span class="mastery-name">{props.name}</span>
+      <span class="mastery-name" aria-hidden="true">
+        {props.name}
+      </span>
       <div
         class="mastery-track"
         role="meter"
@@ -25,15 +27,11 @@ export default function MasteryBar(props: { name: string; achievement: number | 
             : `${formatPercent(props.achievement)} de aproveitamento`
         }
       >
-        <span
-          class="mastery-fill"
-          style={{
-            width: `${percent()}%`,
-            "border-right-width": percent() === 0 ? "0" : undefined,
-          }}
-        />
+        <span class="mastery-fill" style={{ width: `${percent()}%` }} />
       </div>
-      <strong class="mastery-value">{formatPercent(props.achievement)}</strong>
+      <strong class="mastery-value" aria-hidden="true">
+        {formatPercent(props.achievement)}
+      </strong>
     </div>
   );
 }

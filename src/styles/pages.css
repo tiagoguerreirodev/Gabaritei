@@ -280,7 +280,6 @@
   display: block;
   height: 100%;
   background: var(--accent);
-  border-right: 2px solid var(--text);
   transition: width var(--dur-base) var(--ease);
 }
 
@@ -289,7 +288,11 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Narrow windows and the largest text size: name above, bar and number below. */
+/*
+ * Stacked layout (name above, bar and number below) for narrow viewports and for the largest text
+ * size. A media-query rem is the browser's default 16px, not the app's text size, so the xl rules
+ * below apply at any width; the media query only matters if the minimum window width is lowered.
+ */
 @media (max-width: 40rem) {
   .mastery {
     grid-template-columns: 1fr 4rem;
@@ -310,6 +313,26 @@
     grid-column: 1;
     justify-self: start;
   }
+}
+
+:root[data-text-size="xl"] .mastery {
+  grid-template-columns: 1fr 4rem;
+}
+
+:root[data-text-size="xl"] .mastery-name {
+  grid-column: 1 / -1;
+}
+
+:root[data-text-size="xl"] .attempt-list li,
+:root[data-text-size="xl"] .learning-list li {
+  grid-template-columns: 1fr;
+}
+
+:root[data-text-size="xl"] .attempt-list .primary,
+:root[data-text-size="xl"] .learning-list button {
+  grid-row: auto;
+  grid-column: 1;
+  justify-self: start;
 }
 
 .waiting-list li {

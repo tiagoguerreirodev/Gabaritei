@@ -26,7 +26,9 @@ export default function Home() {
 
       <Switch>
         <Match when={home.error as unknown}>
-          {(error) => <ErrorState error={error()} onRetry={() => void refetchHome()} />}
+          {(error) => (
+            <ErrorState error={error()} onRetry={() => refetchHome()} busy={home.loading} />
+          )}
         </Match>
         <Match when={home()}>
           {(summary) => (

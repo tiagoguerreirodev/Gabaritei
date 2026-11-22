@@ -1,5 +1,5 @@
 import { HashRouter, Route } from "@solidjs/router";
-import { render, screen, within } from "@solidjs/testing-library";
+import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { describe, expect, it } from "vitest";
@@ -150,5 +150,42 @@ describe("Início", () => {
       </HashRouter>
     ));
     expect(await screen.findByRole("alert")).toHaveTextContent("Falha ao ler o banco.");
+  });
+
+  it("retries a failed load: busy button, then data, no error and focus on the heading", async () => {
+    let fail = true;
+    let release: (() => void) | undefined;
+    mockIPC((command) => {
+      if (command === "legacy_import_status") return { report: null, bankEmpty: false };
+      if (command === "home") {
+        if (fail) {
+          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+          return Promise.reject({ message: "Falhou." });
+        }
+        return new Promise((resolve) => {
+          release = () => resolve(summary);
+        });
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const user = userEvent.setup();
+    render(() => (
+      <HashRouter>
+        <Route path="/" component={Home} />
+      </HashRouter>
+    ));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Falhou.");
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    expect(await screen.findByRole("button", { name: "Tentando…" })).toBeDisabled();
+    await waitFor(() => expect(release).toBeDefined());
+    release?.();
+
+    expect(await screen.findByText("9.368 questões no banco.")).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 1, name: "Início" })).toHaveFocus(),
+    );
   });
 });

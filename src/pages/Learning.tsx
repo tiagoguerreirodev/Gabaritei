@@ -44,7 +44,9 @@ export default function Learning() {
 
       <Switch>
         <Match when={overview.error as unknown}>
-          {(error) => <ErrorState error={error()} onRetry={() => void refetch()} />}
+          {(error) => (
+            <ErrorState error={error()} onRetry={() => refetch()} busy={overview.loading} />
+          )}
         </Match>
         <Match when={overview()}>
           {(data) => (

@@ -99,7 +99,9 @@ export default function Performance() {
       </Show>
       <Switch>
         <Match when={result.error as unknown}>
-          {(error) => <ErrorState error={error()} onRetry={() => void refetch()} />}
+          {(error) => (
+            <ErrorState error={error()} onRetry={() => refetch()} busy={result.loading} />
+          )}
         </Match>
         <Match when={current()}>
           {(data) => (

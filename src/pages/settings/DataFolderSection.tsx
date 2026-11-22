@@ -15,7 +15,14 @@ export default function DataFolderSection() {
       </p>
       <Show
         when={!folder.error}
-        fallback={<ErrorState error={folder.error as unknown} onRetry={() => void refetch()} />}
+        fallback={
+          <ErrorState
+            error={folder.error as unknown}
+            onRetry={() => refetch()}
+            busy={folder.loading}
+            describedBy="data-folder-title"
+          />
+        }
       >
         <Show when={folder()} fallback={<Loading />}>
           {(path) => (

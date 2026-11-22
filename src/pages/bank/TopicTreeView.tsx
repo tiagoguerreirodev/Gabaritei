@@ -25,7 +25,7 @@ export default function TopicTreeView() {
       </Show>
       <Switch>
         <Match when={tree.error as unknown}>
-          {(error) => <ErrorState error={error()} onRetry={() => void refetch()} />}
+          {(error) => <ErrorState error={error()} onRetry={() => refetch()} busy={tree.loading} />}
         </Match>
         <Match when={tree.loading}>
           <Loading variant="skeleton" label="Carregando assuntos…" />

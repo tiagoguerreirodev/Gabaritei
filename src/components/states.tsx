@@ -1,4 +1,4 @@
-import { For, Show, type JSX } from "solid-js";
+import { For, Show, createMemo, type JSX } from "solid-js";
 
 /**
  * Shown while data loads. `variant="skeleton"` draws grey placeholder lines (they hold still when
@@ -15,7 +15,7 @@ export function Loading(props: { label?: string; variant?: "text" | "skeleton"; 
         </p>
       }
     >
-      <div class="state skeleton" role="status" aria-busy="true">
+      <div class="state skeleton" role="status">
         <span class="sr-only">{label()}</span>
         <For each={Array.from({ length: props.lines ?? 3 })}>
           {(_, index) => (
@@ -47,17 +47,59 @@ export function errorMessage(error: unknown) {
   return "Ocorreu um erro inesperado. Tente novamente.";
 }
 
-/** Shown when loading failed. With `onRetry`, offers a "Tentar novamente" button. */
-export function ErrorState(props: { error: unknown; onRetry?: () => void }) {
+/** Moves focus to the first heading of `root`, so focus does not fall to the body when a retry button disappears. */
+function focusHeading(start: Element | null) {
+  const selector = "[role='dialog'], section, main";
+  let heading: HTMLElement | null = null;
+  for (let root = start; root && !heading; root = root.parentElement?.closest(selector) ?? null) {
+    heading = root.querySelector<HTMLElement>("h1, h2, h3");
+  }
+  if (!heading) return;
+  heading.tabIndex = -1;
+  heading.focus();
+}
+
+/**
+ * Shown when loading failed. With `onRetry`, offers a "Tentar novamente" button. `busy` (wire it to
+ * the resource's `loading`) disables the button while the new request runs: Solid keeps `error`
+ * set until then. The alert is mounted again for every new error, so a repeated identical failure
+ * is announced again. When a retry succeeds, this component goes away; focus then moves to the
+ * heading of the surrounding page, section or dialog. `describedBy` names an element that tells
+ * the button apart from other retry buttons on the page.
+ */
+export function ErrorState(props: {
+  error: unknown;
+  onRetry?: () => unknown;
+  busy?: boolean;
+  describedBy?: string;
+}) {
+  let root: HTMLDivElement | undefined;
+  // A new box per error value: keying on it mounts the alert node again.
+  const box = createMemo(() => ({ error: props.error }));
+  const retry = async (run: () => unknown) => {
+    const container = root?.closest("[role='dialog'], section, main") ?? null;
+    await run();
+    if (root && !root.isConnected) focusHeading(container);
+  };
   return (
-    <div class="state error-state">
-      <p class="error" role="alert">
-        {errorMessage(props.error)}
-      </p>
+    <div class="state error-state" ref={root}>
+      <Show when={box()} keyed>
+        {(current) => (
+          <p class="error" role="alert">
+            {errorMessage(current.error)}
+          </p>
+        )}
+      </Show>
       <Show when={props.onRetry}>
-        {(retry) => (
-          <button type="button" class="secondary" onClick={() => retry()()}>
-            Tentar novamente
+        {(run) => (
+          <button
+            type="button"
+            class="secondary"
+            disabled={props.busy}
+            aria-describedby={props.describedBy}
+            onClick={() => void retry(run())}
+          >
+            {props.busy ? "Tentando…" : "Tentar novamente"}
           </button>
         )}
       </Show>

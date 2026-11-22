@@ -15,17 +15,18 @@ export interface AppRoute {
   label: string;
   component: Component;
   /**
-   * Where the page appears in the sidebar. Contextual pages (opened from another screen,
-   * like the package review after a generation) have no menu entry.
+   * Where the page appears in the sidebar. Contextual pages (opened from another screen) have
+   * no menu entry. `waiting` pages show in the main menu, with a count, only while something
+   * waits for the user (the package review, once a generation has produced a draft).
    */
-  menu: "main" | "footer" | "none";
+  menu: "main" | "footer" | "waiting" | "none";
 }
 
 export const routes: AppRoute[] = [
   { path: "/", label: "Início", component: Home, menu: "main" },
   { path: "/banco", label: "Banco", component: Bank, menu: "main" },
   { path: "/gerar", label: "Gerar", component: Generate, menu: "main" },
-  { path: "/revisar-pacote", label: "Revisar pacote", component: ReviewPackage, menu: "none" },
+  { path: "/revisar-pacote", label: "Revisar pacote", component: ReviewPackage, menu: "waiting" },
   { path: "/resolver", label: "Resolver", component: Solve, menu: "none" },
   { path: "/desempenho", label: "Desempenho", component: Performance, menu: "main" },
   { path: "/erros-e-revisoes", label: "Erros e revisões", component: Learning, menu: "main" },

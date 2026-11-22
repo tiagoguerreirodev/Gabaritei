@@ -139,6 +139,9 @@ describe("Revisar pacote", () => {
       mode: "all",
     });
     expect(await screen.findByText(/3 questões importadas para “Coleção nova”/)).toBeVisible();
+    // The banner and the sidebar count are read again once the draft is gone.
+    const commands = calls.map((c) => c.command);
+    expect(commands.slice(commands.indexOf("draft_import"))).toContain("drafts_waiting");
   });
 
   it("imports only the confirmed questions", async () => {
@@ -161,6 +164,8 @@ describe("Revisar pacote", () => {
     await user.click(await screen.findByRole("button", { name: "Descartar" }));
     await screen.findByRole("heading", { name: "Gerar" });
     expect(calls.some((c) => c.command === "draft_discard")).toBe(true);
+    const commands = calls.map((c) => c.command);
+    expect(commands.slice(commands.indexOf("draft_discard"))).toContain("drafts_waiting");
   });
 
   it("says when the blind check failed and offers to run it again", async () => {

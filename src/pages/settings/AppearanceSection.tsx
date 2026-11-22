@@ -19,29 +19,31 @@ const TEXT_SIZES: { value: Appearance["textSize"]; label: string }[] = [
 /** Aparência: colour theme and text size. Each choice applies and saves at once. */
 export default function AppearanceSection() {
   const [saving, setSaving] = createSignal(false);
-  // Bumped after a failed save so the radios snap back to the choice that is still in effect.
-  const [failures, setFailures] = createSignal(0);
+  // The user's latest intended choice, until it is saved (or fails with nothing newer queued).
+  const [desired, setDesired] = createSignal<Appearance | undefined>();
+  const shown = () => desired() ?? appearance();
 
-  // The latest choice made while a save is pending; saved once the pending one ends.
-  let queued: Appearance | undefined;
-
-  const choose = async (next: Appearance) => {
-    if (saving()) {
-      queued = next;
-      return;
-    }
+  // A choice made while a save is pending only updates `desired`; it is saved when the pending
+  // save ends. If a save fails, a newer choice is still saved (as the user last intended it).
+  const choose = async (change: Partial<Appearance>) => {
+    setDesired({ ...shown(), ...change });
+    if (saving()) return;
     setSaving(true);
     try {
-      await saveAppearance(next);
-    } catch (error) {
-      showError(error);
-      setFailures((count) => count + 1);
+      let target = desired();
+      while (target) {
+        try {
+          await saveAppearance(target);
+        } catch (error) {
+          showError(error);
+        }
+        // Nothing newer: done, and the radios follow the appearance in effect again.
+        if (desired() === target) setDesired(undefined);
+        target = desired();
+      }
     } finally {
       setSaving(false);
     }
-    const pending = queued;
-    queued = undefined;
-    if (pending) await choose(pending);
   };
 
   return (
@@ -56,8 +58,8 @@ export default function AppearanceSection() {
                 type="radio"
                 name="theme"
                 value={option.value}
-                checked={(failures(), appearance().theme === option.value)}
-                onChange={() => void choose({ ...appearance(), theme: option.value })}
+                checked={shown().theme === option.value}
+                onChange={() => void choose({ theme: option.value })}
               />
               {option.label}
             </label>
@@ -73,8 +75,8 @@ export default function AppearanceSection() {
                 type="radio"
                 name="text-size"
                 value={option.value}
-                checked={(failures(), appearance().textSize === option.value)}
-                onChange={() => void choose({ ...appearance(), textSize: option.value })}
+                checked={shown().textSize === option.value}
+                onChange={() => void choose({ textSize: option.value })}
               />
               {option.label}
             </label>

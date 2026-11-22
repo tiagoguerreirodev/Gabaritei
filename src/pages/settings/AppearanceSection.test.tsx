@@ -2,6 +2,23 @@ import { render, screen, waitFor } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+/** A save the test settles by hand. */
+function deferredSaves() {
+  const saved: { theme: string; textSize: string }[] = [];
+  const pending: { resolve: () => void; reject: () => void }[] = [];
+  mockIPC((_command, args) => {
+    const value = (args as { appearance: { theme: string; textSize: string } }).appearance;
+    saved.push(value);
+    return new Promise((resolve, reject) => {
+      pending.push({
+        resolve: () => resolve(value),
+        reject: () => reject(Object.assign(new Error("Falhou."), { message: "Falhou." })),
+      });
+    });
+  });
+  return { saved, pending };
+}
 import { DEFAULT_APPEARANCE, applyAppearance, startAppearance } from "../../appearance";
 import { Toaster } from "../../components/toasts";
 import AppearanceSection from "./AppearanceSection";
@@ -88,6 +105,90 @@ describe("Aparência", () => {
     expect(await screen.findByText("Não foi possível salvar.")).toBeInTheDocument();
     expect(root).not.toHaveAttribute("data-theme");
     expect(screen.getByRole("radio", { name: /Automático/ })).toBeChecked();
+  });
+});
+
+describe("Aparência com salvamento pendente", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    applyAppearance(DEFAULT_APPEARANCE);
+  });
+  afterEach(() => {
+    root.removeAttribute("data-theme");
+    root.removeAttribute("data-text-size");
+  });
+
+  it("saves both a theme and a text size chosen while the first save is pending", async () => {
+    const { saved, pending } = deferredSaves();
+    const user = userEvent.setup();
+    render(() => <AppearanceSection />);
+
+    await user.click(screen.getByRole("radio", { name: "Escuro" }));
+    await user.click(screen.getByRole("radio", { name: "Muito grande" }));
+    expect(screen.getByRole("radio", { name: "Escuro" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Muito grande" })).toBeChecked();
+
+    pending[0]?.resolve();
+    await waitFor(() => expect(saved).toHaveLength(2));
+    expect(saved[1]).toEqual({ theme: "dark", textSize: "xl" });
+    pending[1]?.resolve();
+    await waitFor(() => expect(root.getAttribute("data-text-size")).toBe("xl"));
+    expect(root.getAttribute("data-theme")).toBe("dark");
+  });
+
+  it("saves only the latest of two choices in the same group", async () => {
+    const { saved, pending } = deferredSaves();
+    const user = userEvent.setup();
+    render(() => <AppearanceSection />);
+
+    await user.click(screen.getByRole("radio", { name: "Escuro" }));
+    await user.click(screen.getByRole("radio", { name: "Claro" }));
+    await user.click(screen.getByRole("radio", { name: /Automático/ }));
+    await user.click(screen.getByRole("radio", { name: "Claro" }));
+    pending[0]?.resolve();
+    await waitFor(() => expect(saved).toHaveLength(2));
+    expect(saved[1]).toEqual({ theme: "light", textSize: "m" });
+    pending[1]?.resolve();
+    await waitFor(() => expect(root.getAttribute("data-theme")).toBe("light"));
+    expect(saved).toHaveLength(2);
+  });
+
+  it("on a failure shows a toast and still saves the choice queued meanwhile", async () => {
+    const { saved, pending } = deferredSaves();
+    const user = userEvent.setup();
+    render(() => (
+      <>
+        <AppearanceSection />
+        <Toaster />
+      </>
+    ));
+
+    await user.click(screen.getByRole("radio", { name: "Escuro" }));
+    await user.click(screen.getByRole("radio", { name: "Muito grande" }));
+    pending[0]?.reject();
+    expect(await screen.findByText("Falhou.")).toBeInTheDocument();
+    // The queued value is saved as the user last intended it (theme included).
+    await waitFor(() => expect(saved).toHaveLength(2));
+    expect(saved[1]).toEqual({ theme: "dark", textSize: "xl" });
+    pending[1]?.resolve();
+    await waitFor(() => expect(root.getAttribute("data-theme")).toBe("dark"));
+  });
+
+  it("snaps the radios back when the only save fails", async () => {
+    const { pending } = deferredSaves();
+    const user = userEvent.setup();
+    render(() => (
+      <>
+        <AppearanceSection />
+        <Toaster />
+      </>
+    ));
+
+    await user.click(screen.getByRole("radio", { name: "Escuro" }));
+    expect(screen.getByRole("radio", { name: "Escuro" })).toBeChecked();
+    pending[0]?.reject();
+    expect(await screen.findByText("Falhou.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("radio", { name: /Automático/ })).toBeChecked());
   });
 });
 

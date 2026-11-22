@@ -91,6 +91,11 @@ const mixed: [string, string, number, number][] = [
   ["text", "danger", 12, 4.5],
   ["flag-bar", "success", 25, 3], // .flagged on .outcome-correct
   ["flag-bar", "danger", 25, 3], // .flagged on .outcome-wrong
+  // Percentages below are copied from solve.css (.option-key 14%, .option-wrong 12%).
+  ["flag-bar", "success", 14, 3],
+  ["flag-bar", "danger", 12, 3],
+  ["muted", "success", 14, 4.5],
+  ["muted", "danger", 12, 4.5],
   ["text", "success", 25, 4.5],
   ["text", "danger", 25, 4.5],
 ];

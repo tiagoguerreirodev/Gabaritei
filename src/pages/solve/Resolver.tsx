@@ -7,14 +7,52 @@ import { ErrorState, Loading } from "../../components/states";
 import { showError, showToast } from "../../components/toasts";
 import Navigator from "./Navigator";
 import QuestionCard from "./QuestionCard";
-import { formatPercent, optionLetters } from "./format";
+import { loadShortcuts, shortcutsEnabled } from "../../shortcuts";
+import { formatPercent, optionLetters, outcomeText } from "./format";
 
 const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
 
+/** End-of-attempt recap: points over evaluated questions, achievement and the four counts. The
+ * counts carry a shape as well as a colour. Comparing with the previous attempt is left out:
+ * no existing command returns the scores of earlier attempts. */
 function ScoreSummary(props: { score: Score }) {
+  let section: HTMLElement | undefined;
+  onMount(() => section?.focus());
   return (
-    <section class="card score" aria-label="Resultado">
+    <section class="card score recap" aria-label="Resultado" tabindex="-1" ref={section}>
       <h2>Resultado</h2>
+      <p class="recap-headline" data-testid="recap-points">
+        <strong>
+          {props.score.correct} de {props.score.evaluated}
+        </strong>{" "}
+        pontos · {formatPercent(props.score.achievement)} de aproveitamento
+      </p>
+      <ul class="recap-counts" aria-label="Contagem por resultado">
+        <li class="recap-correct">
+          <span class="recap-glyph" aria-hidden="true">
+            ✓
+          </span>
+          {props.score.correct} {props.score.correct === 1 ? "certa" : "certas"}
+        </li>
+        <li class="recap-wrong">
+          <span class="recap-glyph" aria-hidden="true">
+            ✕
+          </span>
+          {props.score.wrong} {props.score.wrong === 1 ? "errada" : "erradas"}
+        </li>
+        <li class="recap-blank">
+          <span class="recap-glyph" aria-hidden="true">
+            ○
+          </span>
+          {props.score.blank} em branco
+        </li>
+        <li class="recap-annulled">
+          <span class="recap-glyph recap-struck" aria-hidden="true">
+            –
+          </span>
+          {props.score.annulled} {props.score.annulled === 1 ? "anulada" : "anuladas"}
+        </li>
+      </ul>
       <dl class="facts">
         <dt>Acertos</dt>
         <dd>{props.score.correct}</dd>
@@ -49,6 +87,9 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
   const [pending, setPending] = createSignal<string | null>(null);
   // The confirmed answer is on its way to the backend: no new mark or confirmation until it lands.
   const [sending, setSending] = createSignal(false);
+  // Text for the polite live region: the question number on navigation, the outcome on answers.
+  const [announcement, setAnnouncement] = createSignal("");
+  const [helpOpen, setHelpOpen] = createSignal(false);
 
   createEffect(
     on(
@@ -81,6 +122,32 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
   const locked = () => finished() || current()?.reveal != null;
   const total = () => view()?.questions.length ?? 0;
   const answered = () => view()?.questions.filter((q) => q.choice !== null).length ?? 0;
+
+  // The outcome is read only for the question on screen, once, when its reveal appears (never
+  // before the answer: `reveal` is null until the backend reveals it).
+  createEffect(
+    on(
+      () => [current()?.position, current()?.reveal?.outcome] as const,
+      ([position, outcome], previous) => {
+        if (position === undefined || !previous) return;
+        if (position !== previous[0]) {
+          setAnnouncement(`Questão ${position + 1} de ${total()}.`);
+        } else if (outcome && outcome !== previous[1]) {
+          setAnnouncement(outcomeText[outcome]);
+        }
+      },
+      { defer: true },
+    ),
+  );
+  createEffect(
+    on(
+      finished,
+      (done) => {
+        if (done) setAnnouncement("Tentativa finalizada.");
+      },
+      { defer: true },
+    ),
+  );
 
   // Any action other than the letter after `X` cancels the pending elimination.
   const select = (i: number) => {
@@ -238,6 +305,8 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
       confirm();
       return;
     }
+    // Single letters are a convenience that can be turned off, and never fire with Shift.
+    if (!shortcutsEnabled() || event.shiftKey) return;
     const key = event.key.toUpperCase();
     const optionAt = (letter: string) => q.options[optionLetters(q).indexOf(letter)];
     if (eliminating()) {
@@ -266,18 +335,32 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     }
     event.preventDefault();
   };
-  onMount(() => window.addEventListener("keydown", onKeyDown));
+  onMount(() => {
+    void loadShortcuts();
+    window.addEventListener("keydown", onKeyDown);
+  });
   onCleanup(() => window.removeEventListener("keydown", onKeyDown));
 
   return (
     <Switch>
-      <Match when={loadError()}>{(error) => <ErrorState error={error()} />}</Match>
+      <Match when={loadError()}>
+        {(error) => (
+          <>
+            <h1>Resolver</h1>
+            <ErrorState error={error()} />
+          </>
+        )}
+      </Match>
       <Match when={!view()}>
+        <h1>Resolver</h1>
         <Loading label="Carregando tentativa…" />
       </Match>
       <Match when={view()}>
         {(attempt) => (
           <div class="resolver">
+            <div class="sr-only" aria-live="polite" aria-atomic="true" data-testid="live-region">
+              {announcement()}
+            </div>
             <header class="resolver-header">
               <div>
                 <h1>{attempt().title}</h1>
@@ -288,6 +371,20 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                   </span>
                   <Show when={finished()}> · finalizada</Show>
                 </p>
+                <div
+                  class="progress-bar"
+                  role="progressbar"
+                  aria-label="Progresso da tentativa"
+                  aria-valuemin={0}
+                  aria-valuemax={total()}
+                  aria-valuenow={answered()}
+                  aria-valuetext={`${answered()} de ${total()} respondidas`}
+                >
+                  <div
+                    class="progress-fill"
+                    style={{ width: `${total() === 0 ? 0 : (answered() / total()) * 100}%` }}
+                  />
+                </div>
               </div>
               <div class="resolver-actions">
                 <Show
@@ -337,11 +434,57 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
               <button type="button" disabled={index() === 0} onClick={() => move(-1)}>
                 ← Anterior
               </button>
-              <span class="muted shortcuts">
-                Atalhos: A–E (ou C/E){" "}
-                {attempt().feedbackMode === "study" ? "escolhe · Enter confirma" : "responde"} · X +
-                letra elimina · F marca · ←/→ navega
-              </span>
+              <div class="shortcuts">
+                <button
+                  type="button"
+                  class="shortcuts-toggle"
+                  aria-expanded={helpOpen()}
+                  aria-controls="shortcuts-help"
+                  onClick={() => setHelpOpen(!helpOpen())}
+                >
+                  Atalhos
+                </button>
+                <Show when={helpOpen()}>
+                  <div
+                    id="shortcuts-help"
+                    class="shortcuts-panel"
+                    role="group"
+                    aria-label="Atalhos de teclado"
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        event.stopPropagation();
+                        setHelpOpen(false);
+                      }
+                    }}
+                  >
+                    <Show
+                      when={shortcutsEnabled()}
+                      fallback={<p>Os atalhos de uma tecla estão desativados em Configurações.</p>}
+                    >
+                      <ul>
+                        <li>
+                          <kbd>A</kbd>–<kbd>E</kbd> (ou <kbd>C</kbd>/<kbd>E</kbd>){" "}
+                          {attempt().feedbackMode === "study" ? "escolhe" : "responde"}
+                        </li>
+                        <Show when={attempt().feedbackMode === "study"}>
+                          <li>
+                            <kbd>Enter</kbd> confirma
+                          </li>
+                        </Show>
+                        <li>
+                          <kbd>X</kbd> e uma letra elimina
+                        </li>
+                        <li>
+                          <kbd>F</kbd> marca para revisar
+                        </li>
+                      </ul>
+                    </Show>
+                    <p>
+                      <kbd>←</kbd> <kbd>→</kbd> navegam entre as questões.
+                    </p>
+                  </div>
+                </Show>
+              </div>
               <button type="button" disabled={index() >= total() - 1} onClick={() => move(1)}>
                 Próxima →
               </button>

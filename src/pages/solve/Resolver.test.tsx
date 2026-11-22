@@ -7,6 +7,8 @@ import type { FeedbackMode } from "../../bindings/FeedbackMode";
 import type { ResponseView } from "../../bindings/ResponseView";
 import type { RecheckView } from "../../bindings/RecheckView";
 import type { Reveal } from "../../bindings/Reveal";
+import { loadShortcuts } from "../../shortcuts";
+import Navigator from "./Navigator";
 import Resolver from "./Resolver";
 
 const multiple = (position: number): ResponseView => ({
@@ -66,6 +68,9 @@ let recheckGate: Promise<void> = Promise.resolve();
 /** Same for the backend's reply to "answer". */
 let answerGate: Promise<void> = Promise.resolve();
 
+/** What the fake backend answers to "keyboard_shortcuts". */
+let shortcutsSaved = true;
+
 /** A fake backend that applies the same rules as `attempts.rs`, recording each command. */
 function backend(mode: FeedbackMode) {
   let view: AttemptView = {
@@ -91,6 +96,8 @@ function backend(mode: FeedbackMode) {
   };
   mockIPC((command, raw) => {
     const args = (raw ?? {}) as Record<string, unknown>;
+    // The shortcut setting is not part of the attempt; keep it out of the recorded calls.
+    if (command === "keyboard_shortcuts") return shortcutsSaved;
     calls.push({ command, args });
     const position = args.position as number;
     switch (command) {
@@ -606,5 +613,191 @@ describe("Resolver", () => {
       { command: "annul", args: { attemptId: "att", position: 0 } },
       { command: "unannul", args: { attemptId: "att", position: 0 } },
     ]);
+  });
+});
+
+describe("Resolver: answer-sheet UI", () => {
+  const live = () => screen.getByTestId("live-region");
+
+  it("shows a progressbar with a text label that follows the answers", async () => {
+    const { user } = await open("exam");
+    const bar = screen.getByRole("progressbar", { name: "Progresso da tentativa" });
+    expect(bar).toHaveAttribute("aria-valuemin", "0");
+    expect(bar).toHaveAttribute("aria-valuemax", "3");
+    expect(bar).toHaveAttribute("aria-valuenow", "0");
+    expect(screen.getByTestId("progress")).toHaveTextContent("0 de 3 respondidas");
+
+    await user.keyboard("b");
+    await waitFor(() => expect(bar).toHaveAttribute("aria-valuenow", "1"));
+    expect(bar).toHaveAttribute("aria-valuetext", "1 de 3 respondidas");
+    expect(screen.getByTestId("progress")).toHaveTextContent("1 de 3 respondidas");
+  });
+
+  it("announces the question on navigation and the outcome after confirming, never the key", async () => {
+    const { user } = await open("study");
+    expect(live()).toHaveAttribute("aria-live", "polite");
+    expectNoKey();
+    expect(live()).not.toHaveTextContent(/Gabarito|acertou|errou/);
+
+    await user.keyboard("{ArrowRight}");
+    await waitFor(() => expect(live()).toHaveTextContent("Questão 2 de 3."));
+    await user.keyboard("{ArrowLeft}");
+    await waitFor(() => expect(live()).toHaveTextContent("Questão 1 de 3."));
+
+    await user.keyboard("b");
+    expect(live()).toHaveTextContent("Questão 1 de 3.");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(live()).toHaveTextContent("Você acertou."));
+    // The announcement carries the outcome only, not the key or the explanation.
+    expect(live()).not.toHaveTextContent(/Gabarito|secreta/);
+    // Focus moves to the revealed answer, so a screen reader reads it.
+    expect(screen.getByRole("region", { name: "Gabarito e explicação" })).toHaveFocus();
+  });
+
+  it("announces a wrong answer and marks it with a shape, not just a colour", async () => {
+    const { user } = await open("study");
+    await user.keyboard("a");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(live()).toHaveTextContent("Você errou."));
+
+    const wrong = within(card()).getByText("Sua resposta", { exact: false });
+    expect(wrong.querySelector("[aria-hidden=true]")).toHaveTextContent("✕");
+    const key = within(card()).getByText("Gabarito", { selector: ".option-mark", exact: false });
+    expect(key.querySelector("[aria-hidden=true]")).toHaveTextContent("✓");
+    const nav = screen.getByRole("button", { name: "Questão 1, respondida, errada" });
+    expect(nav.querySelector(".nav-mark")).toHaveTextContent("✕");
+  });
+
+  it("marks flagged and annulled questions in the navigator with shapes", async () => {
+    const { user } = await open("study");
+    await user.keyboard("f");
+    const flagged = await screen.findByRole("button", { name: "Questão 1, marcada" });
+    expect(flagged.querySelector(".nav-flag")).toHaveTextContent("⚑");
+
+    await user.keyboard("b");
+    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("button", { name: "Anular questão" }));
+    const annulled = await screen.findByRole("button", { name: /Questão 1.*anulada/ });
+    expect(annulled).toHaveClass("outcome-annulled");
+  });
+
+  it("ignores letter shortcuts with modifier keys and while typing in a field", async () => {
+    const { user, calls } = await open("exam");
+    const answers = () => calls.filter((c) => c.command === "answer");
+
+    await user.keyboard("{Control>}a{/Control}");
+    await user.keyboard("{Meta>}b{/Meta}");
+    await user.keyboard("{Alt>}c{/Alt}");
+    await user.keyboard("{Shift>}d{/Shift}");
+    expect(answers()).toHaveLength(0);
+
+    const field = document.createElement("input");
+    document.body.append(field);
+    field.focus();
+    await user.keyboard("a");
+    field.remove();
+    expect(answers()).toHaveLength(0);
+
+    await user.keyboard("a");
+    await waitFor(() => expect(answers()).toHaveLength(1));
+  });
+
+  it("turns the letter shortcuts off with the setting but keeps the arrows", async () => {
+    shortcutsSaved = false;
+    try {
+      const { user, calls } = await open("exam");
+      await user.click(screen.getByRole("button", { name: "Atalhos" }));
+      await screen.findByText(/desativados em Configurações/);
+      await user.keyboard("a");
+      await user.keyboard("f");
+      expect(calls.some((c) => ["answer", "flag"].includes(c.command))).toBe(false);
+      await user.keyboard("{ArrowRight}");
+      await screen.findByRole("article", { name: "Questão 2 de 3" });
+    } finally {
+      shortcutsSaved = true;
+      await loadShortcuts();
+    }
+  });
+
+  it("shows the shortcut help in a toggle button instead of a long hint line", async () => {
+    const { user } = await open("study");
+    expect(screen.queryByText(/Atalhos:/)).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "Atalhos" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const help = screen.getByRole("group", { name: "Atalhos de teclado" });
+    expect(help).toHaveTextContent("Enter confirma");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(help).not.toBeInTheDocument();
+  });
+
+  it("shows a recap on finishing, without a comparison", async () => {
+    const { user } = await open("exam");
+    await user.keyboard("b");
+    await user.click(screen.getByRole("button", { name: "Finalizar" }));
+    const dialog = await screen.findByRole("dialog", { name: "Finalizar tentativa?" });
+    await user.click(within(dialog).getByRole("button", { name: "Finalizar" }));
+
+    const recap = await screen.findByRole("region", { name: "Resultado" });
+    expect(screen.getByTestId("recap-points")).toHaveTextContent("1 de 3 pontos");
+    expect(recap).toHaveTextContent("33,3% de aproveitamento");
+    const counts = within(recap).getByRole("list", { name: "Contagem por resultado" });
+    expect(counts).toHaveTextContent("1 certa");
+    expect(counts).toHaveTextContent("0 erradas");
+    expect(counts).toHaveTextContent("2 em branco");
+    expect(counts).toHaveTextContent("0 anuladas");
+    expect(recap).toHaveFocus();
+    await waitFor(() => expect(live()).toHaveTextContent("Tentativa finalizada."));
+  });
+});
+
+describe("Resolver: headings", () => {
+  it("has exactly one h1 while loading, on a load error and once loaded", async () => {
+    backend("study");
+    render(() => <Resolver attemptId="att" onLeave={() => {}} />);
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Resolver");
+    await screen.findByRole("article", { name: "Questão 1 de 3" });
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Caderno de teste");
+  });
+
+  it("keeps the h1 when the attempt fails to load", async () => {
+    mockIPC(() =>
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+      Promise.reject({ message: "Tentativa não encontrada." }),
+    );
+    render(() => <Resolver attemptId="x" onLeave={() => {}} />);
+    await screen.findByText(/Tentativa não encontrada/);
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Resolver");
+  });
+});
+
+describe("Navigator", () => {
+  const many = (count: number): ResponseView[] =>
+    Array.from({ length: count }, (_, position) => multiple(position));
+
+  it("groups large sets in blocks of ten with visible labels, every bubble keyboard-reachable", async () => {
+    const onSelect = vi.fn();
+    const user = userEvent.setup();
+    render(() => <Navigator questions={many(25)} current={0} onSelect={onSelect} />);
+
+    for (const label of ["1–10", "11–20", "21–25"]) {
+      expect(screen.getByRole("group", { name: `Questões ${label}` })).toHaveTextContent(label);
+    }
+    expect(screen.getAllByRole("button")).toHaveLength(25);
+    const last = screen.getByRole("button", { name: "Questão 25" });
+    last.focus();
+    await user.keyboard("{Enter}");
+    expect(onSelect).toHaveBeenCalledWith(24);
+  });
+
+  it("is a single ungrouped sheet for small sets", () => {
+    render(() => <Navigator questions={many(8)} current={0} onSelect={() => {}} />);
+    expect(screen.queryByRole("group")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(8);
   });
 });

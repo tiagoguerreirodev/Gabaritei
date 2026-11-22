@@ -55,6 +55,11 @@ const pairs: [string, string, number][] = [
   ["accent", "surface", 4.5],
   ["accent", "accent-soft", 4.5],
   ["on-accent", "accent", 4.5],
+  ["on-accent", "success", 4.5], // letter on a filled correct bubble
+  ["on-accent", "danger", 4.5], // letter on a filled wrong bubble
+  ["accent", "surface", 3], // filled bubble and progress fill against the card
+  ["success", "surface", 3],
+  ["danger", "surface", 3],
   ["danger", "bg", 4.5],
   ["danger", "surface", 4.5],
   ["success", "bg", 4.5],

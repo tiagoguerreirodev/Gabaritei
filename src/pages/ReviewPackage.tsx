@@ -6,7 +6,7 @@ import type { ImportMode } from "../bindings/ImportMode";
 import type { LineState } from "../bindings/LineState";
 import { ErrorState, Loading } from "../components/states";
 import { showError, showToast } from "../components/toasts";
-import { dismissGeneration, generationStatus } from "../generation";
+import { dismissGeneration, generationStatus, refreshWaitingDrafts } from "../generation";
 import { agentLabels, effortLabels } from "./settings/labels";
 
 const lineText: Record<LineState, string> = {
@@ -146,6 +146,7 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
         }
       }
       const result = await api.draftImport(id, mode);
+      await refreshWaitingDrafts();
       showToast(
         `${number(result.imported)} questões importadas para “${result.title}”` +
           (result.skipped > 0 ? `; ${number(result.skipped)} ficaram de fora.` : "."),
@@ -158,6 +159,7 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
     const id = s().id;
     return run(async () => {
       await api.draftDiscard(id);
+      await refreshWaitingDrafts();
       showToast("Pacote descartado.");
       navigate("/gerar");
     });

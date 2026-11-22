@@ -5,6 +5,7 @@
 //! the output. See `AGENTS.md` → "Architecture rules".
 
 pub mod ai;
+pub mod appearance;
 pub mod attempts;
 pub mod backup;
 pub mod bank;
@@ -47,6 +48,8 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
+            commands::appearance,
+            commands::save_appearance,
             commands::backup_status,
             commands::data_folder,
             commands::open_folder,

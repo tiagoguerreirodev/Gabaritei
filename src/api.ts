@@ -11,6 +11,7 @@ import type { AiSettings } from "./bindings/AiSettings";
 import type { Catalog } from "./bindings/Catalog";
 import type { AiSettingsInput } from "./bindings/AiSettingsInput";
 import type { AppInfo } from "./bindings/AppInfo";
+import type { Appearance } from "./bindings/Appearance";
 import type { AttemptView } from "./bindings/AttemptView";
 import type { BackupInfo } from "./bindings/BackupInfo";
 import type { BackupStatus } from "./bindings/BackupStatus";
@@ -65,6 +66,10 @@ async function call<T>(command: string, args?: InvokeArgs): Promise<T> {
 export const api = {
   /** Name and version of the running app. */
   appInfo: () => call<AppInfo>("app_info"),
+  /** The saved colour theme and text size. */
+  appearance: () => call<Appearance>("appearance"),
+  /** Saves the colour theme and text size; returns them as saved. */
+  saveAppearance: (appearance: Appearance) => call<Appearance>("save_appearance", { appearance }),
   /** Whether the legacy Caderno Local bank was imported, and whether the bank is empty. */
   legacyImportStatus: () => call<LegacyImportStatus>("legacy_import_status"),
   /** Opens a folder picker and imports the legacy bank. `null` if the user cancels. */

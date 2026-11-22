@@ -26,6 +26,7 @@ use time::OffsetDateTime;
 use ts_rs::TS;
 
 use crate::ai::settings::{KEY_CLI_PATHS, KEY_REMNOTE, KEY_ROLES};
+use crate::appearance;
 use crate::db::{Database, get_setting, set_setting};
 use crate::error::{AppError, AppResult};
 use crate::paths::AppPaths;
@@ -42,6 +43,7 @@ pub const LOCAL_SETTINGS: &[&str] = &[
     KEY_CLI_PATHS,
     KEY_REMNOTE,
     KEY_ROLES,
+    appearance::KEY,
 ];
 
 /// Daily backups kept.
@@ -761,10 +763,15 @@ impl FolderProbe {
         #[cfg(test)]
         let overrides = tests::overrides();
         let spawned = std::thread::Builder::new().spawn(move || {
-            let _free = free;
+            // Held for the whole run, so a panic in `work` still frees the entry.
+            let free = free;
             #[cfg(test)]
             tests::apply(overrides);
-            let _ = done.send(work());
+            let value = work();
+            // Free the folder before the caller can see the result: otherwise a caller that
+            // answers at once may still find the entry occupied (and a test of that flaked).
+            drop(free);
+            let _ = done.send(value);
         });
         if spawned.is_err() {
             // The closure (and the guard in it) was dropped: the entry is already free.
@@ -1973,6 +1980,11 @@ mod tests {
             set_setting(conn, KEY_CLI_PATHS, &"windows-path")?;
             set_setting(conn, KEY_REMNOTE, &"http://remote.example/mcp")?;
             set_setting(conn, KEY_ROLES, &"roles from the other computer")?;
+            set_setting(
+                conn,
+                appearance::KEY,
+                &"dark and xl from the other computer",
+            )?;
             set_setting(conn, "other", &"from the backup")
         })
         .unwrap();
@@ -1981,6 +1993,7 @@ mod tests {
             set_setting(conn, KEY_CLI_PATHS, &"mac-path")?;
             set_setting(conn, KEY_REMNOTE, &"http://localhost/mcp")?;
             set_setting(conn, KEY_ROLES, &"roles of this computer")?;
+            set_setting(conn, appearance::KEY, &"light and m of this computer")?;
             set_setting(conn, "other", &"changed")?;
             set_setting(conn, KEY_FOLDER, &"/elsewhere")
         })
@@ -2013,6 +2026,10 @@ mod tests {
             assert_eq!(
                 get_setting::<String>(conn, KEY_ROLES)?.as_deref(),
                 Some("roles of this computer")
+            );
+            assert_eq!(
+                get_setting::<String>(conn, appearance::KEY)?.as_deref(),
+                Some("light and m of this computer")
             );
             assert_eq!(
                 get_setting::<String>(conn, KEY_FOLDER)?.as_deref(),

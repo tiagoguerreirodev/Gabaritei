@@ -184,3 +184,8 @@
   justify-content: flex-end;
   margin-top: var(--space-3);
 }
+
+.flagged-options {
+  list-style: none;
+  padding: 0;
+}

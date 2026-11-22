@@ -30,7 +30,13 @@ export default function QuestionCard(props: {
   finished: boolean;
   /** `X` was pressed: the next letter eliminates instead of answering. */
   eliminating: boolean;
+  /** Estudo: the option marked but not yet confirmed. */
+  pending: string | null;
+  /** Estudo: choosing only marks an option; the button or Enter sends the answer. */
+  confirmRequired: boolean;
+  /** Chooses an option: answers it, or only marks it when confirmation is required. */
   onAnswer: (optionId: string) => void;
+  onConfirm: () => void;
   onEliminate: (optionId: string) => void;
   onFlag: () => void;
   /** Annuls the revealed question, or restores it with `false`. */
@@ -103,7 +109,9 @@ export default function QuestionCard(props: {
         <For each={props.question.options}>
           {(option, index) => {
             const letter = () => letters()[index()];
-            const selected = () => props.question.choice === option.id;
+            // A mark that was never confirmed is not an answer once the question is locked.
+            const marked = () => !props.locked && props.pending === option.id;
+            const selected = () => props.question.choice === option.id || marked();
             const eliminated = () => props.question.eliminated.includes(option.id);
             const isKey = () => reveal()?.answerId === option.id;
             return (
@@ -119,6 +127,7 @@ export default function QuestionCard(props: {
                 <button
                   type="button"
                   class="option-choose"
+                  data-option-id={option.id}
                   aria-pressed={selected()}
                   disabled={props.locked}
                   onClick={() => props.onAnswer(option.id)}
@@ -144,6 +153,18 @@ export default function QuestionCard(props: {
           }}
         </For>
       </ol>
+      <Show when={props.confirmRequired && !props.locked}>
+        <div class="confirm-row">
+          <button
+            type="button"
+            class="primary"
+            disabled={props.pending === null}
+            onClick={() => props.onConfirm()}
+          >
+            Confirmar resposta (Enter)
+          </button>
+        </div>
+      </Show>
       <Show when={reveal()}>
         {(revealed) => (
           <section class={`reveal reveal-${revealed().outcome}`} aria-label="Gabarito e explicação">

@@ -63,6 +63,9 @@ let recheckAnswer: RecheckView = {
 /** Lets a test hold the AI's answer back; by default it answers at once. */
 let recheckGate: Promise<void> = Promise.resolve();
 
+/** Same for the backend's reply to "answer". */
+let answerGate: Promise<void> = Promise.resolve();
+
 /** A fake backend that applies the same rules as `attempts.rs`, recording each command. */
 function backend(mode: FeedbackMode) {
   let view: AttemptView = {
@@ -94,14 +97,16 @@ function backend(mode: FeedbackMode) {
       case "attempt":
         return view;
       case "answer":
-        return update(position, (q) => {
-          const next = {
-            ...q,
-            choice: args.optionId as string | null,
-            eliminated: q.eliminated.filter((e) => e !== args.optionId),
-          };
-          return mode === "study" && next.choice ? { ...next, reveal: revealOf(next) } : next;
-        });
+        return answerGate.then(() =>
+          update(position, (q) => {
+            const next = {
+              ...q,
+              choice: args.optionId as string | null,
+              eliminated: q.eliminated.filter((e) => e !== args.optionId),
+            };
+            return mode === "study" && next.choice ? { ...next, reveal: revealOf(next) } : next;
+          }),
+        );
       case "eliminate":
         return update(position, (q) => {
           const id = args.optionId as string;
@@ -194,6 +199,7 @@ describe("Resolver", () => {
     expectNoKey();
 
     await user.click(option("A"));
+    await user.click(screen.getByRole("button", { name: /Confirmar resposta/ }));
 
     const reveal = await screen.findByRole("region", { name: "Gabarito e explicação" });
     expect(reveal).toHaveTextContent("Você errou. Gabarito: B.");
@@ -217,6 +223,7 @@ describe("Resolver", () => {
 
     // Question 2 is Certo/Errado.
     await user.click(option("C"));
+    await user.keyboard("{Enter}");
     const reveal = await screen.findByRole("region", { name: "Gabarito e explicação" });
     expect(reveal).toHaveTextContent("Gabarito contestado na conferência");
 
@@ -224,6 +231,7 @@ describe("Resolver", () => {
     await user.keyboard("{ArrowLeft}");
     await screen.findByRole("article", { name: "Questão 1 de 3" });
     await user.click(option("A"));
+    await user.keyboard("{Enter}");
     const other = await screen.findByRole("region", { name: "Gabarito e explicação" });
     expect(other).not.toHaveTextContent("Gabarito contestado");
   });
@@ -232,6 +240,7 @@ describe("Resolver", () => {
     const { user, calls } = await open("study");
     expect(screen.queryByRole("button", { name: "Pedir revisão à IA" })).not.toBeInTheDocument();
     await user.click(option("A"));
+    await user.keyboard("{Enter}");
 
     await user.click(await screen.findByRole("button", { name: "Pedir revisão à IA" }));
     const review = await screen.findByRole("region", { name: "Revisão da IA" });
@@ -259,6 +268,7 @@ describe("Resolver", () => {
   it("keeps the current key when the user dismisses the AI's proposal", async () => {
     const { user, calls } = await open("study");
     await user.click(option("A"));
+    await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("button", { name: "Pedir revisão à IA" }));
     await user.click(await screen.findByRole("button", { name: "Manter o gabarito atual" }));
 
@@ -274,9 +284,11 @@ describe("Resolver", () => {
     const { user } = await open("study");
     // Reveal questions 1 and 2, so the card stays mounted when moving between them.
     await user.click(option("A"));
+    await user.keyboard("{Enter}");
     await user.keyboard("{ArrowRight}");
     await screen.findByRole("article", { name: "Questão 2 de 3" });
     await user.click(option("C"));
+    await user.keyboard("{Enter}");
     await screen.findByRole("region", { name: "Gabarito e explicação" });
     await user.keyboard("{ArrowLeft}");
     await screen.findByRole("article", { name: "Questão 1 de 3" });
@@ -302,6 +314,7 @@ describe("Resolver", () => {
       sources: [],
     };
     await user.click(option("A"));
+    await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("button", { name: "Pedir revisão à IA" }));
     expect(await screen.findByText("A IA confirmou o gabarito.")).toBeVisible();
     expect(screen.queryByRole("button", { name: /Aplicar novo gabarito/ })).not.toBeInTheDocument();
@@ -318,6 +331,7 @@ describe("Resolver", () => {
     // Question 1 has an explanation: no button, revealed or not.
     expect(screen.queryByRole("button", { name: "Explicar" })).not.toBeInTheDocument();
     await user.click(option("A"));
+    await user.keyboard("{Enter}");
     await screen.findByRole("region", { name: "Gabarito e explicação" });
     expect(screen.queryByRole("button", { name: "Explicar" })).not.toBeInTheDocument();
 
@@ -327,6 +341,7 @@ describe("Resolver", () => {
     expect(screen.queryByRole("button", { name: "Explicar" })).not.toBeInTheDocument();
 
     await user.click(option("A"));
+    await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("button", { name: "Explicar" }));
     expect(await screen.findByText("Explicação escrita pela IA.")).toBeVisible();
     expect(calls.filter((c) => c.command === "explain_ask")).toHaveLength(1);
@@ -365,6 +380,124 @@ describe("Resolver", () => {
     // Finished: shortcuts no longer answer.
     await user.keyboard("a");
     expect(calls.filter((c) => c.command === "answer")).toHaveLength(3);
+  });
+
+  it("only selects an option in Estudo; Enter or the button confirms it", async () => {
+    const { user, calls } = await open("study");
+    const answers = () => calls.filter((c) => c.command === "answer");
+    const confirm = () => screen.getByRole("button", { name: /Confirmar resposta/ });
+    expect(confirm()).toBeDisabled();
+
+    // Clicking and the letter key only mark the option.
+    await user.click(option("A"));
+    expect(option("A")).toHaveAttribute("aria-pressed", "true");
+    expect(confirm()).toBeEnabled();
+    await user.keyboard("c");
+    expect(option("A")).toHaveAttribute("aria-pressed", "false");
+    expect(option("C")).toHaveAttribute("aria-pressed", "true");
+    expect(answers()).toHaveLength(0);
+    expectNoKey();
+
+    // Enter sends the marked option, exactly once.
+    await user.keyboard("{Enter}");
+    await screen.findByRole("region", { name: "Gabarito e explicação" });
+    expect(answers()).toEqual([
+      { command: "answer", args: { attemptId: "att", position: 0, optionId: "q0-o2" } },
+    ]);
+    expect(screen.queryByRole("button", { name: /Confirmar resposta/ })).not.toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    expect(answers()).toHaveLength(1);
+  });
+
+  it("ignores Enter in Estudo while nothing is selected", async () => {
+    const { user, calls } = await open("study");
+    await user.keyboard("{Enter}");
+    expect(calls.some((c) => c.command === "answer")).toBe(false);
+  });
+
+  it("drops an unconfirmed selection when moving to another question", async () => {
+    const { user, calls } = await open("study");
+    await user.keyboard("b");
+    await user.keyboard("{ArrowRight}");
+    await screen.findByRole("article", { name: "Questão 2 de 3" });
+    await user.keyboard("{ArrowLeft}");
+    await screen.findByRole("article", { name: "Questão 1 de 3" });
+    expect(option("B")).toHaveAttribute("aria-pressed", "false");
+    await user.keyboard("{Enter}");
+    expect(calls.some((c) => c.command === "answer")).toBe(false);
+  });
+
+  it("does not answer twice when Enter is pressed on a clicked option", async () => {
+    const { user, calls } = await open("study");
+    await user.click(option("B"));
+    await user.keyboard("{Enter}");
+    await screen.findByRole("region", { name: "Gabarito e explicação" });
+    expect(calls.filter((c) => c.command === "answer")).toHaveLength(1);
+  });
+
+  it("does not show an unconfirmed mark as an answer after finishing", async () => {
+    const { user } = await open("study");
+    await user.keyboard("b");
+    await user.click(screen.getByRole("button", { name: "Finalizar" }));
+    const dialog = await screen.findByRole("dialog", { name: "Finalizar tentativa?" });
+    await user.click(within(dialog).getByRole("button", { name: "Finalizar" }));
+    await screen.findByRole("region", { name: "Resultado" });
+    expect(document.querySelector(".option-wrong")).toBeNull();
+    expect(option("B")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("keeps Enter for the focused button unless it is the marked option", async () => {
+    const { user, calls } = await open("study");
+    const answers = () => calls.filter((c) => c.command === "answer");
+    await user.keyboard("b");
+    // Enter on another option or on a ✕ button only does what that button does.
+    option("C").focus();
+    await user.keyboard("{Enter}");
+    expect(answers()).toHaveLength(0);
+    expect(option("C")).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Eliminar alternativa D" }));
+    await user.keyboard("{Enter}");
+    await screen.findByRole("button", { name: "Eliminar alternativa D" });
+    expect(answers()).toHaveLength(0);
+    // Enter on the Finalizar button opens its dialog instead of answering.
+    await user.click(option("C"));
+    screen.getByRole("button", { name: "Finalizar" }).focus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("dialog", { name: "Finalizar tentativa?" });
+    expect(answers()).toHaveLength(0);
+  });
+
+  it("drops the mark of an option that gets eliminated", async () => {
+    const { user, calls } = await open("study");
+    await user.keyboard("b");
+    await user.keyboard("x");
+    await user.keyboard("b");
+    await screen.findByRole("button", { name: "Restaurar alternativa B" });
+    await user.keyboard("{Enter}");
+    expect(calls.some((c) => c.command === "answer")).toBe(false);
+  });
+
+  it("ignores letters and Enter while the confirmed answer is in flight", async () => {
+    const { user, calls } = await open("study");
+    let release = () => {};
+    answerGate = new Promise<void>((resolve) => (release = resolve));
+    await user.keyboard("b");
+    await user.keyboard("{Enter}c{Enter}");
+    release();
+    answerGate = Promise.resolve();
+    await screen.findByRole("region", { name: "Gabarito e explicação" });
+    expect(calls.filter((c) => c.command === "answer")).toHaveLength(1);
+    expect(option("C")).toHaveAttribute("aria-pressed", "false");
+    expect(option("B")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("keeps Enter from toggling an option's answer in Simulado", async () => {
+    const { user, calls } = await open("exam");
+    await user.keyboard("b");
+    await waitFor(() => expect(option("B")).toHaveAttribute("aria-pressed", "true"));
+    await user.keyboard("{Enter}");
+    expect(calls.filter((c) => c.command === "answer")).toHaveLength(1);
+    expect(option("B")).toHaveAttribute("aria-pressed", "true");
   });
 
   it("answers, eliminates, flags and moves with the keyboard", async () => {
@@ -460,6 +593,7 @@ describe("Resolver", () => {
     expect(screen.queryByRole("button", { name: "Anular questão" })).not.toBeInTheDocument();
 
     await user.click(option("B"));
+    await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("button", { name: "Anular questão" }));
 
     const reveal = await screen.findByRole("region", { name: "Gabarito e explicação" });

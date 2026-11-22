@@ -2,10 +2,11 @@ import { A } from "@solidjs/router";
 import { For, Match, Show, Switch, createResource } from "solid-js";
 import { api } from "../api";
 import LegacyImport from "../components/LegacyImport";
+import MasteryBar from "../components/MasteryBar";
 import { EmptyState, ErrorState, Loading } from "../components/states";
 import { formatDate, formatNumber, questionCount } from "./bank/format";
 import StatCards from "./performance/StatCards";
-import { formatPercent, openAttempt } from "./solve/format";
+import { openAttempt } from "./solve/format";
 
 const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
 
@@ -24,7 +25,11 @@ export default function Home() {
       </Show>
 
       <Switch>
-        <Match when={home.error as unknown}>{(error) => <ErrorState error={error()} />}</Match>
+        <Match when={home.error as unknown}>
+          {(error) => (
+            <ErrorState error={error()} onRetry={() => refetchHome()} busy={home.loading} />
+          )}
+        </Match>
         <Match when={home()}>
           {(summary) => (
             <>
@@ -32,26 +37,19 @@ export default function Home() {
               <Show
                 when={summary().overall.score.evaluated > 0}
                 fallback={
-                  <EmptyState title="Você ainda não finalizou nenhuma tentativa.">
+                  <EmptyState
+                    title="Você ainda não finalizou nenhuma tentativa."
+                    action={
+                      <A class="primary button-link" href="/banco">
+                        Ir para o Banco
+                      </A>
+                    }
+                  >
                     <p class="muted">Comece um caderno ou um assunto no Banco.</p>
                   </EmptyState>
                 }
               >
                 <StatCards stats={summary().overall} label="Resumo" />
-                <section class="card wide" aria-labelledby="areas-title">
-                  <h2 id="areas-title">Aproveitamento por área</h2>
-                  <ul class="area-list">
-                    <For each={summary().areas.filter((a) => a.stats.score.evaluated > 0)}>
-                      {(area) => (
-                        <li>
-                          <span>{area.name}</span>
-                          <strong>{formatPercent(area.stats.score.achievement)}</strong>
-                        </li>
-                      )}
-                    </For>
-                  </ul>
-                  <A href="/desempenho">Ver desempenho completo</A>
-                </section>
               </Show>
 
               <section class="card wide" aria-labelledby="active-title">
@@ -104,11 +102,26 @@ export default function Home() {
                   </li>
                 </ul>
               </section>
+              <Show when={summary().overall.score.evaluated > 0}>
+                <section class="card wide" aria-labelledby="areas-title">
+                  <h2 id="areas-title">Aproveitamento por área</h2>
+                  <ul class="area-list">
+                    <For each={summary().areas.filter((a) => a.stats.score.evaluated > 0)}>
+                      {(area) => (
+                        <li>
+                          <MasteryBar name={area.name} achievement={area.stats.score.achievement} />
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                  <A href="/desempenho">Ver desempenho completo</A>
+                </section>
+              </Show>
             </>
           )}
         </Match>
         <Match when={home.loading}>
-          <Loading />
+          <Loading variant="skeleton" />
         </Match>
       </Switch>
     </section>

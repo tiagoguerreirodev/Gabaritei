@@ -29,7 +29,7 @@ function dueText(dueAt: string, now: number) {
 export default function Learning() {
   const [includeBlanks, setIncludeBlanks] = createSignal(false);
   // An object source: Solid doesn't fetch while a source is `false`.
-  const [overview] = createResource(
+  const [overview, { refetch }] = createResource(
     () => ({ blanks: includeBlanks() }),
     ({ blanks }) => api.learningOverview(blanks),
   );
@@ -43,7 +43,11 @@ export default function Learning() {
       <h1>Erros e revisões</h1>
 
       <Switch>
-        <Match when={overview.error as unknown}>{(error) => <ErrorState error={error()} />}</Match>
+        <Match when={overview.error as unknown}>
+          {(error) => (
+            <ErrorState error={error()} onRetry={() => refetch()} busy={overview.loading} />
+          )}
+        </Match>
         <Match when={overview()}>
           {(data) => (
             <>
@@ -142,7 +146,7 @@ export default function Learning() {
           )}
         </Match>
         <Match when={overview.loading}>
-          <Loading />
+          <Loading variant="skeleton" />
         </Match>
       </Switch>
 

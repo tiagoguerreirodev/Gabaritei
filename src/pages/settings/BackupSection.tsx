@@ -191,7 +191,17 @@ export default function BackupSection(props: {
           </div>
         )}
       </Show>
-      <Show when={!status.error} fallback={<ErrorState error={status.error as unknown} />}>
+      <Show
+        when={!status.error}
+        fallback={
+          <ErrorState
+            error={status.error as unknown}
+            onRetry={() => refetch()}
+            busy={status.loading}
+            describedBy="backup-title"
+          />
+        }
+      >
         <Show when={status()} fallback={<Loading />}>
           {(current) => (
             <Content

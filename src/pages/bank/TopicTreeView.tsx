@@ -8,7 +8,7 @@ import { questionCount } from "./format";
 
 /** Area › matter › topic, each with its number of questions and a button to solve it. */
 export default function TopicTreeView() {
-  const [tree] = createResource(() => api.topicsTree());
+  const [tree, { refetch }] = createResource(() => api.topicsTree());
   const [solving, setSolving] = createSignal<{ topic: TopicNode; path: string }>();
 
   return (
@@ -24,9 +24,11 @@ export default function TopicTreeView() {
         )}
       </Show>
       <Switch>
-        <Match when={tree.error as unknown}>{(error) => <ErrorState error={error()} />}</Match>
+        <Match when={tree.error as unknown}>
+          {(error) => <ErrorState error={error()} onRetry={() => refetch()} busy={tree.loading} />}
+        </Match>
         <Match when={tree.loading}>
-          <Loading label="Carregando assuntos…" />
+          <Loading variant="skeleton" label="Carregando assuntos…" />
         </Match>
         <Match when={tree()?.areas.length === 0}>
           <EmptyState title="Nenhuma questão no banco ainda.">

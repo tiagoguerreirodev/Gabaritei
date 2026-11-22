@@ -1,20 +1,41 @@
-import type { JSX } from "solid-js";
+import { For, Show, createMemo, type JSX } from "solid-js";
 
-/** Shown while data loads. */
-export function Loading(props: { label?: string }) {
+/**
+ * Shown while data loads. `variant="skeleton"` draws grey placeholder lines (they hold still when
+ * the person asked for reduced motion); the label stays in the DOM for screen readers either way.
+ */
+export function Loading(props: { label?: string; variant?: "text" | "skeleton"; lines?: number }) {
+  const label = () => props.label ?? "Carregando…";
   return (
-    <p class="state muted" role="status">
-      {props.label ?? "Carregando…"}
-    </p>
+    <Show
+      when={props.variant === "skeleton"}
+      fallback={
+        <p class="state muted" role="status">
+          {label()}
+        </p>
+      }
+    >
+      <div class="state skeleton" role="status">
+        <span class="sr-only">{label()}</span>
+        <For each={Array.from({ length: props.lines ?? 3 })}>
+          {(_, index) => (
+            <span class="skeleton-line" aria-hidden="true" data-wide={index() % 2 === 0} />
+          )}
+        </For>
+      </div>
+    </Show>
   );
 }
 
-/** Shown when there is nothing to list. */
-export function EmptyState(props: { title: string; children?: JSX.Element }) {
+/** Shown when there is nothing to list. `action` is the one thing worth doing next. */
+export function EmptyState(props: { title: string; children?: JSX.Element; action?: JSX.Element }) {
   return (
     <div class="state empty-state">
       <p class="empty-title">{props.title}</p>
       {props.children}
+      <Show when={props.action}>
+        <div class="state-action">{props.action}</div>
+      </Show>
     </div>
   );
 }
@@ -26,11 +47,62 @@ export function errorMessage(error: unknown) {
   return "Ocorreu um erro inesperado. Tente novamente.";
 }
 
-/** Shown when loading failed. */
-export function ErrorState(props: { error: unknown }) {
+/** Moves focus to the first heading of `root`, so focus does not fall to the body when a retry button disappears. */
+function focusHeading(start: Element | null) {
+  const selector = "[role='dialog'], section, main";
+  let heading: HTMLElement | null = null;
+  for (let root = start; root && !heading; root = root.parentElement?.closest(selector) ?? null) {
+    heading = root.querySelector<HTMLElement>("h1, h2, h3");
+  }
+  if (!heading) return;
+  heading.tabIndex = -1;
+  heading.focus();
+}
+
+/**
+ * Shown when loading failed. With `onRetry`, offers a "Tentar novamente" button. `busy` (wire it to
+ * the resource's `loading`) disables the button while the new request runs: Solid keeps `error`
+ * set until then. The alert is mounted again for every new error, so a repeated identical failure
+ * is announced again. When a retry succeeds, this component goes away; focus then moves to the
+ * heading of the surrounding page, section or dialog. `describedBy` names an element that tells
+ * the button apart from other retry buttons on the page.
+ */
+export function ErrorState(props: {
+  error: unknown;
+  onRetry?: () => unknown;
+  busy?: boolean;
+  describedBy?: string;
+}) {
+  let root: HTMLDivElement | undefined;
+  // A new box per error value: keying on it mounts the alert node again.
+  const box = createMemo(() => ({ error: props.error }));
+  const retry = async (run: () => unknown) => {
+    const container = root?.closest("[role='dialog'], section, main") ?? null;
+    await run();
+    if (root && !root.isConnected) focusHeading(container);
+  };
   return (
-    <p class="state error" role="alert">
-      {errorMessage(props.error)}
-    </p>
+    <div class="state error-state" ref={root}>
+      <Show when={box()} keyed>
+        {(current) => (
+          <p class="error" role="alert">
+            {errorMessage(current.error)}
+          </p>
+        )}
+      </Show>
+      <Show when={props.onRetry}>
+        {(run) => (
+          <button
+            type="button"
+            class="secondary"
+            disabled={props.busy}
+            aria-describedby={props.describedBy}
+            onClick={() => void retry(run())}
+          >
+            {props.busy ? "Tentando…" : "Tentar novamente"}
+          </button>
+        )}
+      </Show>
+    </div>
   );
 }

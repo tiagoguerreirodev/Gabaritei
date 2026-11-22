@@ -14,7 +14,7 @@ export default function CollectionDetailModal(props: {
   title: string;
   onClose: () => void;
 }) {
-  const [detail] = createResource(
+  const [detail, { refetch }] = createResource(
     () => props.id,
     (id) => api.collection(id),
   );
@@ -67,7 +67,11 @@ export default function CollectionDetailModal(props: {
         }
       >
         <Switch>
-          <Match when={detail.error as unknown}>{(error) => <ErrorState error={error()} />}</Match>
+          <Match when={detail.error as unknown}>
+            {(error) => (
+              <ErrorState error={error()} onRetry={() => refetch()} busy={detail.loading} />
+            )}
+          </Match>
           <Match when={detail.loading}>
             <Loading />
           </Match>

@@ -26,7 +26,7 @@ export default function Performance() {
     feedbackMode: mode() || null,
     utcOffsetMinutes: localOffsetMinutes(),
   });
-  const [result] = createResource(query, (q) => api.performance(q));
+  const [result, { refetch }] = createResource(query, (q) => api.performance(q));
   /** The latest result, or nothing if loading failed (reading a failed resource throws). */
   const current = () => (result.error ? undefined : result.latest);
   /** The tags to offer: kept from the last successful load, so an error doesn't empty them. */
@@ -98,7 +98,11 @@ export default function Performance() {
         </p>
       </Show>
       <Switch>
-        <Match when={result.error as unknown}>{(error) => <ErrorState error={error()} />}</Match>
+        <Match when={result.error as unknown}>
+          {(error) => (
+            <ErrorState error={error()} onRetry={() => refetch()} busy={result.loading} />
+          )}
+        </Match>
         <Match when={current()}>
           {(data) => (
             <Show
@@ -173,7 +177,7 @@ export default function Performance() {
           )}
         </Match>
         <Match when={result.loading}>
-          <Loading label="Calculando desempenho…" />
+          <Loading variant="skeleton" label="Calculando desempenho…" />
         </Match>
       </Switch>
     </section>

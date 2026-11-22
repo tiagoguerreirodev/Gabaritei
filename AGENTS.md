@@ -21,7 +21,7 @@ A personal desktop app for one person on two computers (Windows 11 and an Apple 
 
 If a task seems to need breaking any of these, stop and ask the owner.
 
-1. **No spoilers.** A question's answer key and explanation must never reach the frontend before the user has answered that question. Enforce this in the Rust backend, not only in the UI. The package preview shows **no** stems, options or answers, only counts, validation problems and blind-check verdicts.
+1. **No spoilers.** A question's answer key and explanation must never reach the frontend before the user has answered that question. Enforce this in the Rust backend, not only in the UI. The package preview shows only counts, validation problems and blind-check verdicts, plus the **stem and options** (never the key, explanation or references) of questions the blind check flagged.
 2. **AI only through the user's local CLIs.** Call the installed, already-logged-in `claude` (Claude Code, `claude -p`) and `codex` (`codex exec`) as subprocesses.
    - **Never** implement OAuth.
    - **Never** call the Anthropic or OpenAI APIs directly.

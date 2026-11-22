@@ -122,7 +122,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     on(
       () => current()?.position,
       (position, previous) => {
-        if (position === undefined || previous === undefined || finished()) return;
+        if (position === undefined || previous === undefined) return;
         setAnnouncement(`Questão ${position + 1} de ${total()}.`);
       },
     ),

@@ -732,19 +732,35 @@ describe("Resolver: answer-sheet UI", () => {
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(help).not.toBeVisible();
-    expect(toggle).not.toHaveAttribute("aria-controls", "missing");
+    expect(toggle).toHaveAttribute("aria-controls", "shortcuts-help");
     expect(document.getElementById("shortcuts-help")).toBe(help);
   });
 
-  it("closes the shortcut help with Escape on the toggle and returns the focus", async () => {
+  it("closes the shortcut help with Escape and returns the focus from inside the panel", async () => {
     const { user } = await open("study");
     const toggle = screen.getByRole("button", { name: "Atalhos" });
+    expect(toggle).toHaveAttribute("aria-controls", "shortcuts-help");
+    expect(document.getElementById("shortcuts-help")).not.toBeNull();
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    toggle.focus();
+    const help = screen.getByRole("group", { name: "Atalhos de teclado" });
+    help.setAttribute("tabindex", "-1");
+    help.focus();
+    expect(help).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(toggle).toHaveFocus();
+  });
+
+  it("closes the shortcut help with Escape without stealing the focus from outside it", async () => {
+    const { user } = await open("study");
+    const toggle = screen.getByRole("button", { name: "Atalhos" });
+    await user.click(toggle);
+    const outside = screen.getByRole("button", { name: "Finalizar" });
+    outside.focus();
+    await user.keyboard("{Escape}");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(outside).toHaveFocus();
   });
 
   it("closes the shortcut help on a click outside it, but not inside", async () => {
@@ -812,6 +828,17 @@ describe("Resolver: answer-sheet UI", () => {
     expect(counts).toHaveTextContent("0 anuladas");
     expect(recap).toHaveFocus();
     await waitFor(() => expect(live()).toHaveTextContent("Tentativa finalizada."));
+  });
+
+  it("keeps announcing the question number while reviewing a finished attempt", async () => {
+    const { user } = await open("exam");
+    await user.click(screen.getByRole("button", { name: "Finalizar" }));
+    const dialog = await screen.findByRole("dialog", { name: "Finalizar tentativa?" });
+    await user.click(within(dialog).getByRole("button", { name: "Finalizar" }));
+    await screen.findByRole("region", { name: "Resultado" });
+    expect(live()).toHaveTextContent("Tentativa finalizada.");
+    await user.keyboard("{ArrowRight}");
+    await waitFor(() => expect(live()).toHaveTextContent("Questão 2 de 3."));
   });
 });
 

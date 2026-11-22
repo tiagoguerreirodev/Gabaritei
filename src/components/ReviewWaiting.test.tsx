@@ -18,7 +18,15 @@ const draft = (id: string): DraftListItem => ({
   checking: false,
 });
 // The outcome was already dismissed (as clicking "Revisar pacote" used to do).
-const idle: GenerationStatus = { running: false, startedAt: null, progress: null, outcome: null };
+const idle: GenerationStatus = {
+  running: false,
+  startedAt: null,
+  kind: null,
+  stage: "preparing",
+  progress: null,
+  outcome: null,
+  outcomeKind: null,
+};
 
 function backend(waiting: () => DraftListItem[], current: GenerationStatus = idle) {
   const calls: string[] = [];

@@ -22,10 +22,22 @@ const summary: DraftSummary = {
   durationMs: 41_000,
   costUsd: null,
   lines: [
-    { position: 1, state: "agreed" },
-    { position: 2, state: "disputed" },
-    { position: 3, state: "fixed" },
-    { position: 4, state: "agreed" },
+    { position: 1, state: "agreed", hasProblem: false, content: null },
+    {
+      position: 2,
+      state: "disputed",
+      hasProblem: false,
+      content: {
+        type: "multiple",
+        stem: "Enunciado da questão contestada?",
+        options: [
+          { id: "a", text: "Alternativa um" },
+          { id: "b", text: "Alternativa dois" },
+        ],
+      },
+    },
+    { position: 3, state: "fixed", hasProblem: false, content: null },
+    { position: 4, state: "agreed", hasProblem: false, content: null },
   ],
   problems: [],
   duplicates: 1,
@@ -92,7 +104,7 @@ beforeEach(() => {
 });
 
 describe("Revisar pacote", () => {
-  it("shows counts and one line per question, and nothing from the questions", async () => {
+  it("shows counts and one line per question, with content only for the flagged one", async () => {
     backend();
     renderAt("/revisar-pacote?id=d1");
 
@@ -104,12 +116,47 @@ describe("Revisar pacote", () => {
     expect(lines.getByText("Q3 · corrigida e conferida")).toBeVisible();
     expect(screen.getByText(/1 já existem no banco/)).toBeVisible();
 
-    // No stem, option, key or explanation is rendered, and the page never asks for them.
+    // The flagged question shows its stem and options, and only it.
+    expect(screen.getByText("Enunciado da questão contestada?")).toBeInTheDocument();
+    expect(screen.getByText("Alternativa dois")).toBeInTheDocument();
+    expect(screen.getByText("B")).toBeInTheDocument();
+    expect(document.querySelectorAll("details")).toHaveLength(1);
+
+    // No key, explanation or reference is rendered, and nothing can be answered here.
     const text = document.body.textContent ?? "";
-    for (const secret of ["Enunciado", "Alternativa", "Gabarito:", "Explicação", "answerId"]) {
+    for (const secret of ["Gabarito", "Explicação", "Referências", "answerId"]) {
       expect(text).not.toContain(secret);
     }
-    expect(document.querySelector("ol, textarea, [role=radio], [role=radiogroup]")).toBeNull();
+    expect(document.querySelector("textarea, [role=radio], [role=radiogroup]")).toBeNull();
+    const inputs = [...document.querySelectorAll("input")];
+    expect(inputs).toHaveLength(1);
+    expect(screen.getByRole("checkbox", { name: /Mostrar só as sinaladas/ })).toBe(inputs[0]);
+  });
+
+  it("explains why an agreed line expands and uses C/E for Certo/Errado", async () => {
+    backend({
+      ...summary,
+      lines: [
+        {
+          position: 1,
+          state: "agreed",
+          hasProblem: true,
+          content: {
+            type: "boolean",
+            stem: "Afirmação a julgar.",
+            options: [
+              { id: "c", text: "Certo" },
+              { id: "e", text: "Errado" },
+            ],
+          },
+        },
+      ],
+    });
+    renderAt("/revisar-pacote?id=d1");
+
+    expect(await screen.findByText("Q1 · conferida · com problema")).toBeVisible();
+    expect(screen.getByText("C")).toBeInTheDocument();
+    expect(screen.getByText("E")).toBeInTheDocument();
   });
 
   it("renders problems without any question content", async () => {
@@ -157,11 +204,108 @@ describe("Revisar pacote", () => {
     );
   });
 
+  it("puts the verdict counts at the top", async () => {
+    backend({ ...summary, problems: [{ position: 2, message: "Algo errado." }] });
+    renderAt("/revisar-pacote?id=d1");
+    const region = within(await screen.findByRole("region", { name: "Resumo da conferência" }));
+    expect(region.getByText("Conferidas").closest("div")).toHaveTextContent("2");
+    expect(region.getByText("Corrigidas e conferidas").closest("div")).toHaveTextContent("1");
+    expect(region.getByText("Contestadas").closest("div")).toHaveTextContent("1");
+    expect(region.getByText("Problemas").closest("div")).toHaveTextContent("1");
+    // It comes before the package details.
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(headings[0]).toBe("Resumo da conferência");
+  });
+
+  describe("curating flagged questions", () => {
+    const flaggedLine = (position: number, stem: string) => ({
+      position,
+      state: "disputed" as const,
+      hasProblem: false,
+      content: {
+        type: "multiple" as const,
+        stem,
+        options: [
+          { id: "a", text: `Opção A de ${stem}` },
+          { id: "b", text: `Opção B de ${stem}` },
+        ],
+      },
+    });
+    const two: DraftSummary = {
+      ...summary,
+      disputed: 2,
+      lines: [
+        { position: 1, state: "agreed", hasProblem: false, content: null },
+        flaggedLine(2, "Primeiro enunciado"),
+        { position: 3, state: "agreed", hasProblem: false, content: null },
+        flaggedLine(4, "Segundo enunciado"),
+      ],
+    };
+
+    it("filters to the flagged lines only", async () => {
+      backend(two);
+      const user = userEvent.setup();
+      renderAt("/revisar-pacote?id=d1");
+      const lines = within(await screen.findByRole("list", { name: "Questões do pacote" }));
+      expect(lines.getAllByRole("listitem", { hidden: true }).length).toBeGreaterThanOrEqual(4);
+      expect(lines.getByText("Q1 · conferida")).toBeVisible();
+
+      await user.click(screen.getByRole("checkbox", { name: /Mostrar só as sinaladas \(2\)/ }));
+      expect(lines.queryByText("Q1 · conferida")).not.toBeInTheDocument();
+      expect(lines.getByText("Q2 · contestada")).toBeVisible();
+      expect(lines.getByText("Q4 · contestada")).toBeVisible();
+
+      await user.click(screen.getByRole("checkbox", { name: /Mostrar só as sinaladas/ }));
+      expect(lines.getByText("Q1 · conferida")).toBeVisible();
+    });
+
+    it("expands and collapses every flagged line, never showing key or explanation", async () => {
+      backend(two);
+      const user = userEvent.setup();
+      renderAt("/revisar-pacote?id=d1");
+      await screen.findByText("Q2 · contestada");
+      const open = () => document.querySelectorAll("details[open]").length;
+      expect(open()).toBe(0);
+
+      await user.click(screen.getByRole("button", { name: "Expandir todas" }));
+      expect(open()).toBe(2);
+      expect(screen.getByText("Opção A de Segundo enunciado")).toBeVisible();
+      for (const secret of ["Gabarito", "Explicação", "Referências", "answerId"]) {
+        expect(document.body.textContent ?? "").not.toContain(secret);
+      }
+
+      await user.click(screen.getByRole("button", { name: "Recolher todas" }));
+      expect(open()).toBe(0);
+    });
+
+    it("hides the toolbar when nothing is flagged", async () => {
+      backend({ ...summary, lines: summary.lines.map((line) => ({ ...line, content: null })) });
+      renderAt("/revisar-pacote?id=d1");
+      await screen.findByText("Q2 · contestada");
+      expect(screen.queryByRole("button", { name: "Expandir todas" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    });
+  });
+
+  it("asks before discarding, and keeps the package when the user goes back", async () => {
+    const calls = backend();
+    const user = userEvent.setup();
+    renderAt("/revisar-pacote?id=d1");
+    await user.click(await screen.findByRole("button", { name: "Descartar" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Descartar o pacote?" }));
+    await user.click(dialog.getByRole("button", { name: "Voltar" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.some((c) => c.command === "draft_discard")).toBe(false);
+  });
+
   it("discards the package", async () => {
     const calls = backend();
     const user = userEvent.setup();
     renderAt("/revisar-pacote?id=d1");
     await user.click(await screen.findByRole("button", { name: "Descartar" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Descartar o pacote?" }));
+    expect(calls.some((c) => c.command === "draft_discard")).toBe(false);
+    await user.click(dialog.getByRole("button", { name: "Descartar pacote" }));
     await screen.findByRole("heading", { name: "Gerar" });
     expect(calls.some((c) => c.command === "draft_discard")).toBe(true);
     const commands = calls.map((c) => c.command);
@@ -186,6 +330,22 @@ describe("Revisar pacote", () => {
     await waitFor(() => expect(calls.some((c) => c.command === "blind_check_start")).toBe(true));
   });
 
+  it("only suggests importing the confirmed ones when there are some", async () => {
+    backend({
+      ...summary,
+      lines: summary.lines.map((line) => ({ ...line, state: "unchecked" as const })),
+      agreed: 0,
+      fixed: 0,
+      disputed: 0,
+      unchecked: 4,
+    });
+    const user = userEvent.setup();
+    renderAt("/revisar-pacote?id=d1");
+    await user.click(await screen.findByRole("button", { name: "Descartar" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Descartar o pacote?" }));
+    expect(dialog.queryByText(/Importar só as confirmadas/)).not.toBeInTheDocument();
+  });
+
   it("keeps every action off while the blind check is still running", async () => {
     backend({
       ...summary,
@@ -202,6 +362,9 @@ describe("Revisar pacote", () => {
       expect(screen.getByRole("button", { name })).toBeDisabled();
     }
     expect(screen.queryByRole("button", { name: "Conferir de novo" })).not.toBeInTheDocument();
+    // Partial counts are not shown as if final.
+    expect(screen.getAllByText(/Conferência em andamento/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/0 conferidas/)).not.toBeInTheDocument();
   });
 
   it("checks the unchecked questions before importing everything", async () => {
@@ -224,7 +387,14 @@ describe("Revisar pacote", () => {
           checked = true;
           return null;
         case "generation_status":
-          return { running: false, startedAt: null, progress: null, outcome: null };
+          return {
+            running: false,
+            startedAt: null,
+            kind: null,
+            stage: "preparing",
+            progress: null,
+            outcome: null,
+          };
         case "generation_dismiss":
           return null;
         case "draft_import":
@@ -267,7 +437,14 @@ describe("Revisar pacote", () => {
         case "generation_dismiss":
           return null;
         case "generation_status":
-          return { running: false, startedAt: null, progress: null, outcome: null };
+          return {
+            running: false,
+            startedAt: null,
+            kind: null,
+            stage: "preparing",
+            progress: null,
+            outcome: null,
+          };
         default:
           throw new Error(`Unexpected command: ${command}`);
       }

@@ -17,6 +17,7 @@ import { createBusy } from "./settings/busy";
 import AgentsSection from "./settings/AgentsSection";
 import RemNoteSection from "./settings/RemNoteSection";
 import RolesSection from "./settings/RolesSection";
+import ShortcutsSection from "./settings/ShortcutsSection";
 
 /** A deep copy where no two places share an object (unlike `structuredClone`). */
 function clone<T>(value: T): T {
@@ -34,6 +35,7 @@ export default function Settings() {
     <section class="page">
       <h1 id="settings-title">Configurações</h1>
       <AppearanceSection />
+      <ShortcutsSection />
       <Show
         when={!loaded.error}
         fallback={

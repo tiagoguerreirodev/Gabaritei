@@ -14,7 +14,7 @@ use crate::ai::discovery::{self, CliStatus};
 use crate::ai::draft_files;
 use crate::ai::explain;
 use crate::ai::generate::GenerateRequest;
-use crate::ai::jobs::{GenerationManager, GenerationStatus};
+use crate::ai::jobs::{GenerationKind, GenerationManager, GenerationStatus};
 use crate::ai::ondemand::OnDemand;
 use crate::ai::recheck::{self, RecheckView};
 use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportResult};
@@ -31,6 +31,7 @@ use crate::learning::{self, LearningOverview};
 use crate::metrics::{self, HomeSummary, Performance, PerformanceQuery};
 use crate::migrate::{self, LegacyImportOutcome, LegacyImportStatus};
 use crate::paths::AppPaths;
+use crate::shortcuts;
 
 /// Basic information about the running app.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -64,6 +65,18 @@ pub fn appearance(db: State<'_, Database>) -> AppResult<Appearance> {
 #[tauri::command]
 pub fn save_appearance(db: State<'_, Database>, appearance: Appearance) -> AppResult<Appearance> {
     db.with(|conn| appearance::save(conn, appearance))
+}
+
+/// Whether the Resolver's single-letter shortcuts are on.
+#[tauri::command]
+pub fn keyboard_shortcuts(db: State<'_, Database>) -> AppResult<bool> {
+    db.with(|conn| shortcuts::load(conn))
+}
+
+/// Turns the Resolver's single-letter shortcuts on or off; returns the saved value.
+#[tauri::command]
+pub fn save_keyboard_shortcuts(db: State<'_, Database>, enabled: bool) -> AppResult<bool> {
+    db.with(|conn| shortcuts::save(conn, enabled))
 }
 
 /// Area › matter › topic with question counts.
@@ -591,6 +604,7 @@ pub fn generation_start<R: Runtime>(
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
+        GenerationKind::Generate,
         move |cancel, progress| {
             let db = worker.state::<Database>();
             let secrets = worker.state::<Secrets>();
@@ -621,6 +635,7 @@ pub fn blind_check_start<R: Runtime>(
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
+        GenerationKind::Recheck,
         move |cancel, progress| {
             let db = worker.state::<Database>();
             let secrets = worker.state::<Secrets>();
@@ -638,7 +653,7 @@ pub fn drafts_waiting(db: State<'_, Database>) -> AppResult<Vec<DraftListItem>> 
     db.with(|conn| review::waiting(conn))
 }
 
-/// The spoiler-free summary of a draft: counts, problems and one state per question.
+/// The spoiler-free summary of a draft: counts, problems and one state per question (plus the stem and options of flagged ones).
 #[tauri::command]
 pub fn draft_summary(db: State<'_, Database>, id: String) -> AppResult<DraftSummary> {
     db.with(|conn| review::summary(conn, &id))
@@ -1319,7 +1334,7 @@ mod tests {
         // The status carries labels and an ID, never question content.
         assert!(!status.to_string().contains("crase"));
 
-        // The preview shows counts and states only: no stem, option, key or explanation.
+        // The preview shows counts and states, plus the stem and options of flagged questions only: never the key, explanation or references.
         let id = status["outcome"]["draftId"].as_str().unwrap().to_owned();
         let summary = app
             .call("draft_summary", json!({ "id": id }))
@@ -1327,7 +1342,7 @@ mod tests {
         assert_eq!(summary["count"], json!(1));
         assert_eq!(
             summary["lines"],
-            json!([{ "position": 1, "state": "agreed" }])
+            json!([{ "position": 1, "state": "agreed", "hasProblem": false, "content": null }])
         );
         let shown = summary.to_string();
         for secret in [
@@ -1488,6 +1503,23 @@ mod tests {
             json!({ "appearance": { "theme": "neon", "textSize": "l" } }),
         )
         .expect_err("an unknown theme is refused");
+    }
+
+    #[test]
+    fn keyboard_shortcuts_default_on_then_save_through_ipc() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
+        assert_eq!(
+            app.call("keyboard_shortcuts", json!({})).expect("loads"),
+            json!(true)
+        );
+        let saved = app
+            .call("save_keyboard_shortcuts", json!({ "enabled": false }))
+            .expect("saves");
+        assert_eq!(saved, json!(false));
+        assert_eq!(
+            app.call("keyboard_shortcuts", json!({})).expect("reloads"),
+            json!(false)
+        );
     }
 
     #[test]

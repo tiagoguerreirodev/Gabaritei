@@ -149,6 +149,11 @@ pub enum ProgressKind {
 pub struct Progress {
     pub kind: ProgressKind,
     pub label: String,
+    /// Set only by the job code at the start of a pipeline stage. The job manager keeps the
+    /// latest one, so runner events (which carry none) never reset the stage.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub stage: Option<crate::ai::jobs::GenerationStage>,
 }
 
 impl Progress {
@@ -156,6 +161,19 @@ impl Progress {
         Self {
             kind,
             label: label.to_owned(),
+            stage: None,
+        }
+    }
+
+    /// A progress event that starts a pipeline stage.
+    pub fn starting(
+        stage: crate::ai::jobs::GenerationStage,
+        kind: ProgressKind,
+        label: &str,
+    ) -> Self {
+        Self {
+            stage: Some(stage),
+            ..Self::new(kind, label)
         }
     }
 }

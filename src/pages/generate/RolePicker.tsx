@@ -2,7 +2,7 @@ import { For } from "solid-js";
 import type { Agent } from "../../bindings/Agent";
 import type { RoleConfig } from "../../bindings/RoleConfig";
 import { catalogState, roleForAgent } from "../../catalog";
-import { EffortField, ModelField } from "../../components/ModelOptions";
+import { EffortField, FastField, ModelField } from "../../components/ModelOptions";
 import { agentLabels, agents } from "../settings/labels";
 
 /** Agent, model and effort for one role, for this generation only. */
@@ -26,6 +26,7 @@ export default function RolePicker(props: {
       </select>
       <ModelField label={props.label} value={props.value} onChange={props.onChange} />
       <EffortField label={props.label} value={props.value} onChange={props.onChange} />
+      <FastField label={props.label} value={props.value} onChange={props.onChange} />
     </div>
   );
 }

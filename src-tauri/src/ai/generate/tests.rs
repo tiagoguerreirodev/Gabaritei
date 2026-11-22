@@ -303,6 +303,7 @@ mod pipeline {
             agent: crate::ai::agent::Agent::Codex,
             model: "modelo-do-formulario".into(),
             effort: crate::ai::agent::Effort::Low,
+            fast: false,
         });
         let draft = run(&db, &secrets, job).unwrap();
         assert_eq!(draft.request.request.sources.attachments, ["Lei 8.112.md"]);
@@ -353,6 +354,7 @@ mod request_form {
                 agent: crate::ai::agent::Agent::Codex,
                 model: model.into(),
                 effort: crate::ai::agent::Effort::Low,
+                fast: false,
             });
             assert!(bad.validate().is_err(), "{model:?}");
         }

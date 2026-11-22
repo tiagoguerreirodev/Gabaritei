@@ -73,6 +73,8 @@ pub struct JobSpec {
     pub cli: PathBuf,
     pub model: String,
     pub effort: Effort,
+    /// Run in the agent's Fast Mode.
+    pub fast: bool,
     /// Role instructions (pt-BR): who the agent is and the rules it follows.
     pub instructions: String,
     /// The task, including any data. May contain answer keys: never logged.
@@ -99,6 +101,7 @@ impl JobSpec {
             cli,
             model,
             effort,
+            fast: false,
             instructions: String::new(),
             prompt: String::new(),
             schema,

@@ -75,6 +75,11 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         "--no-session-persistence".into(),
         "--disable-slash-commands".into(),
     ];
+    if spec.fast {
+        // Fast Mode is an opt-in setting in print mode (verified in docs/ai-cli.md).
+        args.push("--settings".into());
+        args.push(r#"{"fastMode":true}"#.into());
+    }
     if let Some(config) = &work.mcp_config {
         args.push("--mcp-config".into());
         args.push(config.to_string_lossy().into_owned());

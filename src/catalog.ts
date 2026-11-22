@@ -78,6 +78,17 @@ export function effortOptions(value: CatalogValue, config: RoleConfig): Effort[]
     : fallbackEfforts(config.agent);
 }
 
+/**
+ * Whether the role's model has Fast Mode. Only Codex's list says so. Claude's support is visible
+ * only per run, so it (and any list that couldn't be read) is `"unknown"`, which shows the option.
+ */
+export function fastSupport(value: CatalogValue, config: RoleConfig): "yes" | "no" | "unknown" {
+  if (config.agent !== "codex") return "unknown";
+  const model = readyList(value, config.agent)?.models.find((entry) => entry.id === config.model);
+  if (!model) return "unknown";
+  return model.supportsFast ? "yes" : "no";
+}
+
 /** Why a role can't run with the lists as loaded, in pt-BR, or `undefined` if it can. */
 export function roleProblem(value: CatalogValue, config: RoleConfig): string | undefined {
   const list = readyList(value, config.agent);
@@ -86,6 +97,9 @@ export function roleProblem(value: CatalogValue, config: RoleConfig): string | u
   if (!model) return `O modelo “${config.model}” não está mais disponível. Escolha outro.`;
   if (model.efforts.length > 0 && !model.efforts.includes(config.effort)) {
     return `O esforço “${config.effort}” não existe para o modelo “${config.model}”. Escolha outro.`;
+  }
+  if (config.fast && !model.supportsFast) {
+    return `O modelo “${config.model}” não tem modo rápido. Desligue o modo rápido.`;
   }
   return undefined;
 }
@@ -105,7 +119,11 @@ function closestEffort(supported: Effort[], wanted: Effort): Effort {
 /** The role after switching to `model`, keeping the effort when the model supports it. */
 export function roleForModel(value: CatalogValue, current: RoleConfig, model: string): RoleConfig {
   const next = { ...current, model };
-  return { ...next, effort: closestEffort(effortOptions(value, next), current.effort) };
+  return {
+    ...next,
+    effort: closestEffort(effortOptions(value, next), current.effort),
+    fast: current.fast && fastSupport(value, next) !== "no",
+  };
 }
 
 /**
@@ -114,6 +132,6 @@ export function roleForModel(value: CatalogValue, current: RoleConfig, model: st
  */
 export function roleForAgent(value: CatalogValue, agent: Agent, current: RoleConfig): RoleConfig {
   const first = readyList(value, agent)?.models[0];
-  const next = { agent, model: first?.id ?? "", effort: current.effort };
+  const next = { agent, model: first?.id ?? "", effort: current.effort, fast: false };
   return { ...next, effort: closestEffort(effortOptions(value, next), current.effort) };
 }

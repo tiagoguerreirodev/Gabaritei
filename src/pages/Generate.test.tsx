@@ -13,12 +13,12 @@ import { resetCatalog } from "../catalog";
 import { resetGenerationWatch, watchGeneration } from "../generation";
 import Generate from "./Generate";
 
-const role = { agent: "codex", model: "gpt-6.2-sol", effort: "xhigh" } as const;
+const role = { agent: "codex", model: "gpt-6.2-sol", effort: "xhigh", fast: false } as const;
 const settings: AiSettings = {
   cliPaths: { claude: null, codex: null },
   roles: {
     generate: role,
-    blindCheck: { ...role, effort: "high" },
+    blindCheck: { ...role, effort: "high", fast: false },
     recheck: role,
     explain: role,
   },
@@ -51,8 +51,8 @@ const listed: Catalog = {
       agent: "codex",
       status: { kind: "ready" },
       models: [
-        { id: "gpt-6.2-sol", label: "GPT-6.2-Sol", efforts: ["high", "xhigh"] },
-        { id: "gpt-6-luna", label: "GPT-6-Luna", efforts: ["medium", "high"] },
+        { id: "gpt-6.2-sol", label: "GPT-6.2-Sol", efforts: ["high", "xhigh"], supportsFast: true },
+        { id: "gpt-6-luna", label: "GPT-6-Luna", efforts: ["medium", "high"], supportsFast: false },
       ],
     },
     {
@@ -169,9 +169,26 @@ describe("Gerar", () => {
       format: "boolean",
       instructions: "Foque em jurisprudência",
       sources: { remnote: false, web: false, attachments: [] },
-      generator: { agent: "codex", model: "gpt-6.2-sol", effort: "xhigh" },
-      checker: { agent: "codex", model: "gpt-6.2-sol-x", effort: "high" },
+      generator: { agent: "codex", model: "gpt-6.2-sol", effort: "xhigh", fast: false },
+      checker: { agent: "codex", model: "gpt-6.2-sol-x", effort: "high", fast: false },
     });
+  });
+
+  it("starts a generation with Fast Mode on the chosen role", async () => {
+    const calls = backend();
+    const user = userEvent.setup();
+    renderPage();
+    await fillTopic(user);
+    await user.click(await screen.findByRole("checkbox", { name: "Modo rápido: Gerador" }));
+    await user.click(screen.getByRole("button", { name: "Gerar" }));
+    const start = await waitFor(() => {
+      const call = calls.find((c) => c.command === "generation_start");
+      expect(call).toBeDefined();
+      return call!;
+    });
+    const request = start.args.request as GenerateRequest;
+    expect(request.generator?.fast).toBe(true);
+    expect(request.checker?.fast).toBe(false);
   });
 
   it("notes whether the topic is new or already has questions", async () => {

@@ -6,10 +6,10 @@ import type { AiSettings } from "../bindings/AiSettings";
 import type { AiSettingsInput } from "../bindings/AiSettingsInput";
 import type { Catalog } from "../bindings/Catalog";
 import { resetCatalog } from "../catalog";
-import { Toaster } from "../components/toasts";
+import { Toaster, dismissToast } from "../components/toasts";
 import Settings from "./Settings";
 
-const role = { agent: "codex", model: "gpt-6.2-sol", effort: "xhigh" } as const;
+const role = { agent: "codex", model: "gpt-6.2-sol", effort: "xhigh", fast: false } as const;
 const defaults: AiSettings = {
   cliPaths: { claude: null, codex: null },
   roles: { generate: role, blindCheck: role, recheck: role, explain: role },
@@ -93,7 +93,14 @@ const listed: Catalog = {
     {
       agent: "codex",
       status: { kind: "ready" },
-      models: [{ id: "gpt-6.2-sol", label: "GPT-6.2-Sol", efforts: ["low", "xhigh", "ultra"] }],
+      models: [
+        {
+          id: "gpt-6.2-sol",
+          label: "GPT-6.2-Sol",
+          efforts: ["low", "xhigh", "ultra"],
+          supportsFast: true,
+        },
+      ],
     },
     {
       agent: "claude",
@@ -103,7 +110,10 @@ const listed: Catalog = {
   ],
 };
 
-beforeEach(() => resetCatalog());
+beforeEach(() => {
+  resetCatalog();
+  for (let id = 0; id < 50; id++) dismissToast(id);
+});
 
 describe("Configurações", () => {
   it("shows the four roles with the defaults", async () => {
@@ -121,6 +131,18 @@ describe("Configurações", () => {
       expect(within(row).getByDisplayValue("Extra alto")).toBeTruthy();
       expect(within(row).getByDisplayValue("Codex")).toBeTruthy();
     }
+  });
+
+  it("saves the fast flag of a role", async () => {
+    const calls = backend();
+    const user = userEvent.setup();
+    render(() => <Settings />);
+    await user.click(await screen.findByRole("checkbox", { name: "Modo rápido: Gerar questões" }));
+    await user.click(screen.getByRole("button", { name: "Salvar configurações" }));
+    const save = calls.find((c) => c.command === "save_ai_settings");
+    const input = (save?.args as { input: AiSettingsInput }).input;
+    expect(input.roles.generate.fast).toBe(true);
+    expect(input.roles.explain.fast).toBe(false);
   });
 
   it("saves an edited role", async () => {
@@ -146,6 +168,7 @@ describe("Configurações", () => {
       agent: "claude",
       model: "claude-sonnet-5-5",
       effort: "xhigh",
+      fast: false,
     });
     expect(input.roles.generate.model).toBe("gpt-6.2-sol");
     expect(await screen.findByText("Configurações salvas.")).toBeTruthy();
@@ -285,7 +308,10 @@ describe("Configurações", () => {
   it("warns about a role whose model the list no longer has, but still lets the settings be saved", async () => {
     const stale: AiSettings = {
       ...defaults,
-      roles: { ...defaults.roles, explain: { agent: "codex", model: "antigo", effort: "low" } },
+      roles: {
+        ...defaults.roles,
+        explain: { agent: "codex", model: "antigo", effort: "low", fast: false },
+      },
     };
     const calls = backend(stale, undefined, undefined, listed);
     const user = userEvent.setup();

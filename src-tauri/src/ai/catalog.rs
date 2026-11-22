@@ -28,6 +28,8 @@ pub struct ModelOption {
     /// The name shown in the UI.
     pub label: String,
     pub efforts: Vec<Effort>,
+    /// Whether the model has a Fast Mode tier (Codex only; the Claude list is never ready).
+    pub supports_fast: bool,
 }
 
 /// Whether an agent's list could be read.
@@ -175,6 +177,12 @@ pub fn ensure_listed(catalog: &Catalog, config: &RoleConfig, label: &str) -> App
         return Err(AppError::Invalid(format!(
             "O esforço “{}” não existe para o modelo “{}” de “{label}”. Escolha outro em Configurações.",
             config.effort.as_str(),
+            config.model
+        )));
+    }
+    if config.fast && !model.supports_fast {
+        return Err(AppError::Invalid(format!(
+            "O modelo “{}” de “{label}” não tem modo rápido. Desligue o modo rápido em Configurações.",
             config.model
         )));
     }

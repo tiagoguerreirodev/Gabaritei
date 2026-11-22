@@ -34,6 +34,7 @@ fn ready(agent: Agent, id: &str) -> AgentCatalog {
             id: id.to_owned(),
             label: id.to_owned(),
             efforts: vec![Effort::Low, Effort::High],
+            supports_fast: false,
         }],
     }
 }
@@ -144,6 +145,13 @@ fn parse_maps_efforts_and_drops_unknown_ones() {
 }
 
 #[test]
+fn parse_marks_models_that_have_a_priority_tier() {
+    let models = codex::parse_models(CODEX_JSON).unwrap();
+    assert!(models[0].supports_fast);
+    assert!(!models[1].supports_fast);
+}
+
+#[test]
 fn parse_rejects_text_that_is_not_the_catalog() {
     assert!(codex::parse_models("not json").is_err());
     assert!(codex::parse_models(r#"{"other":[]}"#).is_err());
@@ -245,6 +253,7 @@ fn role(agent: Agent, model: &str, effort: Effort) -> RoleConfig {
         agent,
         model: model.to_owned(),
         effort,
+        fast: false,
     }
 }
 
@@ -371,4 +380,39 @@ fn clear_forgets_the_lists_so_the_next_get_reads_them_again() {
     assert!(cache.cached().is_none());
     cache.get(&CliPaths::default());
     assert_eq!(loads.load(Ordering::SeqCst), 2);
+}
+
+fn fast_catalog(supports_fast: bool) -> Catalog {
+    let mut agent_catalog = ready(Agent::Codex, "m1");
+    agent_catalog.models[0].supports_fast = supports_fast;
+    catalog_of(agent_catalog)
+}
+
+#[test]
+fn fast_is_refused_for_a_listed_model_without_a_fast_tier() {
+    let mut config = role(Agent::Codex, "m1", Effort::Low);
+    config.fast = true;
+    let error = ensure_listed(&fast_catalog(false), &config, "Gerar questões").unwrap_err();
+    assert!(error.to_string().contains("modo rápido"), "{error}");
+}
+
+#[test]
+fn fast_is_allowed_for_a_model_with_a_fast_tier() {
+    let mut config = role(Agent::Codex, "m1", Effort::Low);
+    config.fast = true;
+    assert!(ensure_listed(&fast_catalog(true), &config, "Gerar questões").is_ok());
+}
+
+#[test]
+fn fast_is_allowed_when_the_list_is_unavailable() {
+    let mut config = role(Agent::Claude, "opus", Effort::Low);
+    config.fast = true;
+    let unavailable = AgentCatalog {
+        agent: Agent::Claude,
+        status: CatalogStatus::Unavailable {
+            reason: "x".to_owned(),
+        },
+        models: Vec::new(),
+    };
+    assert!(ensure_listed(&catalog_of(unavailable), &config, "Gerar questões").is_ok());
 }

@@ -29,7 +29,7 @@ against the installed CLIs with real runs, not only `--help`.
 ```
 claude -p --output-format stream-json --verbose --json-schema '<schema>'
   --model <m> --effort <low|medium|high|xhigh|max>
-  --setting-sources "" --strict-mcp-config
+  --setting-sources "" --strict-mcp-config [--settings '{"fastMode":true}']
   --tools "Read,Grep,Glob[,WebSearch,WebFetch]"
   --allowedTools "Read(./**),Grep(./**),Glob(./**)[,WebSearch,WebFetch][,mcp__remnote__<tool>...]"
   --permission-mode dontAsk --no-session-persistence --disable-slash-commands
@@ -61,6 +61,7 @@ claude -p --output-format stream-json --verbose --json-schema '<schema>'
 codex exec - --output-schema schema.json -o saida.json --json
   --sandbox read-only --skip-git-repo-check --ephemeral --ignore-rules --strict-config
   -m <model> -c model_reasoning_effort=<e> -c web_search=<live|disabled>
+  [-c service_tier="priority"]
   [--ignore-user-config] [--disable shell_tool --disable unified_exec]
   [-c mcp_servers.remnote.url="<url>" -c mcp_servers.remnote.bearer_token_env_var="GABARITEI_REMNOTE_TOKEN"
    -c mcp_servers.remnote.enabled_tools='["<tool>",...]']
@@ -86,6 +87,10 @@ codex exec - --output-schema schema.json -o saida.json --json
   `service_tiers` means the model supports it. `-c service_tier="priority"` is accepted by
   `codex exec --strict-config` and a made-up key is rejected, but the value is not validated and
   the events do not show which tier served a request, so **the effect is unobserved**.
+- **Fast Mode in the app:** a role's `fast` flag adds exactly one of the two arguments above, and
+  only when it is on; with it off the argument lists are unchanged. The app never records Fast Mode
+  use. For a listed Codex model without a Fast tier the app refuses the run; Claude and unreadable
+  lists are never refused (support is unknown).
 - **Fast Mode (Claude):** `--settings '{"fastMode":true}'` turns it on with `--setting-sources ""`
   in place (`system`/`init` `fast_mode_state` becomes `on` for Opus and stays `off` for Sonnet).
   Without extra usage on the account the `result` event reports `off` with

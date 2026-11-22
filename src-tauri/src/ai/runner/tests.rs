@@ -395,6 +395,36 @@ mod arguments {
     }
 
     #[test]
+    fn claude_fast_adds_the_fast_mode_setting() {
+        let mut job = spec(Agent::Claude, "claude".into());
+        job.fast = true;
+        let (args, _) = plan_for(&job);
+        assert!(has_pair(&args, "--settings", r#"{"fastMode":true}"#));
+        // The isolation flags stay.
+        assert!(has_pair(&args, "--setting-sources", ""));
+    }
+
+    #[test]
+    fn codex_fast_adds_the_priority_service_tier() {
+        let mut job = spec(Agent::Codex, "codex".into());
+        job.fast = true;
+        let (args, _) = plan_for(&job);
+        assert!(has_pair(&args, "-c", r#"service_tier="priority""#));
+    }
+
+    #[test]
+    fn fast_off_adds_no_arguments() {
+        for agent in [Agent::Claude, Agent::Codex] {
+            let (args, _) = plan_for(&spec(agent, "cli".into()));
+            assert!(!args.iter().any(|a| a == "--settings"), "{agent:?}");
+            assert!(
+                !args.iter().any(|a| a.starts_with("service_tier")),
+                "{agent:?}"
+            );
+        }
+    }
+
+    #[test]
     fn claude_gets_web_tools_only_when_asked() {
         let mut job = spec(Agent::Claude, "claude".into());
         job.web = true;

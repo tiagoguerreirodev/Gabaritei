@@ -7,25 +7,53 @@ import { ErrorState, Loading } from "../../components/states";
 import { showError, showToast } from "../../components/toasts";
 import Navigator from "./Navigator";
 import QuestionCard from "./QuestionCard";
+import { loadShortcuts, shortcutsEnabled } from "../../shortcuts";
 import { formatPercent, optionLetters } from "./format";
 
 const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
 
+/** End-of-attempt recap: points over evaluated questions, achievement and the four counts. The
+ * counts carry a shape as well as a colour. Comparing with the previous attempt is left out:
+ * no existing command returns the scores of earlier attempts. */
 function ScoreSummary(props: { score: Score }) {
+  let section: HTMLElement | undefined;
+  onMount(() => section?.focus());
   return (
-    <section class="card score" aria-label="Resultado">
+    <section class="card score recap" aria-label="Resultado" tabindex="-1" ref={section}>
       <h2>Resultado</h2>
+      <p class="recap-headline" data-testid="recap-points">
+        <strong>
+          {props.score.correct} de {props.score.evaluated}
+        </strong>{" "}
+        pontos · {formatPercent(props.score.achievement)} de aproveitamento
+      </p>
+      <ul class="recap-counts" aria-label="Contagem por resultado">
+        <li class="recap-correct">
+          <span class="recap-glyph" aria-hidden="true">
+            ✓
+          </span>
+          {props.score.correct} {props.score.correct === 1 ? "certa" : "certas"}
+        </li>
+        <li class="recap-wrong">
+          <span class="recap-glyph" aria-hidden="true">
+            ✕
+          </span>
+          {props.score.wrong} {props.score.wrong === 1 ? "errada" : "erradas"}
+        </li>
+        <li class="recap-blank">
+          <span class="recap-glyph" aria-hidden="true">
+            ○
+          </span>
+          {props.score.blank} em branco
+        </li>
+        <li class="recap-annulled">
+          <span class="recap-glyph recap-struck" aria-hidden="true">
+            –
+          </span>
+          {props.score.annulled} {props.score.annulled === 1 ? "anulada" : "anuladas"}
+        </li>
+      </ul>
       <dl class="facts">
-        <dt>Acertos</dt>
-        <dd>{props.score.correct}</dd>
-        <dt>Erros</dt>
-        <dd>{props.score.wrong}</dd>
-        <dt>Em branco</dt>
-        <dd>{props.score.blank}</dd>
-        <dt>Anuladas</dt>
-        <dd>{props.score.annulled}</dd>
-        <dt>Aproveitamento</dt>
-        <dd>{formatPercent(props.score.achievement)}</dd>
         <dt>Acerto entre respondidas</dt>
         <dd>{formatPercent(props.score.accuracy)}</dd>
       </dl>
@@ -49,6 +77,11 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
   const [pending, setPending] = createSignal<string | null>(null);
   // The confirmed answer is on its way to the backend: no new mark or confirmation until it lands.
   const [sending, setSending] = createSignal(false);
+  // Text for the polite live region: the question number on navigation, the outcome on answers.
+  const [announcement, setAnnouncement] = createSignal("");
+  const [helpOpen, setHelpOpen] = createSignal(false);
+  let shortcutsBox: HTMLDivElement | undefined;
+  let shortcutsToggle: HTMLButtonElement | undefined;
 
   createEffect(
     on(
@@ -81,6 +114,19 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
   const locked = () => finished() || current()?.reveal != null;
   const total = () => view()?.questions.length ?? 0;
   const answered = () => view()?.questions.filter((q) => q.choice !== null).length ?? 0;
+
+  // Only the question number is announced here. A confirmed answer hands the focus to the reveal
+  // section, which reads the outcome; annulling and key changes have their own toast. Finishing
+  // is announced by `finish()`.
+  createEffect(
+    on(
+      () => current()?.position,
+      (position, previous) => {
+        if (position === undefined || previous === undefined) return;
+        setAnnouncement(`Questão ${position + 1} de ${total()}.`);
+      },
+    ),
+  );
 
   // Any action other than the letter after `X` cancels the pending elimination.
   const select = (i: number) => {
@@ -199,6 +245,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
       setDialog(null);
       setPending(null);
       setIndex(0);
+      setAnnouncement("Tentativa finalizada.");
     } catch (error) {
       showError(error);
     }
@@ -217,6 +264,12 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape" && helpOpen() && !dialog()) {
+      const inside = shortcutsBox?.contains(document.activeElement);
+      setHelpOpen(false);
+      if (inside) shortcutsToggle?.focus();
+      return;
+    }
     if (dialog() || event.ctrlKey || event.metaKey || event.altKey || typing(event.target)) return;
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
@@ -238,6 +291,8 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
       confirm();
       return;
     }
+    // Single letters are a convenience that can be turned off, and never fire with Shift.
+    if (!shortcutsEnabled() || event.shiftKey) return;
     const key = event.key.toUpperCase();
     const optionAt = (letter: string) => q.options[optionLetters(q).indexOf(letter)];
     if (eliminating()) {
@@ -266,128 +321,209 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     }
     event.preventDefault();
   };
-  onMount(() => window.addEventListener("keydown", onKeyDown));
+  onMount(() => {
+    void loadShortcuts();
+    window.addEventListener("keydown", onKeyDown);
+  });
   onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  // Closes the shortcut help when the pointer goes down anywhere outside it.
+  createEffect(() => {
+    if (!helpOpen()) return;
+    const close = (event: PointerEvent) => {
+      if (!(event.target instanceof Node && shortcutsBox?.contains(event.target))) {
+        setHelpOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", close);
+    onCleanup(() => document.removeEventListener("pointerdown", close));
+  });
 
   return (
-    <Switch>
-      <Match when={loadError()}>{(error) => <ErrorState error={error()} />}</Match>
-      <Match when={!view()}>
-        <Loading label="Carregando tentativa…" />
-      </Match>
-      <Match when={view()}>
-        {(attempt) => (
-          <div class="resolver">
-            <header class="resolver-header">
-              <div>
-                <h1>{attempt().title}</h1>
-                <p class="muted">
-                  <span class="badge">{modeLabel[attempt().feedbackMode]}</span>{" "}
-                  <span data-testid="progress">
-                    {answered()} de {total()} respondidas
-                  </span>
-                  <Show when={finished()}> · finalizada</Show>
-                </p>
-              </div>
-              <div class="resolver-actions">
-                <Show
-                  when={!finished()}
-                  fallback={
-                    <button type="button" onClick={() => props.onLeave()}>
-                      Voltar ao Banco
-                    </button>
-                  }
-                >
-                  <button type="button" onClick={() => setDialog("abandon")}>
-                    Abandonar
-                  </button>
-                  <button type="button" class="primary" onClick={() => setDialog("finish")}>
-                    Finalizar
-                  </button>
-                </Show>
-              </div>
-            </header>
-            <Show when={attempt().score}>{(score) => <ScoreSummary score={score()} />}</Show>
-            <Navigator questions={attempt().questions} current={index()} onSelect={select} />
-            <Show when={current()}>
-              {(q) => (
-                <QuestionCard
-                  question={q()}
-                  number={index() + 1}
-                  total={total()}
-                  locked={locked()}
-                  finished={finished()}
-                  eliminating={eliminating()}
-                  pending={pending()}
-                  confirmRequired={attempt().feedbackMode === "study"}
-                  onAnswer={choose}
-                  onConfirm={confirm}
-                  onEliminate={eliminate}
-                  onFlag={flag}
-                  onAnnul={annul}
-                  onExplain={explain}
-                  onRecheck={recheck}
-                  onRecheckApply={applyRecheck}
-                  onRecheckDismiss={dismissRecheck}
-                  onAiCancel={() => void api.aiRequestCancel().catch(showError)}
-                />
-              )}
-            </Show>
-            <footer class="resolver-footer">
-              <button type="button" disabled={index() === 0} onClick={() => move(-1)}>
-                ← Anterior
-              </button>
-              <span class="muted shortcuts">
-                Atalhos: A–E (ou C/E){" "}
-                {attempt().feedbackMode === "study" ? "escolhe · Enter confirma" : "responde"} · X +
-                letra elimina · F marca · ←/→ navega
-              </span>
-              <button type="button" disabled={index() >= total() - 1} onClick={() => move(1)}>
-                Próxima →
-              </button>
-            </footer>
-            <Show when={dialog() === "finish"}>
-              <Modal
-                title="Finalizar tentativa?"
-                onClose={() => setDialog(null)}
-                footer={
-                  <>
-                    <button type="button" onClick={() => setDialog(null)}>
-                      Continuar resolvendo
-                    </button>
-                    <button type="button" class="primary" onClick={() => void finish()}>
-                      Finalizar
-                    </button>
-                  </>
-                }
-              >
-                <p data-testid="finish-summary">
-                  {answered()} respondidas e {total() - answered()} em branco.
-                </p>
-                <p class="muted">Depois de finalizar, as respostas não podem mais mudar.</p>
-              </Modal>
-            </Show>
-            <Show when={dialog() === "abandon"}>
-              <Modal
-                title="Abandonar tentativa?"
-                onClose={() => setDialog(null)}
-                footer={
-                  <>
-                    <button type="button" onClick={() => setDialog(null)}>
-                      Voltar
-                    </button>
-                    <button type="button" class="primary danger" onClick={() => void abandon()}>
+    <>
+      <div class="sr-only" aria-live="polite" aria-atomic="true" data-testid="live-region">
+        {announcement()}
+      </div>
+      <Switch>
+        <Match when={loadError()}>
+          {(error) => (
+            <>
+              <h1>Resolver</h1>
+              <ErrorState error={error()} />
+            </>
+          )}
+        </Match>
+        <Match when={!view()}>
+          <h1>Resolver</h1>
+          <Loading label="Carregando tentativa…" />
+        </Match>
+        <Match when={view()}>
+          {(attempt) => (
+            <div class="resolver">
+              <header class="resolver-header">
+                <div>
+                  <h1>{attempt().title}</h1>
+                  <p class="muted">
+                    <span class="badge">{modeLabel[attempt().feedbackMode]}</span>{" "}
+                    <span data-testid="progress">
+                      {answered()} de {total()} respondidas
+                    </span>
+                    <Show when={finished()}> · finalizada</Show>
+                  </p>
+                  <div
+                    class="progress-bar"
+                    role="progressbar"
+                    aria-label="Progresso da tentativa"
+                    aria-valuemin={0}
+                    aria-valuemax={total()}
+                    aria-valuenow={answered()}
+                    aria-valuetext={`${answered()} de ${total()} respondidas`}
+                  >
+                    <div
+                      class="progress-fill"
+                      style={{ width: `${total() === 0 ? 0 : (answered() / total()) * 100}%` }}
+                    />
+                  </div>
+                </div>
+                <div class="resolver-actions">
+                  <Show
+                    when={!finished()}
+                    fallback={
+                      <button type="button" onClick={() => props.onLeave()}>
+                        Voltar ao Banco
+                      </button>
+                    }
+                  >
+                    <button type="button" onClick={() => setDialog("abandon")}>
                       Abandonar
                     </button>
-                  </>
-                }
-              >
-                <p>A tentativa e suas respostas serão apagadas e não entram no histórico.</p>
-              </Modal>
-            </Show>
-          </div>
-        )}
-      </Match>
-    </Switch>
+                    <button type="button" class="primary" onClick={() => setDialog("finish")}>
+                      Finalizar
+                    </button>
+                  </Show>
+                </div>
+              </header>
+              <Show when={attempt().score}>{(score) => <ScoreSummary score={score()} />}</Show>
+              <Navigator questions={attempt().questions} current={index()} onSelect={select} />
+              <Show when={current()}>
+                {(q) => (
+                  <QuestionCard
+                    question={q()}
+                    number={index() + 1}
+                    total={total()}
+                    locked={locked()}
+                    finished={finished()}
+                    eliminating={eliminating()}
+                    pending={pending()}
+                    confirmRequired={attempt().feedbackMode === "study"}
+                    onAnswer={choose}
+                    onConfirm={confirm}
+                    onEliminate={eliminate}
+                    onFlag={flag}
+                    onAnnul={annul}
+                    onExplain={explain}
+                    onRecheck={recheck}
+                    onRecheckApply={applyRecheck}
+                    onRecheckDismiss={dismissRecheck}
+                    onAiCancel={() => void api.aiRequestCancel().catch(showError)}
+                  />
+                )}
+              </Show>
+              <footer class="resolver-footer">
+                <button type="button" disabled={index() === 0} onClick={() => move(-1)}>
+                  ← Anterior
+                </button>
+                <div class="shortcuts" ref={shortcutsBox}>
+                  <button
+                    type="button"
+                    class="shortcuts-toggle"
+                    ref={shortcutsToggle}
+                    aria-expanded={helpOpen()}
+                    aria-controls="shortcuts-help"
+                    onClick={() => setHelpOpen(!helpOpen())}
+                  >
+                    Atalhos
+                  </button>
+                  <div
+                    id="shortcuts-help"
+                    class="shortcuts-panel"
+                    role="group"
+                    aria-label="Atalhos de teclado"
+                    hidden={!helpOpen()}
+                  >
+                    <Show
+                      when={shortcutsEnabled()}
+                      fallback={<p>Os atalhos de uma tecla estão desativados em Configurações.</p>}
+                    >
+                      <ul>
+                        <li>
+                          <kbd>A</kbd>–<kbd>E</kbd> (ou <kbd>C</kbd>/<kbd>E</kbd>){" "}
+                          {attempt().feedbackMode === "study" ? "escolhe" : "responde"}
+                        </li>
+                        <Show when={attempt().feedbackMode === "study"}>
+                          <li>
+                            <kbd>Enter</kbd> confirma
+                          </li>
+                        </Show>
+                        <li>
+                          <kbd>X</kbd> e uma letra elimina
+                        </li>
+                        <li>
+                          <kbd>F</kbd> marca para revisar
+                        </li>
+                      </ul>
+                    </Show>
+                    <p>
+                      <kbd>←</kbd> <kbd>→</kbd> navegam entre as questões.
+                    </p>
+                  </div>
+                </div>
+                <button type="button" disabled={index() >= total() - 1} onClick={() => move(1)}>
+                  Próxima →
+                </button>
+              </footer>
+              <Show when={dialog() === "finish"}>
+                <Modal
+                  title="Finalizar tentativa?"
+                  onClose={() => setDialog(null)}
+                  footer={
+                    <>
+                      <button type="button" onClick={() => setDialog(null)}>
+                        Continuar resolvendo
+                      </button>
+                      <button type="button" class="primary" onClick={() => void finish()}>
+                        Finalizar
+                      </button>
+                    </>
+                  }
+                >
+                  <p data-testid="finish-summary">
+                    {answered()} respondidas e {total() - answered()} em branco.
+                  </p>
+                  <p class="muted">Depois de finalizar, as respostas não podem mais mudar.</p>
+                </Modal>
+              </Show>
+              <Show when={dialog() === "abandon"}>
+                <Modal
+                  title="Abandonar tentativa?"
+                  onClose={() => setDialog(null)}
+                  footer={
+                    <>
+                      <button type="button" onClick={() => setDialog(null)}>
+                        Voltar
+                      </button>
+                      <button type="button" class="primary danger" onClick={() => void abandon()}>
+                        Abandonar
+                      </button>
+                    </>
+                  }
+                >
+                  <p>A tentativa e suas respostas serão apagadas e não entram no histórico.</p>
+                </Modal>
+              </Show>
+            </div>
+          )}
+        </Match>
+      </Switch>
+    </>
   );
 }

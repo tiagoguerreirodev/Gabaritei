@@ -1,19 +1,11 @@
-import { For, Show, createEffect, createSignal, on } from "solid-js";
-import type { Outcome } from "../../bindings/Outcome";
+import { For, Show, createEffect, createSignal, on, onCleanup } from "solid-js";
 import type { RecheckView } from "../../bindings/RecheckView";
 import type { ResponseView } from "../../bindings/ResponseView";
 import QuestionImage from "../../components/QuestionImage";
 import RichText from "../../components/RichText";
-import { optionLetters } from "./format";
+import { optionLetters, outcomeText } from "./format";
 import RecheckPanel from "./RecheckPanel";
 import { showError } from "../../components/toasts";
-
-const outcomeText: Record<Outcome, string> = {
-  correct: "Você acertou.",
-  wrong: "Você errou.",
-  blank: "Questão em branco.",
-  annulled: "Questão anulada: não entra na pontuação.",
-};
 
 /**
  * One question: stem, image, options with eliminate, flag, and, once revealed, the key and
@@ -49,13 +41,24 @@ export default function QuestionCard(props: {
   /** Asks the AI to write the missing explanation. */
   onExplain: () => Promise<void>;
 }) {
+  let revealSection: HTMLElement | undefined;
+  // The right-answer pop plays only while this is set: right after a confirmation, never on
+  // navigation or when reviewing a finished attempt.
+  const [popping, setPopping] = createSignal(false);
+  let popTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(popTimer));
   const [explaining, setExplaining] = createSignal(false);
   // Moving to another question ends the "explaining" state of this card.
   createEffect(
     on(
       () => props.question.position,
-      () => setExplaining(false),
-      { defer: true },
+      (position, previous) => {
+        // The question object changes on every answer; only a different question resets.
+        if (previous === undefined || position === previous) return;
+        setExplaining(false);
+        clearTimeout(popTimer);
+        setPopping(false);
+      },
     ),
   );
   const explain = async () => {
@@ -69,6 +72,21 @@ export default function QuestionCard(props: {
       if (props.question.position === asked) setExplaining(false);
     }
   };
+  // A confirmed answer hands the focus to the reveal, so a screen reader reads it (the option
+  // button is disabled by then). Navigating to an already revealed question leaves focus alone.
+  createEffect(
+    on(
+      () => [props.question.position, props.question.reveal === null] as const,
+      ([position, hidden], previous) => {
+        if (previous && previous[0] === position && previous[1] && !hidden && !props.finished) {
+          queueMicrotask(() => revealSection?.focus());
+          setPopping(true);
+          clearTimeout(popTimer);
+          popTimer = setTimeout(() => setPopping(false), 600);
+        }
+      },
+    ),
+  );
   const letters = () => optionLetters(props.question);
   const reveal = () => props.question.reveal;
   const keyLetter = () => {
@@ -91,7 +109,8 @@ export default function QuestionCard(props: {
           onClick={() => props.onFlag()}
           title="Marcar para revisar (F)"
         >
-          {props.question.flagged ? "★ Marcada" : "☆ Marcar"}
+          <span aria-hidden="true">⚑ </span>
+          {props.question.flagged ? "Marcada" : "Marcar"}
         </button>
       </header>
       <RichText class="question-stem" text={props.question.stem} />
@@ -122,6 +141,9 @@ export default function QuestionCard(props: {
                   eliminated: eliminated(),
                   "option-key": isKey(),
                   "option-wrong": selected() && reveal() !== null && !isKey(),
+                  // Confirmed right answer: the bubble fills with a small pop.
+                  "option-correct": selected() && isKey(),
+                  "option-pop": popping() && selected() && isKey(),
                 }}
               >
                 <button
@@ -132,10 +154,19 @@ export default function QuestionCard(props: {
                   disabled={props.locked}
                   onClick={() => props.onAnswer(option.id)}
                 >
-                  <span class="option-letter">{letter()}</span>
+                  <span class="option-bubble">
+                    <span class="option-letter">{letter()}</span>
+                  </span>
                   <RichText text={option.text} />
                   <Show when={isKey()}>
-                    <span class="option-mark">Gabarito</span>
+                    <span class="option-mark">
+                      <span aria-hidden="true">✓ </span>Gabarito
+                    </span>
+                  </Show>
+                  <Show when={selected() && reveal() !== null && !isKey()}>
+                    <span class="option-mark option-mark-wrong">
+                      <span aria-hidden="true">✕ </span>Sua resposta
+                    </span>
                   </Show>
                 </button>
                 <button
@@ -167,7 +198,12 @@ export default function QuestionCard(props: {
       </Show>
       <Show when={reveal()}>
         {(revealed) => (
-          <section class={`reveal reveal-${revealed().outcome}`} aria-label="Gabarito e explicação">
+          <section
+            ref={revealSection}
+            tabindex="-1"
+            class={`reveal reveal-${revealed().outcome}`}
+            aria-label="Gabarito e explicação"
+          >
             <Show when={revealed().disputed}>
               <p class="disputed-badge" role="note">
                 Gabarito contestado na conferência: a IA conferente discordou da resposta. Se algo

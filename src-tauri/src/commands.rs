@@ -31,6 +31,7 @@ use crate::learning::{self, LearningOverview};
 use crate::metrics::{self, HomeSummary, Performance, PerformanceQuery};
 use crate::migrate::{self, LegacyImportOutcome, LegacyImportStatus};
 use crate::paths::AppPaths;
+use crate::shortcuts;
 
 /// Basic information about the running app.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -64,6 +65,18 @@ pub fn appearance(db: State<'_, Database>) -> AppResult<Appearance> {
 #[tauri::command]
 pub fn save_appearance(db: State<'_, Database>, appearance: Appearance) -> AppResult<Appearance> {
     db.with(|conn| appearance::save(conn, appearance))
+}
+
+/// Whether the Resolver's single-letter shortcuts are on.
+#[tauri::command]
+pub fn keyboard_shortcuts(db: State<'_, Database>) -> AppResult<bool> {
+    db.with(|conn| shortcuts::load(conn))
+}
+
+/// Turns the Resolver's single-letter shortcuts on or off; returns the saved value.
+#[tauri::command]
+pub fn save_keyboard_shortcuts(db: State<'_, Database>, enabled: bool) -> AppResult<bool> {
+    db.with(|conn| shortcuts::save(conn, enabled))
 }
 
 /// Area › matter › topic with question counts.
@@ -1488,6 +1501,23 @@ mod tests {
             json!({ "appearance": { "theme": "neon", "textSize": "l" } }),
         )
         .expect_err("an unknown theme is refused");
+    }
+
+    #[test]
+    fn keyboard_shortcuts_default_on_then_save_through_ipc() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
+        assert_eq!(
+            app.call("keyboard_shortcuts", json!({})).expect("loads"),
+            json!(true)
+        );
+        let saved = app
+            .call("save_keyboard_shortcuts", json!({ "enabled": false }))
+            .expect("saves");
+        assert_eq!(saved, json!(false));
+        assert_eq!(
+            app.call("keyboard_shortcuts", json!({})).expect("reloads"),
+            json!(false)
+        );
     }
 
     #[test]

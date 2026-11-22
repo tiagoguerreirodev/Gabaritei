@@ -44,6 +44,7 @@ pub const LOCAL_SETTINGS: &[&str] = &[
     KEY_REMNOTE,
     KEY_ROLES,
     appearance::KEY,
+    crate::shortcuts::KEY,
 ];
 
 /// Daily backups kept.

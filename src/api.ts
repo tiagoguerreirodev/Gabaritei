@@ -70,6 +70,11 @@ export const api = {
   appearance: () => call<Appearance>("appearance"),
   /** Saves the colour theme and text size; returns them as saved. */
   saveAppearance: (appearance: Appearance) => call<Appearance>("save_appearance", { appearance }),
+  /** Whether the Resolver's single-letter shortcuts are on (default: on). */
+  keyboardShortcuts: () => call<boolean>("keyboard_shortcuts"),
+  /** Turns the Resolver's single-letter shortcuts on or off; returns the saved value. */
+  saveKeyboardShortcuts: (enabled: boolean) =>
+    call<boolean>("save_keyboard_shortcuts", { enabled }),
   /** Whether the legacy Caderno Local bank was imported, and whether the bank is empty. */
   legacyImportStatus: () => call<LegacyImportStatus>("legacy_import_status"),
   /** Opens a folder picker and imports the legacy bank. `null` if the user cancels. */

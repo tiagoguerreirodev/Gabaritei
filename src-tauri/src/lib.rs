@@ -19,6 +19,7 @@ pub mod log;
 pub mod metrics;
 pub mod migrate;
 pub mod paths;
+pub mod shortcuts;
 
 use std::path::PathBuf;
 
@@ -50,6 +51,8 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::app_info,
             commands::appearance,
             commands::save_appearance,
+            commands::keyboard_shortcuts,
+            commands::save_keyboard_shortcuts,
             commands::backup_status,
             commands::data_folder,
             commands::open_folder,

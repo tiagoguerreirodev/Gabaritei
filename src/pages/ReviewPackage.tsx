@@ -4,10 +4,12 @@ import { api } from "../api";
 import type { DraftSummary } from "../bindings/DraftSummary";
 import type { ImportMode } from "../bindings/ImportMode";
 import type { LineState } from "../bindings/LineState";
+import RichText from "../components/RichText";
 import { ErrorState, Loading } from "../components/states";
 import { showError, showToast } from "../components/toasts";
 import { dismissGeneration, generationStatus, refreshWaitingDrafts } from "../generation";
 import { agentLabels, effortLabels } from "./settings/labels";
+import { optionLetters } from "./solve/format";
 
 const lineText: Record<LineState, string> = {
   agreed: "conferida",
@@ -236,11 +238,19 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
                     <details>
                       <summary>
                         Q{line.position} · {lineText[line.state]}
+                        {line.hasProblem ? " · com problema" : ""}
                       </summary>
-                      <p>{content().stem}</p>
-                      <ol class="flagged-options" type="A">
-                        <For each={content().options}>{(option) => <li>{option.text}</li>}</For>
-                      </ol>
+                      <RichText text={content().stem} />
+                      <ul class="flagged-options" style={{ "list-style": "none", padding: "0" }}>
+                        <For each={content().options}>
+                          {(option, index) => (
+                            <li>
+                              <span class="option-letter">{optionLetters(content())[index()]}</span>{" "}
+                              <RichText text={option.text} />
+                            </li>
+                          )}
+                        </For>
+                      </ul>
                     </details>
                   )}
                 </Show>

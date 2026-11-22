@@ -414,7 +414,7 @@ fn a_key_that_conflicts_with_the_bank_is_a_problem_without_quoting_the_question(
         summary
             .problems
             .iter()
-            .any(|p| p.message.contains("outro gabarito"))
+            .any(|p| p.message.contains("resposta divergente"))
     );
     let error = import_with(&db, "d2", ImportMode::All).unwrap_err();
     assert!(!error.to_string().contains("ENUNCIADO"));
@@ -472,6 +472,34 @@ fn a_package_with_quotes_in_its_options_leaks_nothing_in_the_preview() {
         !shown.contains("OPCAO-SEGREDO") && !shown.contains("princípio"),
         "{shown}"
     );
+    // The whole summary never carries the key, explanation, references or checker reason.
+    let all = serde_json::to_string(&summary).unwrap();
+    for secret in ["EXPLICACAO", "REFERENCIA", "answerId", "RAZAO-SECRETA"] {
+        assert!(!all.contains(secret), "{secret} in {all}");
+    }
+}
+
+#[test]
+fn flagged_content_has_exactly_the_documented_keys() {
+    let db = Database::open_in_memory().unwrap();
+    insert(
+        &db,
+        &draft_of(
+            "d1",
+            vec![question("q1", "a")],
+            Some(vec![verdict("q1", VerdictState::Disputed)]),
+        ),
+    );
+    let value = serde_json::to_value(summary_of(&db, "d1")).unwrap();
+    let content = value["lines"][0]["content"].as_object().unwrap();
+    let mut keys: Vec<_> = content.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["options", "stem", "type"]);
+    assert_eq!(content["type"], "multiple");
+    let option = content["options"][0].as_object().unwrap();
+    let mut keys: Vec<_> = option.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["id", "text"]);
 }
 
 #[test]

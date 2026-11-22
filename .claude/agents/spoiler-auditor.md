@@ -14,7 +14,7 @@ Start with `git diff main...HEAD` (plus `git diff` for uncommitted work), then r
 - Can `answer_id`, the answer key, or the explanation reach the frontend before the user has answered that question? Trace every `#[ts(export)]` type and every `#[tauri::command]` return value that contains question data. Check `src/bindings/` for fields such as `answerId`, `key`, `explanation`, `correct`.
 - Is the restriction enforced in Rust (the domain function or the command), not only by the UI hiding it?
 - In Exam mode (`FeedbackMode::Exam`), is everything held back until the attempt ends?
-- Does the package preview carry stems, options or answers? It may carry only counts, validation problems and blind-check verdicts.
+- Does the package preview carry more than it should? It may carry the stem and options of flagged questions (disputed, or with a validation problem) and nothing else per question: never the key, explanation, references or the checker's reason. Everything else is counts, validation problems and blind-check verdicts.
 - Do the frontend tests cover no-spoiler rendering?
 
 ## Rule 2: AI only through local CLIs

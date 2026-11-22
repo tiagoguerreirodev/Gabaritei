@@ -342,7 +342,7 @@ pub fn check_draft(conn: &Connection, draft: &Draft) -> AppResult<DraftCheck> {
             Ok(canonical) => {
                 match seen.get(&canonical.id) {
                     Some((first, answer)) if *answer != canonical.answer_id => {
-                        problem(format!("Repete a Q{first}, mas com outro gabarito."));
+                        problem(format!("Repete a Q{first}, mas com resposta divergente."));
                     }
                     Some(_) => check.duplicates += 1,
                     None => {
@@ -356,7 +356,7 @@ pub fn check_draft(conn: &Connection, draft: &Draft) -> AppResult<DraftCheck> {
                     if stored.answer_id == canonical.answer_id {
                         check.duplicates += 1;
                     } else {
-                        problem("Já existe no banco com outro gabarito.".into());
+                        problem("Já existe no banco com resposta divergente.".into());
                     }
                 }
             }

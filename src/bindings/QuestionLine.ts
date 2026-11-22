@@ -8,6 +8,10 @@ export type QuestionLine = {
  */
 position: number, state: LineState, 
 /**
+ * Whether the question has a validation problem of its own.
+ */
+hasProblem: boolean, 
+/**
  * The stem and options, only when the question is flagged; `None` otherwise.
  */
 content: FlaggedContent | null, };

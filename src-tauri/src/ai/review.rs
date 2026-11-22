@@ -40,6 +40,8 @@ pub struct QuestionLine {
     /// 1-based, as in "Q3".
     pub position: u32,
     pub state: LineState,
+    /// Whether the question has a validation problem of its own.
+    pub has_problem: bool,
     /// The stem and options, only when the question is flagged; `None` otherwise.
     pub content: Option<FlaggedContent>,
 }
@@ -50,6 +52,9 @@ pub struct QuestionLine {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct FlaggedContent {
+    #[serde(rename = "type")]
+    #[ts(rename = "type")]
+    pub kind: QuestionType,
     pub stem: String,
     pub options: Vec<FlaggedOption>,
 }
@@ -168,6 +173,7 @@ fn states(draft: &Draft) -> AppResult<(Vec<LineState>, Option<String>, bool)> {
 /// Copies the stem and options of a flagged question, and nothing else.
 fn flagged_content(question: &PackageQuestion) -> FlaggedContent {
     FlaggedContent {
+        kind: question.kind,
         stem: question.stem.clone(),
         options: question
             .options
@@ -217,6 +223,7 @@ pub fn summary(conn: &Connection, id: &str) -> AppResult<DraftSummary> {
             .map(|(index, state)| QuestionLine {
                 position: u32::try_from(index + 1).unwrap_or(u32::MAX),
                 state: *state,
+                has_problem: check.is_blocked(index),
                 content: (*state == LineState::Disputed || check.is_blocked(index))
                     .then(|| flagged_content(&draft.package.questions[index])),
             })

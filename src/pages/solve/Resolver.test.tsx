@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@solidjs/testing-library";
+import { cleanup, render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { describe, expect, it, vi } from "vitest";
@@ -377,7 +377,7 @@ describe("Resolver", () => {
     await user.click(within(dialog).getByRole("button", { name: "Finalizar" }));
 
     const result = await screen.findByRole("region", { name: "Resultado" });
-    expect(result).toHaveTextContent("Acertos1");
+    expect(result).toHaveTextContent("Acerto entre respondidas");
     expect(result).toHaveTextContent("33,3%");
     expect(screen.getByRole("region", { name: "Gabarito e explicação" })).toHaveTextContent(
       "Você acertou. Gabarito: B.",
@@ -647,18 +647,19 @@ describe("Resolver: answer-sheet UI", () => {
     await user.keyboard("b");
     expect(live()).toHaveTextContent("Questão 1 de 3.");
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(live()).toHaveTextContent("Você acertou."));
-    // The announcement carries the outcome only, not the key or the explanation.
-    expect(live()).not.toHaveTextContent(/Gabarito|secreta/);
-    // Focus moves to the revealed answer, so a screen reader reads it.
-    expect(screen.getByRole("region", { name: "Gabarito e explicação" })).toHaveFocus();
+    // Focus moves to the revealed answer, which reads the outcome; the live region stays quiet.
+    const reveal = await screen.findByRole("region", { name: "Gabarito e explicação" });
+    await waitFor(() => expect(reveal).toHaveFocus());
+    expect(live()).toHaveTextContent("Questão 1 de 3.");
+    expect(live()).not.toHaveTextContent(/Gabarito|secreta|acertou|errou/);
   });
 
-  it("announces a wrong answer and marks it with a shape, not just a colour", async () => {
+  it("marks a wrong answer with a shape, not just a colour", async () => {
     const { user } = await open("study");
     await user.keyboard("a");
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(live()).toHaveTextContent("Você errou."));
+    await screen.findByRole("region", { name: "Gabarito e explicação" });
+    expect(live()).not.toHaveTextContent(/errou/);
 
     const wrong = within(card()).getByText("Sua resposta", { exact: false });
     expect(wrong.querySelector("[aria-hidden=true]")).toHaveTextContent("✕");
@@ -730,7 +731,68 @@ describe("Resolver: answer-sheet UI", () => {
     expect(help).toHaveTextContent("Enter confirma");
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(help).not.toBeInTheDocument();
+    expect(help).not.toBeVisible();
+    expect(toggle).not.toHaveAttribute("aria-controls", "missing");
+    expect(document.getElementById("shortcuts-help")).toBe(help);
+  });
+
+  it("closes the shortcut help with Escape on the toggle and returns the focus", async () => {
+    const { user } = await open("study");
+    const toggle = screen.getByRole("button", { name: "Atalhos" });
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    toggle.focus();
+    await user.keyboard("{Escape}");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveFocus();
+  });
+
+  it("closes the shortcut help on a click outside it, but not inside", async () => {
+    const { user } = await open("study");
+    const toggle = screen.getByRole("button", { name: "Atalhos" });
+    await user.click(toggle);
+    await user.click(screen.getByRole("group", { name: "Atalhos de teclado" }));
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await user.click(document.body);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("plays the right-answer pop only right after confirming, not when navigating back", async () => {
+    const { user } = await open("study");
+    await user.keyboard("b");
+    await user.keyboard("{Enter}");
+    await screen.findByRole("region", { name: "Gabarito e explicação" });
+    await waitFor(() =>
+      expect(document.querySelector(".option-correct.option-pop")).not.toBeNull(),
+    );
+    await user.keyboard("{ArrowRight}");
+    await user.keyboard("{ArrowLeft}");
+    expect(document.querySelector(".option-correct")).not.toBeNull();
+    expect(document.querySelector(".option-pop")).toBeNull();
+  });
+
+  it("does not hint at outcomes in the navigator before reveal, in Estudo or Simulado", async () => {
+    const words = /certa|errada|em branco|anulada|correct|wrong|blank|annulled|✓|✕/i;
+    for (const mode of ["study", "exam"] as const) {
+      const { user } = await open(mode);
+      await user.keyboard("a");
+      if (mode === "study") {
+        // Marked but not confirmed: still nothing to reveal.
+        expect(screen.getByRole("button", { name: "Questão 1" })).toBeInTheDocument();
+      } else {
+        await waitFor(() =>
+          expect(screen.getByRole("button", { name: "Questão 1, respondida" })).toBeInTheDocument(),
+        );
+      }
+      const nav = screen.getByRole("navigation", { name: "Mapa de questões" });
+      for (const bubble of within(nav).getAllByRole("button")) {
+        expect(bubble.getAttribute("aria-label")).not.toMatch(words);
+        expect(bubble.className).not.toMatch(words);
+        expect(bubble.textContent).not.toMatch(words);
+        expect(bubble.className).toContain("outcome-hidden");
+      }
+      cleanup();
+    }
   });
 
   it("shows a recap on finishing, without a comparison", async () => {

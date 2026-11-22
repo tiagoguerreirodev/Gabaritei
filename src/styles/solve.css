@@ -446,7 +446,7 @@
 }
 
 /* Feedback on a confirmed right answer: the bubble pops once as it fills. */
-.option.option-correct .option-bubble {
+.option.option-pop .option-bubble {
   animation: bubble-fill var(--dur-base) var(--ease);
 }
 
@@ -465,7 +465,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .option.option-correct .option-bubble {
+  .option.option-pop .option-bubble {
     animation: none;
   }
 }

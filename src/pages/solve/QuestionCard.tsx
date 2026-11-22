@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, on } from "solid-js";
+import { For, Show, createEffect, createSignal, on, onCleanup } from "solid-js";
 import type { RecheckView } from "../../bindings/RecheckView";
 import type { ResponseView } from "../../bindings/ResponseView";
 import QuestionImage from "../../components/QuestionImage";
@@ -42,13 +42,23 @@ export default function QuestionCard(props: {
   onExplain: () => Promise<void>;
 }) {
   let revealSection: HTMLElement | undefined;
+  // The right-answer pop plays only while this is set: right after a confirmation, never on
+  // navigation or when reviewing a finished attempt.
+  const [popping, setPopping] = createSignal(false);
+  let popTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(popTimer));
   const [explaining, setExplaining] = createSignal(false);
   // Moving to another question ends the "explaining" state of this card.
   createEffect(
     on(
       () => props.question.position,
-      () => setExplaining(false),
-      { defer: true },
+      (position, previous) => {
+        // The question object changes on every answer; only a different question resets.
+        if (previous === undefined || position === previous) return;
+        setExplaining(false);
+        clearTimeout(popTimer);
+        setPopping(false);
+      },
     ),
   );
   const explain = async () => {
@@ -70,9 +80,11 @@ export default function QuestionCard(props: {
       ([position, hidden], previous) => {
         if (previous && previous[0] === position && previous[1] && !hidden && !props.finished) {
           queueMicrotask(() => revealSection?.focus());
+          setPopping(true);
+          clearTimeout(popTimer);
+          popTimer = setTimeout(() => setPopping(false), 600);
         }
       },
-      { defer: true },
     ),
   );
   const letters = () => optionLetters(props.question);
@@ -131,6 +143,7 @@ export default function QuestionCard(props: {
                   "option-wrong": selected() && reveal() !== null && !isKey(),
                   // Confirmed right answer: the bubble fills with a small pop.
                   "option-correct": selected() && isKey(),
+                  "option-pop": popping() && selected() && isKey(),
                 }}
               >
                 <button

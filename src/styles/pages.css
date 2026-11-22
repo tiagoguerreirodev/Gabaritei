@@ -184,3 +184,9 @@
   justify-content: flex-end;
   margin-top: var(--space-3);
 }
+
+/* No inline style: the production CSP (style-src 'self') blocks it. */
+.flagged-options {
+  list-style: none;
+  padding: 0;
+}

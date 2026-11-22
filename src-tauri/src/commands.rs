@@ -638,7 +638,7 @@ pub fn drafts_waiting(db: State<'_, Database>) -> AppResult<Vec<DraftListItem>> 
     db.with(|conn| review::waiting(conn))
 }
 
-/// The spoiler-free summary of a draft: counts, problems and one state per question.
+/// The spoiler-free summary of a draft: counts, problems and one state per question (plus the stem and options of flagged ones).
 #[tauri::command]
 pub fn draft_summary(db: State<'_, Database>, id: String) -> AppResult<DraftSummary> {
     db.with(|conn| review::summary(conn, &id))
@@ -1319,7 +1319,7 @@ mod tests {
         // The status carries labels and an ID, never question content.
         assert!(!status.to_string().contains("crase"));
 
-        // The preview shows counts and states only: no stem, option, key or explanation.
+        // The preview shows counts and states, plus the stem and options of flagged questions only: never the key, explanation or references.
         let id = status["outcome"]["draftId"].as_str().unwrap().to_owned();
         let summary = app
             .call("draft_summary", json!({ "id": id }))
@@ -1327,7 +1327,7 @@ mod tests {
         assert_eq!(summary["count"], json!(1));
         assert_eq!(
             summary["lines"],
-            json!([{ "position": 1, "state": "agreed" }])
+            json!([{ "position": 1, "state": "agreed", "hasProblem": false, "content": null }])
         );
         let shown = summary.to_string();
         for secret in [

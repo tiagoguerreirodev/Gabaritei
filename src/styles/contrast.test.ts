@@ -69,6 +69,32 @@ const pairs: [string, string, number][] = [
   ["flag-bar", "bg", 3],
 ];
 
+/** `color-mix(in srgb, fg p%, bg)` as hex, like the solve.css option and navigator backgrounds. */
+function mix(theme: Record<string, string>, fg: string, percent: number, bg: string): string {
+  const [a, b] = [color(theme, fg), color(theme, bg)].map((hex) =>
+    [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)),
+  );
+  return `#${[0, 1, 2]
+    .map((i) =>
+      Math.round((a?.[i] ?? 0) * (percent / 100) + (b?.[i] ?? 0) * (1 - percent / 100))
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
+}
+
+// Foregrounds on backgrounds that are mixes: [foreground token, mix token, percent, minimum].
+const mixed: [string, string, number, number][] = [
+  ["success", "success", 14, 4.5], // .option-mark on .option-key
+  ["text", "success", 14, 4.5],
+  ["danger", "danger", 12, 4.5], // on .option-wrong
+  ["text", "danger", 12, 4.5],
+  ["flag-bar", "success", 25, 3], // .flagged on .outcome-correct
+  ["flag-bar", "danger", 25, 3], // .flagged on .outcome-wrong
+  ["text", "success", 25, 4.5],
+  ["text", "danger", 25, 4.5],
+];
+
 describe.each([
   ["claro", light],
   ["escuro", darkAll],
@@ -76,6 +102,26 @@ describe.each([
   it.each(pairs)("%s sobre %s tem contraste de pelo menos %s:1", (fg, bg, minimum) => {
     const ratio = contrast(color(theme, fg), color(theme, bg));
     expect(ratio, `${fg} on ${bg}: ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(minimum);
+  });
+});
+
+describe.each([
+  ["claro", light],
+  ["escuro", darkAll],
+] as const)("fundos misturados, tema %s", (_name, theme) => {
+  it.each(mixed)("%s sobre mistura de %s a %s% tem pelo menos %s:1", (fg, tint, percent, min) => {
+    const bg = mix(theme, tint, percent, "surface");
+    const ratio = contrast(color(theme, fg), bg);
+    expect(ratio, `${fg} on ${tint} ${percent}%: ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(
+      min,
+    );
+  });
+
+  it("text and muted read on accent-soft, on-accent on danger", () => {
+    for (const fg of ["text", "muted"]) {
+      expect(contrast(color(theme, fg), color(theme, "accent-soft"))).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(contrast(color(theme, "on-accent"), color(theme, "danger"))).toBeGreaterThanOrEqual(4.5);
   });
 });
 

@@ -10,7 +10,7 @@ use ts_rs::TS;
 use crate::db;
 use crate::error::AppResult;
 
-const KEY: &str = "appearance";
+pub const KEY: &str = "appearance";
 
 /// Colour theme. `System` follows the operating system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -37,7 +37,7 @@ pub enum TextSize {
 
 /// The saved appearance preferences.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 #[ts(export)]
 pub struct Appearance {
     pub theme: Theme,
@@ -87,6 +87,16 @@ mod tests {
         db.with(|conn| db::put_raw_setting(conn, KEY, Some("{\"theme\":\"neon\"}")))
             .unwrap();
         assert_eq!(db.with(|conn| load(conn)).unwrap(), Appearance::default());
+    }
+
+    #[test]
+    fn a_partial_stored_value_keeps_its_valid_fields() {
+        let db = Database::open_in_memory().unwrap();
+        db.with(|conn| db::put_raw_setting(conn, KEY, Some("{\"theme\":\"dark\"}")))
+            .unwrap();
+        let loaded = db.with(|conn| load(conn)).unwrap();
+        assert_eq!(loaded.theme, Theme::Dark);
+        assert_eq!(loaded.text_size, TextSize::M);
     }
 
     #[test]

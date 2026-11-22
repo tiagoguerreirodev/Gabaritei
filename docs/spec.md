@@ -42,7 +42,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 | 20 | Safety | **Daily automatic backup, 7 kept**, with a restore button. Plus the export/import file. |
 | 21 | Platforms | **Windows 11 x64** and **macOS Apple Silicon**. |
 | 22 | Repo | **This repository (Gabaritei).** Study data stays **out of git**: it lives in the app data folder, backups and exports. |
-| 23 | Extras | **Keyboard shortcuts**, **dark mode** following the system, **LaTeX** via KaTeX, **CSV export**. |
+| 23 | Extras | **Keyboard shortcuts**, **dark mode** (theme Automático, Claro or Escuro, plus text size; see §3.7), **LaTeX** via KaTeX, **CSV export**. |
 | 24 | Images | Display the 52 migrated images. **Generated questions are text-only.** |
 | 25 | Stack | **Tauri 2 + Rust** backend, **Solid.js + Vite** frontend (see the analysis, §7.1). |
 
@@ -124,6 +124,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 - **CLI paths:** detected automatically, with manual override. Apps opened from the macOS Finder see a short PATH, so detection matters there. Includes a "Test" button per CLI that shows its version and login state.
 - **Role defaults:** agent, model, effort and Fast Mode for each of the 4 roles (Fast Mode is saved per role and can be overridden in the generation form; the checkbox is hidden for a Codex model without a Fast tier). Codex's model and effort options come from `codex debug models` (loaded when the page opens, cached for the session, "Atualizar" to reload). Claude offers no list, so its model is typed. If a CLI can't list its models, the fields become free text with a warning. A saved model that the list no longer has is flagged "não disponível" and blocks runs until another is chosen.
 - **RemNote MCP:** URL and token, or reuse the existing Codex config.
+- **Aparência:** theme (Automático, which follows the system, Claro or Escuro) and text size (Pequeno, Médio, Grande or Muito grande). Each choice applies and saves at once.
 - **Data:** backup folder and restore, export/import, open data folder.
 
 ---

@@ -22,7 +22,14 @@ export default function AppearanceSection() {
   // Bumped after a failed save so the radios snap back to the choice that is still in effect.
   const [failures, setFailures] = createSignal(0);
 
+  // The latest choice made while a save is pending; saved once the pending one ends.
+  let queued: Appearance | undefined;
+
   const choose = async (next: Appearance) => {
+    if (saving()) {
+      queued = next;
+      return;
+    }
     setSaving(true);
     try {
       await saveAppearance(next);
@@ -32,12 +39,15 @@ export default function AppearanceSection() {
     } finally {
       setSaving(false);
     }
+    const pending = queued;
+    queued = undefined;
+    if (pending) await choose(pending);
   };
 
   return (
     <section class="card" aria-labelledby="appearance-title">
       <h2 id="appearance-title">Aparência</h2>
-      <fieldset class="mode-choice">
+      <fieldset class="mode-choice" aria-busy={saving()}>
         <legend>Tema</legend>
         <For each={THEMES}>
           {(option) => (
@@ -47,7 +57,6 @@ export default function AppearanceSection() {
                 name="theme"
                 value={option.value}
                 checked={(failures(), appearance().theme === option.value)}
-                disabled={saving()}
                 onChange={() => void choose({ ...appearance(), theme: option.value })}
               />
               {option.label}
@@ -55,7 +64,7 @@ export default function AppearanceSection() {
           )}
         </For>
       </fieldset>
-      <fieldset class="mode-choice">
+      <fieldset class="mode-choice" aria-busy={saving()}>
         <legend>Tamanho do texto</legend>
         <For each={TEXT_SIZES}>
           {(option) => (
@@ -65,7 +74,6 @@ export default function AppearanceSection() {
                 name="text-size"
                 value={option.value}
                 checked={(failures(), appearance().textSize === option.value)}
-                disabled={saving()}
                 onChange={() => void choose({ ...appearance(), textSize: option.value })}
               />
               {option.label}

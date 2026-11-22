@@ -48,6 +48,20 @@ describe("Aparência", () => {
     });
   });
 
+  it("keeps keyboard focus on the newly selected radio while saving", async () => {
+    mockIPC((_command, args) => (args as { appearance: unknown }).appearance);
+    const user = userEvent.setup();
+    render(() => <AppearanceSection />);
+
+    screen.getByRole("radio", { name: /Automático/ }).focus();
+    await user.keyboard("{ArrowDown}");
+    const claro = screen.getByRole("radio", { name: "Claro" });
+    expect(claro).toHaveFocus();
+    expect(claro).toBeEnabled();
+    await waitFor(() => expect(root.getAttribute("data-theme")).toBe("light"));
+    expect(claro).toHaveFocus();
+  });
+
   it("returns to following the system by removing the theme attribute", async () => {
     mockIPC((_command, args) => (args as { appearance: unknown }).appearance);
     const user = userEvent.setup();

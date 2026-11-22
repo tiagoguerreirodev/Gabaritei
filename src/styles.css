@@ -1221,6 +1221,12 @@ button {
   border-top: 1px solid var(--border);
 }
 
+.confirm-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.75rem;
+}
+
 .menu-count {
   margin-left: 0.5rem;
   padding: 0 0.45rem;

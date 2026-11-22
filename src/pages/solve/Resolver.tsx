@@ -45,6 +45,10 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
   const [index, setIndex] = createSignal(0);
   const [dialog, setDialog] = createSignal<"finish" | "abandon" | null>(null);
   const [eliminating, setEliminating] = createSignal(false);
+  // Estudo: the option marked on this question but not yet confirmed with Enter.
+  const [pending, setPending] = createSignal<string | null>(null);
+  // The confirmed answer is on its way to the backend: no new mark or confirmation until it lands.
+  const [sending, setSending] = createSignal(false);
 
   createEffect(
     on(
@@ -53,6 +57,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
         setView(undefined);
         setLoadError(undefined);
         setIndex(0);
+        setPending(null);
         api.attempt(id).then((loaded) => {
           setView(loaded);
           // Resume at the first unanswered question.
@@ -80,6 +85,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
   // Any action other than the letter after `X` cancels the pending elimination.
   const select = (i: number) => {
     setEliminating(false);
+    setPending(null);
     setIndex(i);
   };
   const move = (delta: number) =>
@@ -93,10 +99,28 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     const choice = q.choice === optionId && view()?.feedbackMode === "exam" ? null : optionId;
     enqueue((id) => api.answer(id, q.position, choice));
   };
+  /** Estudo locks and reveals on the first answer, so a choice is only marked until the user
+   * confirms it. Simulado saves it straight away: it can still be changed or cleared. */
+  const choose = (optionId: string) => {
+    const q = current();
+    setEliminating(false);
+    if (!q || locked() || sending()) return;
+    if (view()?.feedbackMode === "study") setPending(optionId);
+    else answer(optionId);
+  };
+  const confirm = () => {
+    const optionId = pending();
+    if (optionId === null || locked() || sending()) return;
+    setPending(null);
+    setSending(true);
+    answer(optionId);
+    void queue.then(() => setSending(false));
+  };
   const eliminate = (optionId: string) => {
     const q = current();
     setEliminating(false);
     if (!q || locked()) return;
+    if (pending() === optionId) setPending(null);
     enqueue((id) => api.eliminate(id, q.position, optionId));
   };
   const flag = () => {
@@ -173,6 +197,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     try {
       setView(await api.finish(latest.id, latest.revision));
       setDialog(null);
+      setPending(null);
       setIndex(0);
     } catch (error) {
       showError(error);
@@ -202,6 +227,17 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     if (event.repeat) return;
     const q = current();
     if (!q || finished()) return;
+    if (event.key === "Enter") {
+      // Enter keeps working on a focused button, except on the marked option itself, where it
+      // confirms (the click that marked it left the focus there).
+      const target = event.target;
+      const onOtherButton =
+        target instanceof HTMLButtonElement && !target.matches(".option-choose[aria-pressed=true]");
+      if (pending() === null || onOtherButton) return;
+      event.preventDefault();
+      confirm();
+      return;
+    }
     const key = event.key.toUpperCase();
     const optionAt = (letter: string) => q.options[optionLetters(q).indexOf(letter)];
     if (eliminating()) {
@@ -220,7 +256,13 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     } else {
       const option = optionAt(key);
       if (!option) return;
-      answer(option.id);
+      choose(option.id);
+      // Estudo: keep the focus on the marked option, so Enter confirms it.
+      if (view()?.feedbackMode === "study") {
+        document
+          .querySelectorAll<HTMLElement>(".option-choose")
+          .forEach((button) => button.dataset.optionId === option.id && button.focus());
+      }
     }
     event.preventDefault();
   };
@@ -276,7 +318,10 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                   locked={locked()}
                   finished={finished()}
                   eliminating={eliminating()}
-                  onAnswer={answer}
+                  pending={pending()}
+                  confirmRequired={attempt().feedbackMode === "study"}
+                  onAnswer={choose}
+                  onConfirm={confirm}
                   onEliminate={eliminate}
                   onFlag={flag}
                   onAnnul={annul}
@@ -293,7 +338,9 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                 ← Anterior
               </button>
               <span class="muted shortcuts">
-                Atalhos: A–E (ou C/E) responde · X + letra elimina · F marca · ←/→ navega
+                Atalhos: A–E (ou C/E){" "}
+                {attempt().feedbackMode === "study" ? "escolhe · Enter confirma" : "responde"} · X +
+                letra elimina · F marca · ←/→ navega
               </span>
               <button type="button" disabled={index() >= total() - 1} onClick={() => move(1)}>
                 Próxima →

@@ -88,10 +88,10 @@ All UI text is in Portuguese. There are no accounts and no server.
 ### 3.3 Solving (*Resolver*)
 - **Start a session from** a collection; a topic with N questions (unseen first, then least recently answered); or errors and due reviews (`O-F1`–`O-F3`).
 - **Feedback mode per attempt:**
-  - *Estudo*: choosing an option locks it and reveals the key and explanation for that question.
-  - *Simulado*: everything is revealed on finish.
+  - *Estudo*: choosing an option (click or letter key) only marks it; **Confirmar resposta** or `Enter` then locks it and reveals the key and explanation for that question. The mark is dropped when moving to another question.
+  - *Simulado*: everything is revealed on finish. A choice is saved as soon as it is made and can still be changed or cleared, so it needs no confirmation.
 - **Carried over from today:** shuffled questions and options, eliminating options, flags, the navigator, autosave, finish with a confirmation, abandon, one active attempt per collection (`N-D1`–`N-D10`, `O-D3`, `O-D4`).
-- **Keyboard:** `A`–`E` (or `C`/`E`) to answer, `←`/`→` to move, `X` plus a letter to eliminate, `F` to flag.
+- **Keyboard:** `A`–`E` (or `C`/`E`) to choose (in Estudo, `Enter` confirms), `←`/`→` to move, `X` plus a letter to eliminate, `F` to flag.
 - **After a question is revealed:**
   - **Anular** removes it from all scores.
   - **Pedir revisão à IA** runs the Re-check role. It shows the verdict, the corrected key if any, and sources. Confirming applies the key change, logs it and re-scores past answers.

@@ -10,6 +10,7 @@ use ts_rs::TS;
 use super::draft::{self, Draft, DraftStatus, GenerationInfo};
 use super::draft_files;
 use super::generate::GenerateRequest;
+use super::jobs::GenerationStage;
 use super::prompts::{self, CheckerView, Objection};
 use super::roles::RoleConfig;
 use super::runner::{CancelToken, Progress, ProgressKind};
@@ -230,7 +231,11 @@ pub fn run(
     let began = std::time::Instant::now();
     let mut package = draft.package.clone();
 
-    progress(Progress::new(ProgressKind::Started, "Conferindo às cegas…"));
+    progress(Progress::starting(
+        GenerationStage::Checking,
+        ProgressKind::Started,
+        "Conferindo às cegas…",
+    ));
     let all: Vec<&PackageQuestion> = package.questions.iter().collect();
     let (first, first_output) =
         check_questions(&settings, secrets, &checker, &all, cancel, progress)?;
@@ -247,7 +252,8 @@ pub fn run(
     let mut revised_by_id: HashMap<String, PackageQuestion> = HashMap::new();
     let mut second: HashMap<String, CheckerAnswer> = HashMap::new();
     if !objections.is_empty() {
-        progress(Progress::new(
+        progress(Progress::starting(
+            GenerationStage::Resolving,
             ProgressKind::Thinking,
             "Resolvendo as contestações…",
         ));
@@ -280,7 +286,8 @@ pub fn run(
         cost = sum_cost(cost, output.cost_usd);
         revised_by_id = revisions(resolutions, &objected);
         if !revised_by_id.is_empty() {
-            progress(Progress::new(
+            progress(Progress::starting(
+                GenerationStage::Resolving,
                 ProgressKind::Thinking,
                 "Reconferindo as questões revisadas…",
             ));
@@ -382,7 +389,11 @@ pub fn generate_and_check(
     cancel: &CancelToken,
     progress: &mut dyn FnMut(Progress),
 ) -> AppResult<String> {
-    progress(Progress::new(ProgressKind::Started, "Gerando as questões…"));
+    progress(Progress::starting(
+        GenerationStage::Generating,
+        ProgressKind::Started,
+        "Gerando as questões…",
+    ));
     let originals: Vec<std::path::PathBuf> = request
         .sources
         .attachments

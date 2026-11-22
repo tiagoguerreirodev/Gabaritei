@@ -22,7 +22,14 @@ describe("App shell", () => {
       if (command === "performance") return emptyPerformance;
       if (command === "topics_tree") return { areas: [], questions: 0 };
       if (command === "generation_status")
-        return { running: false, startedAt: null, progress: null, outcome: null };
+        return {
+          running: false,
+          startedAt: null,
+          kind: null,
+          stage: "preparing",
+          progress: null,
+          outcome: null,
+        };
       if (command === "drafts_waiting") return [];
       if (command === "collections")
         return { items: [], total: 0, page: 0, pageSize: 20, contests: [], boards: [] };

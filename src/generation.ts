@@ -13,49 +13,28 @@ const [waiting, setWaiting] = createSignal<DraftListItem[]>([]);
 let watching = false;
 
 /**
- * The stages the backend reports, in order. The backend only exposes a stage through its fixed
- * pt-BR progress labels, so these are all that can be shown: saving is not reported.
+ * The stages of a run, in order. The backend reports the current one as `status.stage`; saving
+ * is not reported, so it is not listed.
  */
 export const GENERATION_STAGES = [
   { id: "generating", label: "Gerando as questões" },
   { id: "checking", label: "Conferindo às cegas" },
-  { id: "fixing", label: "Resolvendo as contestações" },
+  { id: "resolving", label: "Resolvendo as contestações" },
 ] as const;
 
-/**
- * Which stage a progress label starts, or `null` for any other label (a label inside the current
- * stage, or one this list does not know: it never changes the stage). The labels come from
- * `src-tauri/src/ai/blind_check.rs`: "Gerando as questões…", "Conferindo às cegas…",
- * "Resolvendo as contestações…" and "Reconferindo as questões revisadas…". A test reads that
- * file so a renamed label fails here.
- */
-export function stageOfLabel(label: string): number | null {
-  if (label.startsWith("Gerando as questões")) return 0;
-  if (label.startsWith("Conferindo às cegas")) return 1;
-  if (label.startsWith("Resolvendo as contestações") || label.startsWith("Reconferindo")) {
-    return 2;
-  }
-  return null;
-}
-
-/** The highest stage (index into `GENERATION_STAGES`) seen in this run, `null` if none yet. */
-const [seen, setSeen] = createSignal<number | null>(null);
-/**
- * A re-check of a saved draft never says "Gerando as questões…": its first stage label is the
- * check. Then generating is left out of the list.
- */
-const [recheck, setRecheck] = createSignal(false);
-
 /** The stages that apply to the running job: two for a re-check, three for a generation. */
-export const generationStages = () => (recheck() ? GENERATION_STAGES.slice(1) : GENERATION_STAGES);
+export const generationStages = () =>
+  status()?.kind === "recheck" ? GENERATION_STAGES.slice(1) : GENERATION_STAGES;
 
 /**
- * Index into `generationStages()` of the stage the running job is in, or `null` when no stage
- * label was seen (for example the page was reloaded in the middle of a run). Never goes back.
+ * Index into `generationStages()` of the stage the running job is in, or `null` when none has
+ * started yet (still preparing) or nothing is running.
  */
 export const generationStage = (): number | null => {
-  const current = seen();
-  return current === null ? null : current - (recheck() ? 1 : 0);
+  const current = status();
+  if (!current?.running) return null;
+  const index = generationStages().findIndex((stage) => stage.id === current.stage);
+  return index < 0 ? null : index;
 };
 
 /** "Etapa 2 de 3: Conferindo às cegas", or "" when the stage is not known. */
@@ -66,7 +45,14 @@ export function generationStageSentence(): string {
 }
 
 /** Whether cancelling now throws the draft away: only a fresh run past the generating stage. */
-export const cancelDiscardsDraft = () => !recheck() && (seen() ?? 0) >= 1;
+export const cancelDiscardsDraft = () => {
+  const current = status();
+  return (
+    !!current?.running &&
+    current.kind === "generate" &&
+    (current.stage === "checking" || current.stage === "resolving")
+  );
+};
 
 /** Set by the progress panel on the Gerar page while it shows, so the banner can stay quiet. */
 const [progressPanel, setProgressPanel] = createSignal(false);
@@ -75,16 +61,6 @@ export const setGenerationPanelShown = setProgressPanel;
 
 /** Updates the mirrored status. Exported for tests; the app calls it from `watchGeneration`. */
 export function applyGenerationStatus(next: GenerationStatus | null) {
-  if (!next?.running) {
-    setSeen(null);
-    setRecheck(false);
-  } else {
-    const started = next.progress ? stageOfLabel(next.progress.label) : null;
-    if (started !== null) {
-      if (seen() === null) setRecheck(started === 1);
-      setSeen((current) => Math.max(current ?? 0, started));
-    }
-  }
   setStatusRaw(next);
 }
 const setStatus = applyGenerationStatus;

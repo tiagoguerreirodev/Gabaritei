@@ -387,7 +387,14 @@ describe("Revisar pacote", () => {
           checked = true;
           return null;
         case "generation_status":
-          return { running: false, startedAt: null, progress: null, outcome: null };
+          return {
+            running: false,
+            startedAt: null,
+            kind: null,
+            stage: "preparing",
+            progress: null,
+            outcome: null,
+          };
         case "generation_dismiss":
           return null;
         case "draft_import":
@@ -430,7 +437,14 @@ describe("Revisar pacote", () => {
         case "generation_dismiss":
           return null;
         case "generation_status":
-          return { running: false, startedAt: null, progress: null, outcome: null };
+          return {
+            running: false,
+            startedAt: null,
+            kind: null,
+            stage: "preparing",
+            progress: null,
+            outcome: null,
+          };
         default:
           throw new Error(`Unexpected command: ${command}`);
       }

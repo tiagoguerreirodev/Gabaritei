@@ -25,7 +25,14 @@ const settings: AiSettings = {
   remnote: { mode: "server", url: "https://r.example/mcp", tools: ["search"] },
   hasRemnoteToken: true,
 };
-const idle: GenerationStatus = { running: false, startedAt: null, progress: null, outcome: null };
+const idle: GenerationStatus = {
+  running: false,
+  startedAt: null,
+  kind: null,
+  stage: "preparing",
+  progress: null,
+  outcome: null,
+};
 const tree = {
   areas: [
     {
@@ -242,6 +249,8 @@ describe("Gerar", () => {
     const calls = backend({
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
+      kind: "generate",
+      stage: "preparing",
       progress: { kind: "reading", label: "Lendo as fontes…" },
       outcome: null,
     });
@@ -258,6 +267,8 @@ describe("Gerar", () => {
     backend({
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
+      kind: "generate",
+      stage: "resolving",
       progress: { kind: "thinking", label: "Resolvendo as contestações…" },
       outcome: null,
     });
@@ -314,6 +325,8 @@ describe("Gerar", () => {
     backend({
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
+      kind: "generate",
+      stage: "generating",
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
     });
@@ -387,6 +400,8 @@ describe("Gerar", () => {
     const calls = backend({
       running: false,
       startedAt: null,
+      kind: null,
+      stage: "preparing",
       progress: null,
       outcome: { kind: "draft", draftId: "d7" },
     });
@@ -400,6 +415,8 @@ describe("Gerar", () => {
     backend({
       running: false,
       startedAt: null,
+      kind: null,
+      stage: "preparing",
       progress: null,
       outcome: { kind: "failed", message: "A IA devolveu 2 questões, mas você pediu 3." },
     });
@@ -413,6 +430,8 @@ describe("Aviso de geração", () => {
     backend({
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
+      kind: "generate",
+      stage: "checking",
       progress: { kind: "thinking", label: "Conferindo às cegas…" },
       outcome: null,
     });
@@ -430,6 +449,8 @@ describe("Aviso de geração", () => {
     backend({
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
+      kind: "generate",
+      stage: "generating",
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
     });
@@ -438,6 +459,8 @@ describe("Aviso de geração", () => {
     applyGenerationStatus({
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
+      kind: "generate",
+      stage: "generating",
       progress: { kind: "reading", label: "Lendo a fonte 3…" },
       outcome: null,
     });
@@ -451,6 +474,8 @@ describe("Aviso de geração", () => {
     backend({
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
+      kind: "generate",
+      stage: "generating",
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
     });
@@ -464,6 +489,8 @@ describe("Aviso de geração", () => {
     backend({
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
+      kind: "generate",
+      stage: "generating",
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
     });
@@ -472,6 +499,8 @@ describe("Aviso de geração", () => {
         return {
           running: true,
           startedAt: "2026-11-20T10:00:00.000Z",
+          kind: "generate",
+          stage: "generating",
           progress: { kind: "started", label: "Gerando as questões…" },
           outcome: null,
         };
@@ -487,6 +516,8 @@ describe("Aviso de geração", () => {
     const calls = backend({
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
+      kind: "generate",
+      stage: "generating",
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
     });
@@ -501,6 +532,8 @@ describe("Aviso de geração", () => {
     const calls = backend({
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
+      kind: "generate",
+      stage: "generating",
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
     });
@@ -510,6 +543,8 @@ describe("Aviso de geração", () => {
     applyGenerationStatus({
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
+      kind: "generate",
+      stage: "checking",
       progress: { kind: "thinking", label: "Conferindo às cegas…" },
       outcome: null,
     });
@@ -529,6 +564,8 @@ describe("Aviso de geração", () => {
     const calls = backend({
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
+      kind: "recheck",
+      stage: "checking",
       progress: { kind: "started", label: "Conferindo às cegas…" },
       outcome: null,
     });

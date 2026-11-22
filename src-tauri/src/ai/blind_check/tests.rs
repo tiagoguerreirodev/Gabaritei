@@ -490,6 +490,83 @@ mod pipeline {
         assert!(labels.iter().any(|l| l.contains("Conferindo")));
     }
 
+    /// The stages a run announces, in order, without repeats.
+    fn stages_of(events: &[Progress]) -> Vec<GenerationStage> {
+        let mut stages: Vec<GenerationStage> = events.iter().filter_map(|p| p.stage).collect();
+        stages.dedup();
+        stages
+    }
+
+    #[test]
+    fn a_generation_announces_its_stages_in_order() {
+        let s = setup_pipeline(&[
+            generated(vec![question("q1", "c")]),
+            answers(vec![answer("q1", "a")]),
+            resolutions(vec![resolution("q1", None)]),
+        ]);
+        let mut events = Vec::new();
+        generate_and_check(
+            &s.db,
+            &s.secrets,
+            &files_dir(&s),
+            request(1),
+            &CancelToken::new(),
+            &mut |p| events.push(p),
+        )
+        .unwrap();
+        assert_eq!(
+            stages_of(&events),
+            [
+                GenerationStage::Generating,
+                GenerationStage::Checking,
+                GenerationStage::Resolving
+            ]
+        );
+    }
+
+    #[test]
+    fn a_recheck_never_announces_generating_and_the_missing_files_notice_keeps_the_stage() {
+        let s = setup_pipeline(&[
+            generated(vec![question("q1", "c")]),
+            answers(vec![]),
+            answers(vec![answer("q1", "a")]),
+            resolutions(vec![resolution("q1", None)]),
+        ]);
+        let original = s.dir.path().join("Lei.md");
+        std::fs::write(&original, "texto").unwrap();
+        let mut job = request(1);
+        job.sources.attachments = vec![original.to_string_lossy().into_owned()];
+        let id = generate_and_check(
+            &s.db,
+            &s.secrets,
+            &files_dir(&s),
+            job,
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+        draft_files::remove(&files_dir(&s), &id);
+        let mut events = Vec::new();
+        recheck_draft(
+            &s.db,
+            &s.secrets,
+            &files_dir(&s),
+            &id,
+            &CancelToken::new(),
+            &mut |p| events.push(p),
+        )
+        .unwrap();
+        assert_eq!(
+            stages_of(&events),
+            [GenerationStage::Checking, GenerationStage::Resolving]
+        );
+        let notice = events
+            .iter()
+            .find(|p| p.label.contains("anexos originais"))
+            .unwrap();
+        assert_eq!(notice.stage, None, "the notice does not change the stage");
+    }
+
     #[test]
     fn a_new_draft_is_marked_as_checking_until_the_check_ends() {
         // Only the generator answers; the check then fails, which also ends "pending".

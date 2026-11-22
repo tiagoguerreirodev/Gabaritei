@@ -525,6 +525,38 @@ mod pipeline {
     }
 
     #[test]
+    fn checking_is_announced_before_the_draft_files_are_kept() {
+        let s = setup_pipeline(&[
+            generated(vec![question("q1", "c")]),
+            answers(vec![answer("q1", "c")]),
+        ]);
+        let original = s.dir.path().join("Lei.md");
+        std::fs::write(&original, "texto").unwrap();
+        let mut job = request(1);
+        job.sources.attachments = vec![original.to_string_lossy().into_owned()];
+        let dir = files_dir(&s);
+        let mut kept_at_checking = None;
+        let id = generate_and_check(
+            &s.db,
+            &s.secrets,
+            &dir,
+            job,
+            &CancelToken::new(),
+            &mut |p| {
+                if p.stage == Some(GenerationStage::Checking) && kept_at_checking.is_none() {
+                    let id: String =
+                        s.db.with(|c| Ok(c.query_row("SELECT id FROM drafts", [], |r| r.get(0))?))
+                            .unwrap();
+                    kept_at_checking = Some(draft_files::load(&dir, &id).unwrap().len());
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(kept_at_checking, Some(0));
+        assert_eq!(draft_files::load(&dir, &id).unwrap().len(), 1);
+    }
+
+    #[test]
     fn a_recheck_never_announces_generating_and_the_missing_files_notice_keeps_the_stage() {
         let s = setup_pipeline(&[
             generated(vec![question("q1", "c")]),

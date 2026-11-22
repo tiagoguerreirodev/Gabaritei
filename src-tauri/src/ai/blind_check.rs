@@ -401,6 +401,12 @@ pub fn generate_and_check(
         .map(std::path::PathBuf::from)
         .collect();
     let draft = super::generate::generate_draft(db, secrets, request, cancel, progress)?;
+    // From here a cancel discards the draft, so say so before anything else happens.
+    progress(Progress::starting(
+        GenerationStage::Checking,
+        ProgressKind::Started,
+        "Conferindo às cegas…",
+    ));
     // Keep copies for the life of the draft so a retry can give the generator the same files.
     // If copying fails (the file moved meanwhile), this run still uses the originals.
     let attachments = draft_files::keep(files_dir, &draft.id, &originals).unwrap_or(originals);

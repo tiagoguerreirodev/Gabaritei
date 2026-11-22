@@ -1,10 +1,13 @@
 import { A, useLocation } from "@solidjs/router";
 import { Match, Show, Switch } from "solid-js";
 import {
+  cancelledMessage,
   dismissGeneration,
+  failedPrefix,
   generationPanelShown,
   generationStageSentence,
   generationStatus,
+  isRecheckRun,
   waitingDrafts,
 } from "../generation";
 import CancelGeneration from "./CancelGeneration";
@@ -61,7 +64,7 @@ function RunStatus() {
                 <span>
                   {/* Only the stage is announced, not every progress label. */}
                   <span role="status">
-                    Gerando um pacote…
+                    {isRecheckRun() ? "Conferindo o pacote…" : "Gerando um pacote…"}
                     {generationStageSentence() ? ` ${generationStageSentence()}.` : ""}
                   </span>{" "}
                   <span class="muted">{status().progress?.label ?? ""}</span>
@@ -81,11 +84,11 @@ function RunStatus() {
                 <Switch>
                   <Match when={outcome().kind === "failed"}>
                     <span class="error">
-                      A geração falhou: {(outcome() as { kind: "failed"; message: string }).message}
+                      {failedPrefix()} {(outcome() as { kind: "failed"; message: string }).message}
                     </span>
                   </Match>
                   <Match when={outcome().kind === "cancelled"}>
-                    <span>Geração cancelada.</span>
+                    <span>{cancelledMessage(true)}</span>
                   </Match>
                 </Switch>
                 <button type="button" onClick={() => void dismissGeneration()}>

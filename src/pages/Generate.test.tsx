@@ -32,6 +32,7 @@ const idle: GenerationStatus = {
   stage: "preparing",
   progress: null,
   outcome: null,
+  outcomeKind: null,
 };
 const tree = {
   areas: [
@@ -253,6 +254,7 @@ describe("Gerar", () => {
       stage: "preparing",
       progress: { kind: "reading", label: "Lendo as fontes…" },
       outcome: null,
+      outcomeKind: null,
     });
     const user = userEvent.setup();
     renderPage();
@@ -271,6 +273,7 @@ describe("Gerar", () => {
       stage: "resolving",
       progress: { kind: "thinking", label: "Resolvendo as contestações…" },
       outcome: null,
+      outcomeKind: null,
     });
     renderPage();
     const stages = within(await screen.findByRole("list", { name: "Etapas da geração" }));
@@ -329,10 +332,13 @@ describe("Gerar", () => {
       stage: "generating",
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
+      outcomeKind: null,
     });
     renderPage();
-    const steps = await screen.findByRole("list", { name: "Etapas" });
-    expect(within(steps).getByRole("listitem", { current: "step" })).toHaveTextContent("Revisão");
+    await waitFor(() => {
+      const steps = screen.getByRole("list", { name: "Etapas" });
+      expect(within(steps).getByRole("listitem", { current: "step" })).toHaveTextContent("Revisão");
+    });
   });
 
   it("keeps the advanced options collapsed until opened", async () => {
@@ -404,6 +410,7 @@ describe("Gerar", () => {
       stage: "preparing",
       progress: null,
       outcome: { kind: "draft", draftId: "d7" },
+      outcomeKind: null,
     });
     renderPage();
     const link = await screen.findByRole("link", { name: "Revisar pacote" });
@@ -419,9 +426,13 @@ describe("Gerar", () => {
       stage: "preparing",
       progress: null,
       outcome: { kind: "failed", message: "A IA devolveu 2 questões, mas você pediu 3." },
+      outcomeKind: null,
     });
     renderPage();
-    expect(await screen.findByText(/devolveu 2 questões, mas você pediu 3/)).toBeVisible();
+    // Both the banner and the page's result card say it.
+    const messages = await screen.findAllByText(/devolveu 2 questões, mas você pediu 3/);
+    expect(messages.length).toBeGreaterThan(0);
+    expect(messages[0]).toBeVisible();
   });
 });
 
@@ -434,6 +445,7 @@ describe("Aviso de geração", () => {
       stage: "checking",
       progress: { kind: "thinking", label: "Conferindo às cegas…" },
       outcome: null,
+      outcomeKind: null,
     });
     renderPage("/outra");
     const banner = await screen.findByText(/Gerando um pacote…/);
@@ -453,6 +465,7 @@ describe("Aviso de geração", () => {
       stage: "generating",
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
+      outcomeKind: null,
     });
     renderPage("/outra");
     await screen.findByText(/Gerando um pacote…/);
@@ -463,6 +476,7 @@ describe("Aviso de geração", () => {
       stage: "generating",
       progress: { kind: "reading", label: "Lendo a fonte 3…" },
       outcome: null,
+      outcomeKind: null,
     });
     const live = screen.getByRole("status");
     expect(live).toHaveTextContent("Etapa 1 de 3: Gerando as questões");
@@ -478,6 +492,7 @@ describe("Aviso de geração", () => {
       stage: "generating",
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
+      outcomeKind: null,
     });
     renderPage();
     await screen.findByRole("heading", { name: "Gerando o pacote…" });
@@ -493,6 +508,7 @@ describe("Aviso de geração", () => {
       stage: "generating",
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
+      outcomeKind: null,
     });
     mockIPC((command) => {
       if (command === "generation_status")
@@ -503,6 +519,7 @@ describe("Aviso de geração", () => {
           stage: "generating",
           progress: { kind: "started", label: "Gerando as questões…" },
           outcome: null,
+          outcomeKind: null,
         };
       if (command === "draft_waiting" || command === "drafts_waiting") return [];
       throw new Error("sem acesso");
@@ -520,6 +537,7 @@ describe("Aviso de geração", () => {
       stage: "generating",
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
+      outcomeKind: null,
     });
     const user = userEvent.setup();
     renderPage("/outra");
@@ -536,6 +554,7 @@ describe("Aviso de geração", () => {
       stage: "generating",
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
+      outcomeKind: null,
     });
     const user = userEvent.setup();
     renderPage("/outra");
@@ -547,6 +566,7 @@ describe("Aviso de geração", () => {
       stage: "checking",
       progress: { kind: "thinking", label: "Conferindo às cegas…" },
       outcome: null,
+      outcomeKind: null,
     });
     await user.click(screen.getByRole("button", { name: "Cancelar" }));
     const dialog = within(await screen.findByRole("dialog", { name: "Cancelar a geração?" }));
@@ -560,6 +580,43 @@ describe("Aviso de geração", () => {
     await waitFor(() => expect(calls.some((c) => c.command === "generation_cancel")).toBe(true));
   });
 
+  it("words a re-check as a check, and its cancel as keeping the package", async () => {
+    backend({
+      running: true,
+      startedAt: "2026-11-20T10:00:00.000Z",
+      kind: "recheck",
+      stage: "checking",
+      progress: { kind: "started", label: "Conferindo às cegas…" },
+      outcome: null,
+      outcomeKind: null,
+    });
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Conferindo o pacote…" })).toBeVisible();
+    expect(screen.queryByText(/Gerando/)).not.toBeInTheDocument();
+    applyGenerationStatus({
+      ...idle,
+      outcome: { kind: "cancelled" },
+      outcomeKind: "recheck",
+    });
+    expect(await screen.findByText("Conferência cancelada. O pacote foi mantido.")).toBeVisible();
+    expect(screen.queryByText(/Nada foi salvo/)).not.toBeInTheDocument();
+  });
+
+  it("says a banner is checking, not generating, during a re-check", async () => {
+    backend({
+      running: true,
+      startedAt: "2026-11-20T10:00:00.000Z",
+      kind: "recheck",
+      stage: "checking",
+      progress: null,
+      outcome: null,
+      outcomeKind: null,
+    });
+    renderPage("/outra");
+    expect(await screen.findByText(/Conferindo o pacote…/)).toBeVisible();
+    expect(screen.queryByText(/Gerando um pacote/)).not.toBeInTheDocument();
+  });
+
   it("does not ask when a re-check is cancelled, since the draft stays", async () => {
     const calls = backend({
       running: true,
@@ -568,6 +625,7 @@ describe("Aviso de geração", () => {
       stage: "checking",
       progress: { kind: "started", label: "Conferindo às cegas…" },
       outcome: null,
+      outcomeKind: null,
     });
     const user = userEvent.setup();
     renderPage("/outra");

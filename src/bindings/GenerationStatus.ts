@@ -23,4 +23,9 @@ progress: Progress | null,
 /**
  * How the last generation ended, until dismissed or replaced.
  */
-outcome: GenerationOutcome | null, };
+outcome: GenerationOutcome | null, 
+/**
+ * The kind of run that produced `outcome`, so its wording can tell a re-check from a
+ * generation.
+ */
+outcomeKind: GenerationKind | null, };

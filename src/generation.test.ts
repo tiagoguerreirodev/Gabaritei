@@ -1,14 +1,19 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "./api";
 import type { GenerationKind } from "./bindings/GenerationKind";
 import type { GenerationStage } from "./bindings/GenerationStage";
 import type { GenerationStatus } from "./bindings/GenerationStatus";
 import {
   applyGenerationStatus,
+  cancelledMessage,
+  failedPrefix,
+  generationStatus,
   cancelDiscardsDraft,
   generationStage,
   generationStageSentence,
   generationStages,
   resetGenerationWatch,
+  watchGeneration,
 } from "./generation";
 
 const running = (
@@ -22,6 +27,7 @@ const running = (
   stage,
   progress: label === null ? null : { kind: "thinking", label },
   outcome: null,
+  outcomeKind: null,
 });
 const idle: GenerationStatus = {
   running: false,
@@ -30,6 +36,7 @@ const idle: GenerationStatus = {
   stage: "preparing",
   progress: null,
   outcome: null,
+  outcomeKind: null,
 };
 
 beforeEach(() => resetGenerationWatch());
@@ -79,5 +86,56 @@ describe("generation stage state", () => {
     expect(generationStage()).toBe(1);
     expect(generationStageSentence()).toBe("Etapa 2 de 2: Resolvendo as contestações");
     expect(cancelDiscardsDraft()).toBe(false);
+  });
+});
+
+describe("outcome wording", () => {
+  const ended = (outcomeKind: GenerationKind | null): GenerationStatus => ({
+    ...idle,
+    outcome: { kind: "cancelled" },
+    outcomeKind,
+  });
+
+  it("tells a cancelled re-check from a cancelled generation", () => {
+    applyGenerationStatus(ended("recheck"));
+    expect(cancelledMessage()).toBe("Conferência cancelada. O pacote foi mantido.");
+    expect(cancelledMessage(true)).toBe("Conferência cancelada.");
+    expect(failedPrefix()).toBe("A conferência falhou:");
+    applyGenerationStatus(ended("generate"));
+    expect(cancelledMessage()).toBe("Geração cancelada. Nada foi salvo.");
+    expect(cancelledMessage(true)).toBe("Geração cancelada.");
+    expect(failedPrefix()).toBe("A geração falhou:");
+  });
+});
+
+describe("watchGeneration", () => {
+  it("ignores the initial read when an event arrived first", async () => {
+    let emit: (status: GenerationStatus) => void = () => undefined;
+    let answer: (status: GenerationStatus) => void = () => undefined;
+    vi.spyOn(api, "onGenerationStatus").mockImplementation((handler) => {
+      emit = handler;
+      return Promise.resolve(() => undefined);
+    });
+    vi.spyOn(api, "generationStatus").mockImplementation(
+      () => new Promise<GenerationStatus>((resolve) => (answer = resolve)),
+    );
+    vi.spyOn(api, "draftsWaiting").mockResolvedValue([]);
+    watchGeneration();
+    await vi.waitFor(() => expect(api.generationStatus).toHaveBeenCalled());
+    emit(running("generate", "checking"));
+    answer(running("generate", "generating"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(generationStatus()?.stage).toBe("checking");
+    vi.restoreAllMocks();
+  });
+
+  it("uses the initial read when no event came", async () => {
+    vi.spyOn(api, "onGenerationStatus").mockResolvedValue(() => undefined);
+    vi.spyOn(api, "generationStatus").mockResolvedValue(running("generate", "generating"));
+    vi.spyOn(api, "draftsWaiting").mockResolvedValue([]);
+    watchGeneration();
+    await vi.waitFor(() => expect(generationStatus()?.stage).toBe("generating"));
+    vi.restoreAllMocks();
   });
 });

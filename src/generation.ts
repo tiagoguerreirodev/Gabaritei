@@ -54,6 +54,25 @@ export const cancelDiscardsDraft = () => {
   );
 };
 
+/** Whether the run on screen (or, once it ended, its outcome) is a re-check of a saved draft. */
+export const isRecheckRun = () => {
+  const current = status();
+  return (current?.running ? current.kind : current?.outcomeKind) === "recheck";
+};
+
+/** The cancelled outcome's wording: a re-check keeps its draft, a generation saves nothing. */
+export const cancelledMessage = (short = false) =>
+  isRecheckRun()
+    ? short
+      ? "Conferência cancelada."
+      : "Conferência cancelada. O pacote foi mantido."
+    : short
+      ? "Geração cancelada."
+      : "Geração cancelada. Nada foi salvo.";
+
+/** The failed outcome's wording. */
+export const failedPrefix = () => (isRecheckRun() ? "A conferência falhou:" : "A geração falhou:");
+
 /** Set by the progress panel on the Gerar page while it shows, so the banner can stay quiet. */
 const [progressPanel, setProgressPanel] = createSignal(false);
 export const generationPanelShown = progressPanel;
@@ -84,20 +103,26 @@ export async function refreshWaitingDrafts() {
 export function watchGeneration() {
   if (watching) return;
   watching = true;
-  void api
-    .generationStatus()
-    .then(setStatus)
-    .catch(() => undefined);
+  // Listen first, then read: an event that arrives before the read answers is newer than it.
+  let sawEvent = false;
   void refreshWaitingDrafts();
   // A finished generation adds a draft, and a finished blind check changes its verdicts. The
   // list only changes when a run starts or ends, not on every progress update.
-  void api.onGenerationStatus((next) => {
+  const listening = api.onGenerationStatus((next) => {
+    sawEvent = true;
     const before = untrack(status);
     const changed =
       before?.running !== next.running || before?.outcome?.kind !== next.outcome?.kind;
     setStatus(next);
     if (changed) void refreshWaitingDrafts();
   });
+  void listening
+    .catch(() => undefined)
+    .then(() => api.generationStatus())
+    .then((initial) => {
+      if (!sawEvent) setStatus(initial);
+    })
+    .catch(() => undefined);
 }
 
 /** Forgets how the last generation ended, here and in the backend. */

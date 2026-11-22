@@ -1,6 +1,7 @@
 //! One generation at a time, running in the background, with cancel and a status the
 //! frontend can read from any page (spec §3.2 "Run behavior").
 
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
@@ -67,12 +68,16 @@ pub struct GenerationStatus {
     pub progress: Option<Progress>,
     /// How the last generation ended, until dismissed or replaced.
     pub outcome: Option<GenerationOutcome>,
+    /// The kind of run that produced `outcome`, so its wording can tell a re-check from a
+    /// generation.
+    pub outcome_kind: Option<GenerationKind>,
 }
 
 #[derive(Default)]
 struct Inner {
     running: Option<Running>,
     outcome: Option<GenerationOutcome>,
+    outcome_kind: Option<GenerationKind>,
 }
 
 struct Running {
@@ -113,6 +118,7 @@ impl GenerationManager {
                 ));
             }
             inner.outcome = None;
+            inner.outcome_kind = None;
             inner.running = Some(Running {
                 cancel: cancel.clone(),
                 started_at: crate::clock::now(),
@@ -123,14 +129,23 @@ impl GenerationManager {
         }
         let manager = self.clone();
         std::thread::spawn(move || {
-            let result = work(&cancel, &mut |progress| {
-                if let Some(running) = lock(&manager.inner).running.as_mut() {
-                    if let Some(stage) = progress.stage {
-                        running.stage = stage;
+            // A panic must not leave the slot held forever.
+            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                work(&cancel, &mut |progress| {
+                    if let Some(running) = lock(&manager.inner).running.as_mut() {
+                        if let Some(stage) = progress.stage {
+                            // Stages only move forward, whatever order events arrive in.
+                            running.stage = running.stage.max(stage);
+                        }
+                        running.progress = Some(progress);
                     }
-                    running.progress = Some(progress);
-                }
-                on_event(&manager.status());
+                    on_event(&manager.status());
+                })
+            }))
+            .unwrap_or_else(|_| {
+                Err(AppError::Invalid(
+                    "A geração parou por um erro inesperado. Tente de novo.".into(),
+                ))
             });
             // A draft that was saved wins over a cancel that arrived afterwards.
             let outcome = match result {
@@ -142,10 +157,11 @@ impl GenerationManager {
             };
             {
                 let mut inner = lock(&manager.inner);
+                inner.outcome_kind = inner.running.as_ref().map(|r| r.kind);
                 inner.running = None;
                 inner.outcome = Some(outcome);
             }
-            on_event(&manager.status());
+            let _ = std::panic::catch_unwind(AssertUnwindSafe(|| on_event(&manager.status())));
         });
         Ok(())
     }
@@ -171,12 +187,15 @@ impl GenerationManager {
                 .map_or_else(Default::default, |r| r.stage),
             progress: inner.running.as_ref().and_then(|r| r.progress.clone()),
             outcome: inner.outcome.clone(),
+            outcome_kind: inner.outcome_kind,
         }
     }
 
     /// Forgets the last outcome (the user has seen it).
     pub fn dismiss(&self) {
-        lock(&self.inner).outcome = None;
+        let mut inner = lock(&self.inner);
+        inner.outcome = None;
+        inner.outcome_kind = None;
     }
 }
 
@@ -275,6 +294,117 @@ mod tests {
         let done = wait_until_done(&manager);
         assert_eq!(done.kind, None);
         assert_eq!(done.stage, GenerationStage::Preparing);
+        assert_eq!(done.outcome_kind, Some(GenerationKind::Recheck));
+    }
+
+    #[test]
+    fn the_outcome_remembers_its_kind_until_dismissed() {
+        let manager = GenerationManager::default();
+        manager
+            .start(
+                GenerationKind::Recheck,
+                |cancel, _| {
+                    cancel.cancel();
+                    Err(AppError::Invalid("x".into()))
+                },
+                |_| {},
+            )
+            .unwrap();
+        let done = wait_until_done(&manager);
+        assert_eq!(done.outcome, Some(GenerationOutcome::Cancelled));
+        assert_eq!(done.outcome_kind, Some(GenerationKind::Recheck));
+        manager.dismiss();
+        assert_eq!(manager.status().outcome_kind, None);
+    }
+
+    #[test]
+    fn a_panicking_run_frees_the_slot_and_fails_without_study_content() {
+        let manager = GenerationManager::default();
+        manager
+            .start(
+                GenerationKind::Generate,
+                |_, progress| {
+                    progress(Progress::starting(
+                        GenerationStage::Checking,
+                        ProgressKind::Started,
+                        "x",
+                    ));
+                    panic!("segredo do estudo");
+                },
+                |_| {},
+            )
+            .unwrap();
+        let done = wait_until_done(&manager);
+        assert_eq!(done.kind, None);
+        assert_eq!(done.stage, GenerationStage::Preparing);
+        let Some(GenerationOutcome::Failed { message }) = done.outcome else {
+            panic!("expected a failure");
+        };
+        assert!(!message.contains("segredo"));
+        manager
+            .start(GenerationKind::Generate, |_, _| Ok("again".into()), |_| {})
+            .unwrap();
+        wait_until_done(&manager);
+    }
+
+    #[test]
+    fn a_panicking_event_handler_also_frees_the_slot() {
+        let manager = GenerationManager::default();
+        manager
+            .start(
+                GenerationKind::Generate,
+                |_, progress| {
+                    progress(Progress::new(ProgressKind::Thinking, "x"));
+                    Ok("d".into())
+                },
+                |status| {
+                    if status.running {
+                        panic!("handler");
+                    }
+                },
+            )
+            .unwrap();
+        let done = wait_until_done(&manager);
+        assert!(matches!(
+            done.outcome,
+            Some(GenerationOutcome::Failed { .. })
+        ));
+        assert!(!done.running);
+    }
+
+    #[test]
+    fn stages_never_move_backwards() {
+        let manager = GenerationManager::default();
+        let (release, wait) = mpsc::channel::<()>();
+        manager
+            .start(
+                GenerationKind::Generate,
+                move |_, progress| {
+                    progress(Progress::starting(
+                        GenerationStage::Resolving,
+                        ProgressKind::Started,
+                        "a",
+                    ));
+                    progress(Progress::starting(
+                        GenerationStage::Checking,
+                        ProgressKind::Started,
+                        "b",
+                    ));
+                    let _ = wait.recv();
+                    Ok("d".into())
+                },
+                |_| {},
+            )
+            .unwrap();
+        for _ in 0..200 {
+            if manager.status().progress.is_some_and(|p| p.label == "b") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(manager.status().stage, GenerationStage::Resolving);
+        release.send(()).unwrap();
+        wait_until_done(&manager);
     }
 
     #[test]

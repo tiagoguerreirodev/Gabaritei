@@ -25,6 +25,7 @@ const idle: GenerationStatus = {
   stage: "preparing",
   progress: null,
   outcome: null,
+  outcomeKind: null,
 };
 
 function backend(waiting: () => DraftListItem[], current: GenerationStatus = idle) {

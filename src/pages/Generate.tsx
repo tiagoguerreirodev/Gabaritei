@@ -20,7 +20,13 @@ import type { TopicTree } from "../bindings/TopicTree";
 import { ErrorState, Loading } from "../components/states";
 import { showError } from "../components/toasts";
 import GenerationProgress from "../components/GenerationProgress";
-import { dismissGeneration, generationStatus } from "../generation";
+import {
+  cancelledMessage,
+  dismissGeneration,
+  failedPrefix,
+  generationStatus,
+  isRecheckRun,
+} from "../generation";
 import RolePicker from "./generate/RolePicker";
 import TopicPicker from "./generate/TopicPicker";
 
@@ -71,7 +77,9 @@ function GenerateView(props: { tree: TopicTree; settings: AiSettings }) {
     <Switch>
       <Match when={status()?.running}>
         <section class="card" aria-labelledby="running-title">
-          <h2 id="running-title">Gerando o pacote…</h2>
+          <h2 id="running-title">
+            {isRecheckRun() ? "Conferindo o pacote…" : "Gerando o pacote…"}
+          </h2>
           <StepList states={["done", "done", "current"]} />
           <GenerationProgress />
           <p class="muted">
@@ -142,11 +150,11 @@ function Outcome() {
             </Match>
             <Match when={outcome().kind === "failed"}>
               <p class="error" role="alert">
-                A geração falhou: {(outcome() as { kind: "failed"; message: string }).message}
+                {failedPrefix()} {(outcome() as { kind: "failed"; message: string }).message}
               </p>
             </Match>
             <Match when={outcome().kind === "cancelled"}>
-              <p>Geração cancelada. Nada foi salvo.</p>
+              <p>{cancelledMessage()}</p>
             </Match>
           </Switch>
           <button type="button" onClick={() => void dismissGeneration()}>

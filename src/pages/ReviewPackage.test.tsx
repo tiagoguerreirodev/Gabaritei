@@ -127,11 +127,10 @@ describe("Revisar pacote", () => {
     for (const secret of ["Gabarito", "Explicação", "Referências", "answerId"]) {
       expect(text).not.toContain(secret);
     }
-    expect(
-      document.querySelector(
-        "textarea, [role=radio], [role=radiogroup], input:not([type=checkbox])",
-      ),
-    ).toBeNull();
+    expect(document.querySelector("textarea, [role=radio], [role=radiogroup]")).toBeNull();
+    const inputs = [...document.querySelectorAll("input")];
+    expect(inputs).toHaveLength(1);
+    expect(screen.getByRole("checkbox", { name: /Mostrar só as sinaladas/ })).toBe(inputs[0]);
   });
 
   it("explains why an agreed line expands and uses C/E for Certo/Errado", async () => {
@@ -209,7 +208,8 @@ describe("Revisar pacote", () => {
     backend({ ...summary, problems: [{ position: 2, message: "Algo errado." }] });
     renderAt("/revisar-pacote?id=d1");
     const region = within(await screen.findByRole("region", { name: "Resumo da conferência" }));
-    expect(region.getByText("Conferidas").closest("div")).toHaveTextContent("3");
+    expect(region.getByText("Conferidas").closest("div")).toHaveTextContent("2");
+    expect(region.getByText("Corrigidas e conferidas").closest("div")).toHaveTextContent("1");
     expect(region.getByText("Contestadas").closest("div")).toHaveTextContent("1");
     expect(region.getByText("Problemas").closest("div")).toHaveTextContent("1");
     // It comes before the package details.
@@ -330,6 +330,22 @@ describe("Revisar pacote", () => {
     await waitFor(() => expect(calls.some((c) => c.command === "blind_check_start")).toBe(true));
   });
 
+  it("only suggests importing the confirmed ones when there are some", async () => {
+    backend({
+      ...summary,
+      lines: summary.lines.map((line) => ({ ...line, state: "unchecked" as const })),
+      agreed: 0,
+      fixed: 0,
+      disputed: 0,
+      unchecked: 4,
+    });
+    const user = userEvent.setup();
+    renderAt("/revisar-pacote?id=d1");
+    await user.click(await screen.findByRole("button", { name: "Descartar" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Descartar o pacote?" }));
+    expect(dialog.queryByText(/Importar só as confirmadas/)).not.toBeInTheDocument();
+  });
+
   it("keeps every action off while the blind check is still running", async () => {
     backend({
       ...summary,
@@ -346,6 +362,9 @@ describe("Revisar pacote", () => {
       expect(screen.getByRole("button", { name })).toBeDisabled();
     }
     expect(screen.queryByRole("button", { name: "Conferir de novo" })).not.toBeInTheDocument();
+    // Partial counts are not shown as if final.
+    expect(screen.getAllByText(/Conferência em andamento/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/0 conferidas/)).not.toBeInTheDocument();
   });
 
   it("checks the unchecked questions before importing everything", async () => {

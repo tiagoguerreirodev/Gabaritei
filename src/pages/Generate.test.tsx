@@ -10,7 +10,7 @@ import type { GenerationStatus } from "../bindings/GenerationStatus";
 import GenerationBanner from "../components/GenerationBanner";
 import { Toaster } from "../components/toasts";
 import { resetCatalog } from "../catalog";
-import { resetGenerationWatch, watchGeneration } from "../generation";
+import { applyGenerationStatus, resetGenerationWatch, watchGeneration } from "../generation";
 import Generate from "./Generate";
 
 const role = { agent: "codex", model: "gpt-6.2-sol", effort: "xhigh", fast: false } as const;
@@ -96,8 +96,8 @@ function backend(
   return calls;
 }
 
-function renderPage() {
-  window.location.hash = "#/gerar";
+function renderPage(path = "/gerar") {
+  window.location.hash = `#${path}`;
   resetGenerationWatch();
   render(() => (
     <>
@@ -110,6 +110,7 @@ function renderPage() {
         )}
       >
         <Route path="/gerar" component={Generate} />
+        <Route path="/outra" component={() => <h1>Outra página</h1>} />
       </HashRouter>
       <Toaster />
     </>
@@ -273,27 +274,52 @@ describe("Gerar", () => {
     ).toBe(true);
   });
 
-  it("shows the steps with the current one marked, following the form", async () => {
+  it("shows honest steps: pending until the user does something", async () => {
     backend();
     const user = userEvent.setup();
     renderPage();
     const steps = await screen.findByRole("list", { name: "Etapas" });
-    const current = () => within(steps).getByRole("listitem", { current: "step" });
-    expect(
-      within(steps)
-        .getAllByRole("listitem")
-        .map((li) => li.textContent),
-    ).toEqual([
+    const items = () => within(steps).getAllByRole("listitem");
+    expect(items().map((li) => li.textContent)).toEqual([
       expect.stringContaining("Assunto"),
       expect.stringContaining("Opções"),
-      expect.stringContaining("Fontes"),
       expect.stringContaining("Revisão"),
     ]);
-    expect(current()).toHaveTextContent("Assunto");
+    expect(within(steps).queryByText(/Fontes/)).not.toBeInTheDocument();
+    expect(within(steps).getByRole("listitem", { current: "step" })).toHaveTextContent("Assunto");
+    expect(items()[1]).toHaveTextContent("(pendente)");
+    expect(items()[2]).toHaveTextContent("(pendente)");
+
     await fillTopic(user);
-    expect(current()).toHaveTextContent("Fontes");
-    await user.clear(screen.getByLabelText("Quantidade"));
-    expect(current()).toHaveTextContent("Opções");
+    expect(items()[0]).toHaveTextContent("(concluída)");
+    // Options stay pending: nothing was changed yet.
+    expect(items()[1]).toHaveTextContent("(pendente)");
+    expect(within(steps).queryByRole("listitem", { current: "step" })).toBeNull();
+
+    await user.selectOptions(screen.getByLabelText("Formato"), "boolean");
+    expect(items()[1]).toHaveTextContent("(concluída)");
+    expect(items()[2]).toHaveTextContent("(pendente)");
+  });
+
+  it("marks Opções done once the advanced options are opened", async () => {
+    backend();
+    const user = userEvent.setup();
+    renderPage();
+    const steps = await screen.findByRole("list", { name: "Etapas" });
+    await openAdvanced(user);
+    expect(within(steps).getAllByRole("listitem")[1]).toHaveTextContent("(concluída)");
+  });
+
+  it("makes Revisão the current step while a package generates", async () => {
+    backend({
+      running: true,
+      startedAt: "2026-11-20T10:00:00.000Z",
+      progress: { kind: "started", label: "Gerando as questões…" },
+      outcome: null,
+    });
+    renderPage();
+    const steps = await screen.findByRole("list", { name: "Etapas" });
+    expect(within(steps).getByRole("listitem", { current: "step" })).toHaveTextContent("Revisão");
   });
 
   it("keeps the advanced options collapsed until opened", async () => {
@@ -311,13 +337,25 @@ describe("Gerar", () => {
     expect(screen.getByLabelText("Estilo da banca")).toBeVisible();
   });
 
-  it("explains in text what is missing instead of starting", async () => {
+  it("explains in text what is missing, links it to the fields and focuses the first one", async () => {
     const calls = backend();
     const user = userEvent.setup();
     renderPage();
     await user.click(await screen.findByRole("button", { name: "Gerar" }));
-    expect(await screen.findByText("Informe a área, a matéria e o assunto.")).toBeVisible();
+    const message = await screen.findByText("Informe a área, a matéria e o assunto.");
+    expect(message).toBeVisible();
+    // Only the summary is an alert; the per-field text is not.
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByLabelText("Área")).toHaveFocus();
+    expect(screen.getByLabelText("Área")).toBeInvalid();
+    expect(screen.getByLabelText("Área")).toHaveAccessibleDescription(
+      "Informe a área, a matéria e o assunto.",
+    );
     expect(calls.some((c) => c.command === "generation_start")).toBe(false);
+
+    // Typing does not make the message flicker; it is re-checked on submit or blur.
+    await user.type(screen.getByLabelText("Área"), "Direito");
+    expect(screen.getByText("Informe a área, a matéria e o assunto.")).toBeVisible();
 
     await fillTopic(user);
     await user.clear(screen.getByLabelText("Quantidade"));
@@ -325,8 +363,24 @@ describe("Gerar", () => {
     expect(
       await screen.findByText("A quantidade deve ser um número inteiro de 1 a 30."),
     ).toBeVisible();
+    expect(screen.queryByText("Informe a área, a matéria e o assunto.")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Quantidade")).toBeInvalid();
+    expect(screen.getByLabelText("Quantidade")).toHaveFocus();
+    expect(screen.getByLabelText("Quantidade")).toHaveAccessibleDescription(
+      /De 1 a 30\..*A quantidade deve ser um número inteiro de 1 a 30\./,
+    );
     expect(calls.some((c) => c.command === "generation_start")).toBe(false);
+  });
+
+  it("opens the advanced options and says where to go when a model is blocking", async () => {
+    const stale: AiSettings = {
+      ...settings,
+      roles: { ...settings.roles, generate: { ...role, model: "antigo" } },
+    };
+    backend(idle, stale, listed);
+    renderPage();
+    expect(await screen.findByText(/Corrija em “Opções avançadas”/)).toBeVisible();
+    expect(screen.getByLabelText("Estilo da banca")).toBeVisible();
   });
 
   it("links to the finished package and lets the user dismiss the result", async () => {
@@ -362,13 +416,127 @@ describe("Aviso de geração", () => {
       progress: { kind: "thinking", label: "Conferindo às cegas…" },
       outcome: null,
     });
-    renderPage();
+    renderPage("/outra");
     const banner = await screen.findByText(/Gerando um pacote…/);
     expect(banner).toBeVisible();
     expect(
       screen.getAllByRole("status").some((el) => /Conferindo às cegas/.test(el.textContent ?? "")),
     ).toBe(true);
     expect(screen.getByRole("link", { name: "Acompanhar" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Cancelar" })).toBeVisible();
+  });
+
+  it("keeps the announced text to the stage, not the per-tool label", async () => {
+    backend({
+      running: true,
+      startedAt: "2026-11-20T10:00:00.000Z",
+      progress: { kind: "started", label: "Gerando as questões…" },
+      outcome: null,
+    });
+    renderPage("/outra");
+    await screen.findByText(/Gerando um pacote…/);
+    applyGenerationStatus({
+      running: true,
+      startedAt: "2026-11-20T10:00:00.000Z",
+      progress: { kind: "reading", label: "Lendo a fonte 3…" },
+      outcome: null,
+    });
+    const live = screen.getByRole("status");
+    expect(live).toHaveTextContent("Etapa 1 de 3: Gerando as questões");
+    expect(live).not.toHaveTextContent("Lendo a fonte 3");
+    expect(screen.getByText("Lendo a fonte 3…")).toBeVisible();
+  });
+
+  it("stays out of the way on the Gerar page, which shows the progress itself", async () => {
+    backend({
+      running: true,
+      startedAt: "2026-11-20T10:00:00.000Z",
+      progress: { kind: "started", label: "Gerando as questões…" },
+      outcome: null,
+    });
+    renderPage();
+    await screen.findByRole("heading", { name: "Gerando o pacote…" });
+    expect(screen.queryByText(/Gerando um pacote…/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Cancelar" })).toHaveLength(1);
+  });
+
+  it("keeps Cancelar in the banner while the Gerar page is loading or failed", async () => {
+    backend({
+      running: true,
+      startedAt: "2026-11-20T10:00:00.000Z",
+      progress: { kind: "started", label: "Gerando as questões…" },
+      outcome: null,
+    });
+    mockIPC((command) => {
+      if (command === "generation_status")
+        return {
+          running: true,
+          startedAt: "2026-11-20T10:00:00.000Z",
+          progress: { kind: "started", label: "Gerando as questões…" },
+          outcome: null,
+        };
+      if (command === "draft_waiting" || command === "drafts_waiting") return [];
+      throw new Error("sem acesso");
+    });
+    renderPage();
+    expect(await screen.findByText(/Gerando um pacote…/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Cancelar" })).toBeVisible();
+  });
+
+  it("shows a pending state after Cancelar", async () => {
+    const calls = backend({
+      running: true,
+      startedAt: "2026-11-20T10:00:00.000Z",
+      progress: { kind: "started", label: "Gerando as questões…" },
+      outcome: null,
+    });
+    const user = userEvent.setup();
+    renderPage("/outra");
+    await user.click(await screen.findByRole("button", { name: "Cancelar" }));
+    expect(await screen.findByRole("button", { name: "Cancelando…" })).toBeDisabled();
+    expect(calls.filter((c) => c.command === "generation_cancel")).toHaveLength(1);
+  });
+
+  it("asks before cancelling during the check, which discards the draft", async () => {
+    const calls = backend({
+      running: true,
+      startedAt: "2026-11-20T10:00:00.000Z",
+      progress: { kind: "started", label: "Gerando as questões…" },
+      outcome: null,
+    });
+    const user = userEvent.setup();
+    renderPage("/outra");
+    await screen.findByText(/Gerando um pacote…/);
+    applyGenerationStatus({
+      running: true,
+      startedAt: "2026-11-20T10:00:00.000Z",
+      progress: { kind: "thinking", label: "Conferindo às cegas…" },
+      outcome: null,
+    });
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Cancelar a geração?" }));
+    expect(calls.some((c) => c.command === "generation_cancel")).toBe(false);
+    await user.click(dialog.getByRole("button", { name: "Continuar gerando" }));
+    expect(calls.some((c) => c.command === "generation_cancel")).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancelar geração" }),
+    );
+    await waitFor(() => expect(calls.some((c) => c.command === "generation_cancel")).toBe(true));
+  });
+
+  it("does not ask when a re-check is cancelled, since the draft stays", async () => {
+    const calls = backend({
+      running: true,
+      startedAt: "2026-11-20T10:00:00.000Z",
+      progress: { kind: "started", label: "Conferindo às cegas…" },
+      outcome: null,
+    });
+    const user = userEvent.setup();
+    renderPage("/outra");
+    await user.click(await screen.findByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.some((c) => c.command === "generation_cancel")).toBe(true);
   });
 
   it("offers the catalog's models and picks the new agent's first model when the agent changes", async () => {

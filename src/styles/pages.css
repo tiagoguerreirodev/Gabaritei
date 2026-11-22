@@ -327,7 +327,7 @@
   margin: var(--space-3) 0;
 }
 
-.question-lines li:has(details[open]) {
+.question-lines li.expanded {
   flex-basis: 100%;
   border-radius: var(--radius);
 }

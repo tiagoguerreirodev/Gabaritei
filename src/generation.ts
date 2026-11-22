@@ -9,7 +9,6 @@ import type { DraftListItem } from "./bindings/DraftListItem";
 import type { GenerationStatus } from "./bindings/GenerationStatus";
 
 const [status, setStatusRaw] = createSignal<GenerationStatus | null>(null);
-const [stage, setStage] = createSignal(0);
 const [waiting, setWaiting] = createSignal<DraftListItem[]>([]);
 let watching = false;
 
@@ -23,7 +22,13 @@ export const GENERATION_STAGES = [
   { id: "fixing", label: "Resolvendo as contestações" },
 ] as const;
 
-/** Which stage a progress label starts, or `null` for a label inside the current stage. */
+/**
+ * Which stage a progress label starts, or `null` for any other label (a label inside the current
+ * stage, or one this list does not know: it never changes the stage). The labels come from
+ * `src-tauri/src/ai/blind_check.rs`: "Gerando as questões…", "Conferindo às cegas…",
+ * "Resolvendo as contestações…" and "Reconferindo as questões revisadas…". A test reads that
+ * file so a renamed label fails here.
+ */
 export function stageOfLabel(label: string): number | null {
   if (label.startsWith("Gerando as questões")) return 0;
   if (label.startsWith("Conferindo às cegas")) return 1;
@@ -33,18 +38,56 @@ export function stageOfLabel(label: string): number | null {
   return null;
 }
 
-/** Index into `GENERATION_STAGES` of the stage a running generation is in. Never goes back. */
-export const generationStage = stage;
+/** The highest stage (index into `GENERATION_STAGES`) seen in this run, `null` if none yet. */
+const [seen, setSeen] = createSignal<number | null>(null);
+/**
+ * A re-check of a saved draft never says "Gerando as questões…": its first stage label is the
+ * check. Then generating is left out of the list.
+ */
+const [recheck, setRecheck] = createSignal(false);
 
-function setStatus(next: GenerationStatus | null) {
+/** The stages that apply to the running job: two for a re-check, three for a generation. */
+export const generationStages = () => (recheck() ? GENERATION_STAGES.slice(1) : GENERATION_STAGES);
+
+/**
+ * Index into `generationStages()` of the stage the running job is in, or `null` when no stage
+ * label was seen (for example the page was reloaded in the middle of a run). Never goes back.
+ */
+export const generationStage = (): number | null => {
+  const current = seen();
+  return current === null ? null : current - (recheck() ? 1 : 0);
+};
+
+/** "Etapa 2 de 3: Conferindo às cegas", or "" when the stage is not known. */
+export function generationStageSentence(): string {
+  const index = generationStage();
+  if (index === null) return "";
+  return `Etapa ${index + 1} de ${generationStages().length}: ${generationStages()[index]?.label}`;
+}
+
+/** Whether cancelling now throws the draft away: only a fresh run past the generating stage. */
+export const cancelDiscardsDraft = () => !recheck() && (seen() ?? 0) >= 1;
+
+/** Set by the progress panel on the Gerar page while it shows, so the banner can stay quiet. */
+const [progressPanel, setProgressPanel] = createSignal(false);
+export const generationPanelShown = progressPanel;
+export const setGenerationPanelShown = setProgressPanel;
+
+/** Updates the mirrored status. Exported for tests; the app calls it from `watchGeneration`. */
+export function applyGenerationStatus(next: GenerationStatus | null) {
   if (!next?.running) {
-    setStage(0);
+    setSeen(null);
+    setRecheck(false);
   } else {
     const started = next.progress ? stageOfLabel(next.progress.label) : null;
-    if (started !== null) setStage((current) => Math.max(current, started));
+    if (started !== null) {
+      if (seen() === null) setRecheck(started === 1);
+      setSeen((current) => Math.max(current ?? 0, started));
+    }
   }
   setStatusRaw(next);
 }
+const setStatus = applyGenerationStatus;
 
 /** The latest known status (`null` until the first read). */
 export const generationStatus = status;

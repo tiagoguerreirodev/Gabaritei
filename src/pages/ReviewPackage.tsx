@@ -199,18 +199,29 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
     <>
       <section class="card wide verdict-summary" aria-labelledby="verdict-title">
         <h2 id="verdict-title">Resumo da conferência</h2>
+        <Show when={checking()}>
+          <p class="muted">Conferência em andamento: os números aparecem quando ela terminar.</p>
+        </Show>
         <dl class="verdict-counts">
           <div class="verdict-ok">
             <dt>
               <span aria-hidden="true">✓ </span>Conferidas
             </dt>
-            <dd>{number(confirmed())}</dd>
+            <dd>{checking() ? "…" : number(s().agreed)}</dd>
           </div>
+          <Show when={checking() || s().fixed > 0}>
+            <div class="verdict-ok">
+              <dt>
+                <span aria-hidden="true">✓ </span>Corrigidas e conferidas
+              </dt>
+              <dd>{checking() ? "…" : number(s().fixed)}</dd>
+            </div>
+          </Show>
           <div class="verdict-disputed">
             <dt>
               <span aria-hidden="true">▲ </span>Contestadas
             </dt>
-            <dd>{number(s().disputed)}</dd>
+            <dd>{checking() ? "…" : number(s().disputed)}</dd>
           </div>
           <div class="verdict-problems">
             <dt>
@@ -267,12 +278,17 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
 
       <section class="card wide" aria-labelledby="checks-title">
         <h2 id="checks-title">Conferência às cegas</h2>
-        <p>
-          {number(s().agreed)} conferidas
-          {s().fixed > 0 ? `, ${number(s().fixed)} corrigidas e conferidas` : ""}
-          {s().disputed > 0 ? `, ${number(s().disputed)} contestadas` : ""}
-          {s().unchecked > 0 ? `, ${number(s().unchecked)} sem conferência` : ""}.
-        </p>
+        <Show
+          when={!checking()}
+          fallback={<p>Conferência em andamento. Os resultados aparecem quando ela terminar.</p>}
+        >
+          <p>
+            {number(s().agreed)} conferidas
+            {s().fixed > 0 ? `, ${number(s().fixed)} corrigidas e conferidas` : ""}
+            {s().disputed > 0 ? `, ${number(s().disputed)} contestadas` : ""}
+            {s().unchecked > 0 ? `, ${number(s().unchecked)} sem conferência` : ""}.
+          </p>
+        </Show>
         <Show when={flagged().length > 0}>
           <div class="curate-toolbar">
             <label>
@@ -291,7 +307,10 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
         <ul class="question-lines" aria-label="Questões do pacote">
           <For each={visibleLines()}>
             {(line) => (
-              <li class={`line-${line.state}`}>
+              <li
+                class={`line-${line.state}`}
+                classList={{ expanded: line.content !== null && expanded().has(line.position) }}
+              >
                 <Show
                   when={line.content}
                   fallback={
@@ -415,7 +434,10 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
           >
             <p>
               As {number(s().count)} questões deste pacote serão apagadas e nada entra no banco.
-              Para aproveitar parte delas, use “Importar só as confirmadas”.
+              <Show when={confirmed() > 0}>
+                {" "}
+                Para aproveitar parte delas, use “Importar só as confirmadas”.
+              </Show>
             </p>
           </Modal>
         </Show>

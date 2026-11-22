@@ -1,13 +1,13 @@
 import { A, useLocation } from "@solidjs/router";
 import { Match, Show, Switch } from "solid-js";
-import { api } from "../api";
 import {
-  GENERATION_STAGES,
   dismissGeneration,
-  generationStage,
+  generationPanelShown,
+  generationStageSentence,
   generationStatus,
   waitingDrafts,
 } from "../generation";
+import CancelGeneration from "./CancelGeneration";
 
 /**
  * Shows, on any page, that a package is being generated, how a failed or cancelled run ended,
@@ -55,22 +55,25 @@ function RunStatus() {
       {(status) => (
         <Switch>
           <Match when={status().running}>
-            <p class="generation-banner" role="status">
-              <span>
-                Gerando um pacote… etapa {generationStage() + 1} de {GENERATION_STAGES.length}:{" "}
-                {GENERATION_STAGES[generationStage()]?.label}.{" "}
-                <span class="muted">{status().progress?.label ?? ""}</span>
-              </span>
-              {/* The Gerar page shows the stages and its own Cancelar button. */}
-              <span class="banner-actions">
-                <A href="/gerar">Acompanhar</A>
-                <Show when={location.pathname !== "/gerar"}>
-                  <button type="button" onClick={() => void api.generationCancel()}>
-                    Cancelar
-                  </button>
-                </Show>
-              </span>
-            </p>
+            {/* The Gerar page shows the stages and its own Cancelar while its panel is up. */}
+            <Show when={!(location.pathname === "/gerar" && generationPanelShown())}>
+              <p class="generation-banner">
+                <span>
+                  {/* Only the stage is announced, not every progress label. */}
+                  <span role="status">
+                    Gerando um pacote…
+                    {generationStageSentence() ? ` ${generationStageSentence()}.` : ""}
+                  </span>{" "}
+                  <span class="muted">{status().progress?.label ?? ""}</span>
+                </span>
+                <span class="banner-actions">
+                  <Show when={location.pathname !== "/gerar"}>
+                    <A href="/gerar">Acompanhar</A>
+                  </Show>
+                  <CancelGeneration />
+                </span>
+              </p>
+            </Show>
           </Match>
           <Match when={status().outcome?.kind !== "draft" && status().outcome}>
             {(outcome) => (

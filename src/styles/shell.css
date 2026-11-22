@@ -38,6 +38,12 @@
 }
 
 .menu-link.active,
+.menu-link[aria-current="page"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .sidebar-footer {
   margin-top: auto;
   display: flex;
@@ -274,6 +280,16 @@ button {
   overflow-x: auto;
 }
 
+.table-scroll:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* The count in the review link's tooltip; the badge already shows it when labels are visible. */
+.menu-label-extra {
+  display: none;
+}
+
 /* Icon-only: collapsed by choice, and always on narrow windows. The label stays in the
    accessibility tree (clipped, not removed) and shows as a tooltip on hover or keyboard focus. */
 .sidebar-collapsed {
@@ -336,6 +352,11 @@ button {
   pointer-events: none;
 }
 
+.sidebar-collapsed .menu-link:hover .menu-label-extra,
+.sidebar-collapsed .menu-link:focus-visible .menu-label-extra {
+  display: inline;
+}
+
 /* Narrow windows (down to about 640px): always icons only; the toggle has nothing to do. */
 @media (max-width: 60rem) {
   .shell {
@@ -396,6 +417,11 @@ button {
     font-weight: 400;
     z-index: 30;
     pointer-events: none;
+  }
+
+  .shell .menu-link:hover .menu-label-extra,
+  .shell .menu-link:focus-visible .menu-label-extra {
+    display: inline;
   }
 
   .content {

@@ -43,11 +43,15 @@ function MenuLink(props: { route: AppRoute; count?: number }) {
       end
       activeClass="active"
       class="menu-link"
-      title={name()}
       aria-label={props.count ? name() : undefined}
     >
       {menuIcons[props.route.path]?.()}
-      <span class="menu-label">{props.route.label}</span>
+      <span class="menu-label">
+        {props.route.label}
+        <Show when={props.count}>
+          <span class="menu-label-extra">, {props.count} esperando</span>
+        </Show>
+      </span>
       <Show when={props.count}>
         <span class="menu-count" aria-hidden="true">
           {props.count}

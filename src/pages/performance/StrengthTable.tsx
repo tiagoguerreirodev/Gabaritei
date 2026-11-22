@@ -37,7 +37,12 @@ export default function StrengthTable(props: { areas: AreaStats[] }) {
     });
 
   return (
-    <div class="table-scroll">
+    <div
+      class="table-scroll"
+      role="region"
+      tabindex="0"
+      aria-label="Desempenho por área, matéria e assunto"
+    >
       <table class="strength-table" aria-label="Desempenho por área, matéria e assunto">
         <thead>
           <tr>

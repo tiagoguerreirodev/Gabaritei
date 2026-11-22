@@ -24,7 +24,7 @@ export default function RolesSection(props: {
           Atualizar listas
         </button>
       </p>
-      <div class="table-scroll">
+      <div class="table-scroll" role="region" tabindex="0" aria-labelledby="roles-title">
         <table class="roles-table">
           <thead>
             <tr>

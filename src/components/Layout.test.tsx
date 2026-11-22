@@ -85,7 +85,8 @@ describe("Sidebar", () => {
     const user = userEvent.setup();
     renderAt("/");
     const link = await screen.findByRole("link", { name: "Revisar pacote, 2 esperando" });
-    expect(link).toHaveAttribute("title", "Revisar pacote, 2 esperando");
+    expect(link).not.toHaveAttribute("title");
+    expect(link.querySelector(".menu-label-extra")).toHaveTextContent(", 2 esperando");
     await user.click(screen.getByRole("button", { name: "Menu lateral" }));
     expect(screen.getByRole("link", { name: "Revisar pacote, 2 esperando" })).toBeInTheDocument();
   });

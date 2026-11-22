@@ -1,0 +1,310 @@
+/* ---- Resolver ---- */
+
+.link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.tree-leaf .tree-name {
+  flex: 1;
+}
+
+.tree-leaf .link-button {
+  font-size: var(--text-sm);
+}
+
+.modal-footer .primary:only-child {
+  margin-left: auto;
+}
+
+.flag-button:disabled {
+  cursor: default;
+}
+
+.mode-choice {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  border: none;
+}
+
+.mode-choice legend {
+  margin-bottom: var(--space-2);
+  font-weight: 600;
+}
+
+.mode-choice label {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  cursor: pointer;
+}
+
+.count-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.count-field input {
+  width: 6rem;
+  font: inherit;
+}
+
+.resolver {
+  max-width: 52rem;
+}
+
+.resolver-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.resolver-header h1 {
+  margin-bottom: var(--space-1);
+}
+
+.resolver-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.resolver-actions button:not(.primary),
+.resolver-footer button,
+.modal-footer button:not(.primary) {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.resolver-footer button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.primary.danger {
+  background: var(--danger);
+}
+
+.score .facts {
+  grid-template-columns: repeat(2, max-content);
+}
+
+.navigator {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: var(--space-4) 0;
+}
+
+.navigator button {
+  min-width: 2.25rem;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.navigator .answered {
+  background: var(--accent-soft);
+}
+
+.navigator .flagged {
+  box-shadow: inset 0 -3px 0 var(--flag-bar);
+}
+
+.navigator .outcome-correct {
+  background: color-mix(in srgb, var(--success) 25%, var(--surface));
+}
+
+.navigator .outcome-wrong {
+  background: color-mix(in srgb, var(--danger) 25%, var(--surface));
+}
+
+.navigator .outcome-annulled {
+  text-decoration: line-through;
+}
+
+.navigator .current {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.question-card {
+  padding: var(--space-5) var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.question-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.flag-button {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.flag-button[aria-pressed="true"] {
+  color: var(--flag);
+  font-weight: 600;
+}
+
+.question-stem {
+  display: block;
+  margin: var(--space-4) 0;
+}
+
+.hint {
+  color: var(--accent);
+  font-size: var(--text-sm);
+}
+
+.options {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.option {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.option-choose {
+  display: flex;
+  flex: 1;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: 0.6rem var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.option-choose:disabled {
+  cursor: default;
+}
+
+.option-choose .rich-text {
+  flex: 1;
+}
+
+.option-letter {
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.option.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.option.eliminated .option-choose {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.option.option-key {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, var(--surface));
+}
+
+.option.option-wrong {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+}
+
+.option-mark {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--success);
+}
+
+.option-eliminate {
+  padding: 0 var(--space-3);
+  color: var(--muted);
+}
+
+.option-eliminate[aria-pressed="true"] {
+  color: var(--danger);
+}
+
+.reveal {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.reveal h3 {
+  margin: var(--space-4) 0 var(--space-1);
+  font-size: 1rem;
+}
+
+.reveal .explanation {
+  display: block;
+}
+
+.refs {
+  margin: 0;
+  padding-left: var(--space-5);
+  overflow-wrap: anywhere;
+}
+
+.resolver-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.shortcuts {
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.reveal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.reveal-actions button {
+  padding: 0.35rem var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}

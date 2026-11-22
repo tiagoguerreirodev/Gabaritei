@@ -67,6 +67,27 @@ describe("App shell", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Resolver" })).toBeVisible();
   });
 
+  it("offers a skip link that moves focus to the page content", async () => {
+    const user = userEvent.setup();
+    render(() => <App />);
+
+    await user.tab();
+    const skip = screen.getByRole("button", { name: "Pular para o conteúdo" });
+    expect(skip).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("main")).toHaveFocus();
+  });
+
+  it("moves focus to the page content when the route changes", async () => {
+    const user = userEvent.setup();
+    render(() => <App />);
+    expect(screen.getByRole("main")).not.toHaveFocus();
+
+    await user.click(screen.getByRole("link", { name: "Banco" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Banco" })).toBeVisible();
+    expect(screen.getByRole("main")).toHaveFocus();
+  });
+
   it("shows the name and version reported by the backend", async () => {
     render(() => <App />);
 

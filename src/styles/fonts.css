@@ -1,0 +1,6 @@
+/*
+ * Self-hosted variable fonts (SIL Open Font License 1.1), bundled by Vite and served from the
+ * app itself: the CSP allows font-src 'self' only. The Latin subsets cover Portuguese.
+ */
+@import "@fontsource-variable/instrument-sans/wght.css";
+@import "@fontsource-variable/source-serif-4/wght.css";

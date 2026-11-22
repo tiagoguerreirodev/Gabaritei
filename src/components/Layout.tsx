@@ -1,5 +1,5 @@
-import { A } from "@solidjs/router";
-import { For, Show, createResource, onMount, type ParentProps } from "solid-js";
+import { A, useLocation } from "@solidjs/router";
+import { For, Show, createEffect, createResource, on, onMount, type ParentProps } from "solid-js";
 import { api } from "../api";
 import { routes, type AppRoute } from "../routes";
 import { waitingDrafts, watchGeneration } from "../generation";
@@ -27,10 +27,25 @@ function MenuLink(props: { route: AppRoute; count?: number }) {
 
 export default function Layout(props: ParentProps) {
   const [info] = createResource(() => api.appInfo());
+  const location = useLocation();
+  let main: HTMLElement | undefined;
   onMount(watchGeneration);
+
+  // A route change moves focus to the page, so keyboard and screen-reader users start at the
+  // top of the new content instead of on a link in the sidebar that is no longer relevant.
+  createEffect(
+    on(
+      () => location.pathname,
+      () => main?.focus({ preventScroll: true }),
+      { defer: true },
+    ),
+  );
 
   return (
     <div class="shell">
+      <button type="button" class="skip-link" onClick={() => main?.focus()}>
+        Pular para o conteúdo
+      </button>
       <aside class="sidebar">
         <div class="brand">Gabaritei</div>
         <nav aria-label="Menu principal">
@@ -60,7 +75,7 @@ export default function Layout(props: ParentProps) {
           </Show>
         </div>
       </aside>
-      <main class="content">
+      <main class="content" id="main" tabindex="-1" ref={main}>
         <GenerationBanner />
         {props.children}
       </main>

@@ -21,6 +21,7 @@ use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportRes
 use crate::ai::roles::RoleSettings;
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, RemNoteTest};
+use crate::appearance::{self, Appearance};
 use crate::attempts::{self, AttemptView, SessionStart};
 use crate::backup::{BackupInfo, BackupService, BackupStatus, OpenableFolder, RelocateOutcome};
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
@@ -51,6 +52,18 @@ pub fn current_app_info() -> AppInfo {
 #[tauri::command]
 pub fn app_info() -> AppResult<AppInfo> {
     Ok(current_app_info())
+}
+
+/// The saved colour theme and text size.
+#[tauri::command]
+pub fn appearance(db: State<'_, Database>) -> AppResult<Appearance> {
+    db.with(|conn| appearance::load(conn))
+}
+
+/// Saves the colour theme and text size, and returns them.
+#[tauri::command]
+pub fn save_appearance(db: State<'_, Database>, appearance: Appearance) -> AppResult<Appearance> {
+    db.with(|conn| appearance::save(conn, appearance))
 }
 
 /// Area › matter › topic with question counts.
@@ -1453,6 +1466,28 @@ mod tests {
             response,
             json!({ "name": "Gabaritei", "version": env!("CARGO_PKG_VERSION") })
         );
+    }
+
+    #[test]
+    fn appearance_defaults_then_saves_through_ipc() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
+        assert_eq!(
+            app.call("appearance", json!({})).expect("loads"),
+            json!({ "theme": "system", "textSize": "m" })
+        );
+        let saved = app
+            .call(
+                "save_appearance",
+                json!({ "appearance": { "theme": "dark", "textSize": "l" } }),
+            )
+            .expect("saves");
+        assert_eq!(saved, json!({ "theme": "dark", "textSize": "l" }));
+        assert_eq!(app.call("appearance", json!({})).expect("reloads"), saved);
+        app.call(
+            "save_appearance",
+            json!({ "appearance": { "theme": "neon", "textSize": "l" } }),
+        )
+        .expect_err("an unknown theme is refused");
     }
 
     #[test]

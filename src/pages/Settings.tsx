@@ -9,6 +9,7 @@ import type { RoleSettings } from "../bindings/RoleSettings";
 import LegacyImport from "../components/LegacyImport";
 import { ErrorState, Loading } from "../components/states";
 import { showError, showToast } from "../components/toasts";
+import AppearanceSection from "./settings/AppearanceSection";
 import BackupSection from "./settings/BackupSection";
 import DataFolderSection from "./settings/DataFolderSection";
 import DataFileSection from "./settings/DataFileSection";
@@ -32,6 +33,7 @@ export default function Settings() {
   return (
     <section class="page">
       <h1>Configurações</h1>
+      <AppearanceSection />
       <Show when={!loaded.error} fallback={<ErrorState error={loaded.error as unknown} />}>
         <Show when={loaded()} fallback={<Loading />}>
           {(settings) => <Form initial={settings()} onReload={() => void refetch()} />}

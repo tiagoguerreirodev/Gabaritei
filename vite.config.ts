@@ -11,6 +11,9 @@ export default defineConfig({
   // Options tailored for `tauri dev` and `tauri build`:
   // 1. don't hide Rust errors
   clearScreen: false,
+
+  // Never inline assets as data: URIs; the CSP only allows fonts and images from 'self'.
+  build: { assetsInlineLimit: 0 },
   // 2. Tauri expects a fixed port; fail if it's taken
   server: {
     port: 1420,

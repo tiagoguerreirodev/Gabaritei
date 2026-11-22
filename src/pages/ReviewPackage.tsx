@@ -241,7 +241,7 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
                         {line.hasProblem ? " · com problema" : ""}
                       </summary>
                       <RichText text={content().stem} />
-                      <ul class="flagged-options" style={{ "list-style": "none", padding: "0" }}>
+                      <ul class="flagged-options">
                         <For each={content().options}>
                           {(option, index) => (
                             <li>

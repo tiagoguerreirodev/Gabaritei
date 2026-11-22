@@ -718,6 +718,12 @@ button {
   color: var(--muted);
 }
 
+/* No inline style: the production CSP (style-src 'self') blocks it. */
+.flagged-options {
+  list-style: none;
+  padding: 0;
+}
+
 .option.selected {
   border-color: var(--accent);
   background: var(--accent-soft);

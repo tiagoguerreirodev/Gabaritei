@@ -3,7 +3,7 @@
  * pacote page and the banner in the layout. The backend is the source of truth; this mirrors
  * it from an initial read and the `generation-status` events.
  */
-import { createSignal } from "solid-js";
+import { createSignal, untrack } from "solid-js";
 import { api } from "./api";
 import type { DraftListItem } from "./bindings/DraftListItem";
 import type { GenerationStatus } from "./bindings/GenerationStatus";
@@ -36,10 +36,14 @@ export function watchGeneration() {
     .then(setStatus)
     .catch(() => undefined);
   void refreshWaitingDrafts();
-  // A finished generation adds a draft, and a finished blind check changes its verdicts.
+  // A finished generation adds a draft, and a finished blind check changes its verdicts. The
+  // list only changes when a run starts or ends, not on every progress update.
   void api.onGenerationStatus((next) => {
+    const before = untrack(status);
+    const changed =
+      before?.running !== next.running || before?.outcome?.kind !== next.outcome?.kind;
     setStatus(next);
-    void refreshWaitingDrafts();
+    if (changed) void refreshWaitingDrafts();
   });
 }
 

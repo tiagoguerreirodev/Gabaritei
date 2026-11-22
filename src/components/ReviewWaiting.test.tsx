@@ -20,13 +20,13 @@ const draft = (id: string): DraftListItem => ({
 // The outcome was already dismissed (as clicking "Revisar pacote" used to do).
 const idle: GenerationStatus = { running: false, startedAt: null, progress: null, outcome: null };
 
-function backend(waiting: () => DraftListItem[]) {
+function backend(waiting: () => DraftListItem[], current: GenerationStatus = idle) {
   const calls: string[] = [];
   mockIPC((command) => {
     calls.push(command);
     switch (command) {
       case "generation_status":
-        return idle;
+        return current;
       case "drafts_waiting":
         return waiting();
       case "generation_dismiss":
@@ -80,6 +80,17 @@ describe("Pacotes esperando revisão", () => {
     waiting = [];
     await refreshWaitingDrafts();
     await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+  });
+
+  it("shows a single notice, with no empty dismiss banner, after a successful generation", async () => {
+    backend(() => [draft("d1")], {
+      ...idle,
+      outcome: { kind: "draft", draftId: "d1" },
+    });
+    renderApp();
+    await screen.findByText("1 pacote esperando revisão.");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Dispensar" })).not.toBeInTheDocument();
   });
 
   it("links to the list when more than one package is waiting", async () => {

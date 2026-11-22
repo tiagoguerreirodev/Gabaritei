@@ -54,7 +54,7 @@ function RunStatus() {
               <A href="/gerar">Acompanhar</A>
             </p>
           </Match>
-          <Match when={status().outcome}>
+          <Match when={status().outcome?.kind !== "draft" && status().outcome}>
             {(outcome) => (
               <p class="generation-banner" role="status">
                 <Switch>

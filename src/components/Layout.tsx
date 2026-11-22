@@ -8,10 +8,16 @@ import { Toaster } from "./toasts";
 
 function MenuLink(props: { route: AppRoute; count?: number }) {
   return (
-    <A href={props.route.path} end activeClass="active" class="menu-link">
+    <A
+      href={props.route.path}
+      end
+      activeClass="active"
+      class="menu-link"
+      aria-label={props.count ? `${props.route.label}, ${props.count} esperando` : undefined}
+    >
       {props.route.label}
       <Show when={props.count}>
-        <span class="menu-count" aria-label={`${props.count} esperando`}>
+        <span class="menu-count" aria-hidden="true">
           {props.count}
         </span>
       </Show>

@@ -190,3 +190,149 @@
   list-style: none;
   padding: 0;
 }
+
+/* ---- Gerar: etapas, opções avançadas, erros ---- */
+
+.step-list,
+.stage-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: var(--space-3) 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.step-list li,
+.stage-list li {
+  counter-increment: step;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+}
+
+/* The marker's shape carries the state: ring = to do, check = done, filled + bold = current. */
+.step-list li::before,
+.stage-list li::before {
+  content: counter(step);
+  display: inline-grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-sm);
+}
+
+.step-list li.done::before,
+.stage-list li.done::before {
+  content: "✓";
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.step-list li.current,
+.stage-list li.current {
+  color: var(--text);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+}
+
+.step-list li.current::before,
+.stage-list li.current::before {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.generate-form .required {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.advanced {
+  margin: var(--space-4) 0;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.advanced > summary {
+  cursor: pointer;
+  padding: var(--space-2) 0;
+  font-weight: 600;
+}
+
+.field-error {
+  grid-column: 2;
+  margin: 0;
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.generate-form > .field-error {
+  margin: var(--space-2) 0;
+}
+
+.banner-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* ---- Revisar pacote: resumo e triagem ---- */
+
+.verdict-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.verdict-counts > div {
+  min-width: 8rem;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.verdict-counts dt {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.verdict-counts dd {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 700;
+}
+
+/* Border style (dashed / solid) as well as colour tells disputed from problems. */
+.verdict-counts .verdict-disputed {
+  border: 2px dashed var(--danger);
+}
+
+.verdict-counts .verdict-problems {
+  border: 2px solid var(--danger);
+}
+
+.curate-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+.question-lines li.expanded {
+  flex-basis: 100%;
+  border-radius: var(--radius);
+}
+
+.question-lines summary {
+  cursor: pointer;
+}

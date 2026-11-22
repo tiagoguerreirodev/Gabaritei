@@ -1,0 +1,65 @@
+import { Show, createSignal } from "solid-js";
+import { api } from "../api";
+import { cancelDiscardsDraft } from "../generation";
+import Modal from "./Modal";
+import { showError } from "./toasts";
+
+/**
+ * Cancelar for the running job. It shows a pending state until the run ends, and asks first
+ * when cancelling would throw the generated draft away (during the blind check).
+ */
+export default function CancelGeneration() {
+  const [pending, setPending] = createSignal(false);
+  const [confirming, setConfirming] = createSignal(false);
+
+  const cancel = async () => {
+    setPending(true);
+    try {
+      // The button goes away with the running state; a `false` means nothing was running.
+      if (!(await api.generationCancel())) setPending(false);
+    } catch (error) {
+      setPending(false);
+      showError(error);
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        disabled={pending()}
+        onClick={() => (cancelDiscardsDraft() ? setConfirming(true) : void cancel())}
+      >
+        {pending() ? "Cancelando…" : "Cancelar"}
+      </button>
+      <Show when={confirming()}>
+        <Modal
+          title="Cancelar a geração?"
+          onClose={() => setConfirming(false)}
+          footer={
+            <>
+              <button type="button" onClick={() => setConfirming(false)}>
+                Continuar gerando
+              </button>
+              <button
+                type="button"
+                class="primary danger"
+                onClick={() => {
+                  setConfirming(false);
+                  void cancel();
+                }}
+              >
+                Cancelar geração
+              </button>
+            </>
+          }
+        >
+          <p>
+            As questões já foram geradas, mas a conferência ainda não terminou. Cancelar agora
+            descarta o pacote e nada é salvo.
+          </p>
+        </Modal>
+      </Show>
+    </>
+  );
+}

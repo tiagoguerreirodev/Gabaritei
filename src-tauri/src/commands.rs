@@ -14,7 +14,7 @@ use crate::ai::discovery::{self, CliStatus};
 use crate::ai::draft_files;
 use crate::ai::explain;
 use crate::ai::generate::GenerateRequest;
-use crate::ai::jobs::{GenerationManager, GenerationStatus};
+use crate::ai::jobs::{GenerationKind, GenerationManager, GenerationStatus};
 use crate::ai::ondemand::OnDemand;
 use crate::ai::recheck::{self, RecheckView};
 use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportResult};
@@ -604,6 +604,7 @@ pub fn generation_start<R: Runtime>(
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
+        GenerationKind::Generate,
         move |cancel, progress| {
             let db = worker.state::<Database>();
             let secrets = worker.state::<Secrets>();
@@ -634,6 +635,7 @@ pub fn blind_check_start<R: Runtime>(
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
+        GenerationKind::Recheck,
         move |cancel, progress| {
             let db = worker.state::<Database>();
             let secrets = worker.state::<Secrets>();

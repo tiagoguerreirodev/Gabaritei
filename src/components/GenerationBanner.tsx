@@ -1,6 +1,16 @@
-import { A } from "@solidjs/router";
+import { A, useLocation } from "@solidjs/router";
 import { Match, Show, Switch } from "solid-js";
-import { dismissGeneration, generationStatus, waitingDrafts } from "../generation";
+import {
+  cancelledMessage,
+  dismissGeneration,
+  failedPrefix,
+  generationPanelShown,
+  generationStageSentence,
+  generationStatus,
+  isRecheckRun,
+  waitingDrafts,
+} from "../generation";
+import CancelGeneration from "./CancelGeneration";
 
 /**
  * Shows, on any page, that a package is being generated, how a failed or cancelled run ended,
@@ -42,17 +52,31 @@ function WaitingNotice() {
 }
 
 function RunStatus() {
+  const location = useLocation();
   return (
     <Show when={generationStatus()}>
       {(status) => (
         <Switch>
           <Match when={status().running}>
-            <p class="generation-banner" role="status">
-              <span>
-                Gerando um pacote… <span class="muted">{status().progress?.label ?? ""}</span>
-              </span>
-              <A href="/gerar">Acompanhar</A>
-            </p>
+            {/* The Gerar page shows the stages and its own Cancelar while its panel is up. */}
+            <Show when={!(location.pathname === "/gerar" && generationPanelShown())}>
+              <p class="generation-banner">
+                <span>
+                  {/* Only the stage is announced, not every progress label. */}
+                  <span role="status">
+                    {isRecheckRun() ? "Conferindo o pacote…" : "Gerando um pacote…"}
+                    {generationStageSentence() ? ` ${generationStageSentence()}.` : ""}
+                  </span>{" "}
+                  <span class="muted">{status().progress?.label ?? ""}</span>
+                </span>
+                <span class="banner-actions">
+                  <Show when={location.pathname !== "/gerar"}>
+                    <A href="/gerar">Acompanhar</A>
+                  </Show>
+                  <CancelGeneration />
+                </span>
+              </p>
+            </Show>
           </Match>
           <Match when={status().outcome?.kind !== "draft" && status().outcome}>
             {(outcome) => (
@@ -60,11 +84,11 @@ function RunStatus() {
                 <Switch>
                   <Match when={outcome().kind === "failed"}>
                     <span class="error">
-                      A geração falhou: {(outcome() as { kind: "failed"; message: string }).message}
+                      {failedPrefix()} {(outcome() as { kind: "failed"; message: string }).message}
                     </span>
                   </Match>
                   <Match when={outcome().kind === "cancelled"}>
-                    <span>Geração cancelada.</span>
+                    <span>{cancelledMessage(true)}</span>
                   </Match>
                 </Switch>
                 <button type="button" onClick={() => void dismissGeneration()}>

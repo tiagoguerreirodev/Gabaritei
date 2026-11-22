@@ -7,7 +7,14 @@ export default function TopicPicker(props: {
   tree: TopicTree;
   value: TopicPath;
   onChange: (topic: TopicPath) => void;
+  /** The error shown for the three fields: the empty ones are marked invalid and described by it. */
+  error?: string | null;
+  errorId?: string;
+  /** Focus left the whole group (not just moved between its fields). */
+  onLeave?: () => void;
 }) {
+  const invalid = (text: string) => (props.error && !text.trim() ? "true" : undefined);
+  const describedBy = (text: string) => (props.error && !text.trim() ? props.errorId : undefined);
   const matters = () =>
     props.tree.areas.find((area) => area.name === props.value.area.trim())?.matters ?? [];
   const topics = () => matters().find((m) => m.name === props.value.matter.trim())?.topics ?? [];
@@ -19,10 +26,19 @@ export default function TopicPicker(props: {
   const existing = () => topics().find((t) => t.name === props.value.topic.trim());
 
   return (
-    <div class="topic-path">
+    <div
+      class="topic-path"
+      onFocusOut={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) props.onLeave?.();
+      }}
+    >
       <input
         type="text"
+        id="gen-topic-area"
         aria-label="Área"
+        aria-required="true"
+        aria-invalid={invalid(props.value.area)}
+        aria-describedby={describedBy(props.value.area)}
         placeholder="Área (ex.: Direito)"
         list="topic-areas"
         value={props.value.area}
@@ -33,7 +49,11 @@ export default function TopicPicker(props: {
       </datalist>
       <input
         type="text"
+        id="gen-topic-matter"
         aria-label="Matéria"
+        aria-required="true"
+        aria-invalid={invalid(props.value.matter)}
+        aria-describedby={describedBy(props.value.matter)}
         placeholder="Matéria (ex.: Constitucional)"
         list="topic-matters"
         value={props.value.matter}
@@ -44,7 +64,11 @@ export default function TopicPicker(props: {
       </datalist>
       <input
         type="text"
+        id="gen-topic-topic"
         aria-label="Assunto"
+        aria-required="true"
+        aria-invalid={invalid(props.value.topic)}
+        aria-describedby={describedBy(props.value.topic)}
         placeholder="Assunto (ex.: Controle de constitucionalidade)"
         list="topic-topics"
         value={props.value.topic}

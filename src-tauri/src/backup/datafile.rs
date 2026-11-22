@@ -299,12 +299,20 @@ mod tests {
     fn importing_replaces_local_data_without_merging_and_keeps_a_safety_backup() {
         let source = profile();
         add_question(&source.db, "from-source");
+        source
+            .db
+            .with(|conn| set_setting(conn, crate::appearance::KEY, &"dark and xl"))
+            .unwrap();
         let out = tempfile::tempdir().unwrap();
         let file = out.path().join("data.gabaritei");
         export(&source.db, &source.paths, &file, NOW).unwrap();
 
         let target = profile();
         add_question(&target.db, "local-only");
+        target
+            .db
+            .with(|conn| set_setting(conn, crate::appearance::KEY, &"light and m"))
+            .unwrap();
         source
             .db
             .with(|conn| set_setting(conn, "backup.folder", &"/the/other/computer"))
@@ -334,6 +342,10 @@ mod tests {
                     Some("local cli paths")
                 );
                 assert_eq!(get_setting::<String>(conn, "backup.folder")?, None);
+                assert_eq!(
+                    get_setting::<String>(conn, crate::appearance::KEY)?.as_deref(),
+                    Some("light and m")
+                );
                 Ok(())
             })
             .unwrap();

@@ -1,3 +1,4 @@
+import { HashRouter, Route } from "@solidjs/router";
 import { render, screen } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -42,7 +43,11 @@ describe("legacy import", () => {
       alreadyImported: false,
     }));
     const user = userEvent.setup();
-    render(() => <Home />);
+    render(() => (
+      <HashRouter>
+        <Route path="/" component={Home} />
+      </HashRouter>
+    ));
 
     await user.click(await screen.findByRole("button", { name: "Escolher pasta e importar" }));
 
@@ -57,7 +62,11 @@ describe("legacy import", () => {
       { report, bankEmpty: false },
     ]) {
       const calls = backend(status);
-      const { unmount } = render(() => <Home />);
+      const { unmount } = render(() => (
+        <HashRouter>
+          <Route path="/" component={Home} />
+        </HashRouter>
+      ));
       await vi.waitFor(() => expect(calls).toContain("legacy_import_status"));
       await settle();
       expect(screen.queryByText("Banco do Caderno Local")).not.toBeInTheDocument();
@@ -68,7 +77,11 @@ describe("legacy import", () => {
   it("keeps the button when the folder picker is cancelled", async () => {
     backend({ report: null, bankEmpty: true }, () => null);
     const user = userEvent.setup();
-    render(() => <Home />);
+    render(() => (
+      <HashRouter>
+        <Route path="/" component={Home} />
+      </HashRouter>
+    ));
 
     await user.click(await screen.findByRole("button", { name: "Escolher pasta e importar" }));
 
@@ -85,7 +98,11 @@ describe("legacy import", () => {
       }),
     );
     const user = userEvent.setup();
-    render(() => <Home />);
+    render(() => (
+      <HashRouter>
+        <Route path="/" component={Home} />
+      </HashRouter>
+    ));
 
     await user.click(await screen.findByRole("button", { name: "Escolher pasta e importar" }));
 

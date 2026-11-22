@@ -37,78 +37,85 @@ export default function StrengthTable(props: { areas: AreaStats[] }) {
     });
 
   return (
-    <table class="strength-table" aria-label="Desempenho por área, matéria e assunto">
-      <thead>
-        <tr>
-          <th scope="col">Área › matéria › assunto</th>
-          <th scope="col">Aproveitamento</th>
-          <th scope="col">Acerto</th>
-          <th scope="col">Cobertura</th>
-          <th scope="col">Avaliadas</th>
-        </tr>
-      </thead>
-      <tbody>
-        <For each={props.areas}>
-          {(area) => {
-            const areaKey = area.name;
-            return (
-              <>
-                <tr class="level-area">
-                  <th scope="row">
-                    <button
-                      type="button"
-                      class="link-button"
-                      aria-expanded={open().has(areaKey)}
-                      onClick={() => toggle(areaKey)}
-                    >
-                      {area.name}
-                    </button>{" "}
-                    <SmallSample stats={area.stats} />
-                  </th>
-                  <Cells stats={area.stats} />
-                </tr>
-                <Show when={open().has(areaKey)}>
-                  <For each={area.matters}>
-                    {(matter) => {
-                      const matterKey = `${area.name}\u0000${matter.name}`;
-                      return (
-                        <>
-                          <tr class="level-matter">
-                            <th scope="row">
-                              <button
-                                type="button"
-                                class="link-button"
-                                aria-expanded={open().has(matterKey)}
-                                onClick={() => toggle(matterKey)}
-                              >
-                                {matter.name}
-                              </button>{" "}
-                              <SmallSample stats={matter.stats} />
-                            </th>
-                            <Cells stats={matter.stats} />
-                          </tr>
-                          <Show when={open().has(matterKey)}>
-                            <For each={matter.topics}>
-                              {(topic) => (
-                                <tr class="level-topic">
-                                  <th scope="row">
-                                    {topic.name} <SmallSample stats={topic.stats} />
-                                  </th>
-                                  <Cells stats={topic.stats} />
-                                </tr>
-                              )}
-                            </For>
-                          </Show>
-                        </>
-                      );
-                    }}
-                  </For>
-                </Show>
-              </>
-            );
-          }}
-        </For>
-      </tbody>
-    </table>
+    <div
+      class="table-scroll"
+      role="region"
+      tabindex="0"
+      aria-label="Desempenho por área, matéria e assunto"
+    >
+      <table class="strength-table" aria-label="Desempenho por área, matéria e assunto">
+        <thead>
+          <tr>
+            <th scope="col">Área › matéria › assunto</th>
+            <th scope="col">Aproveitamento</th>
+            <th scope="col">Acerto</th>
+            <th scope="col">Cobertura</th>
+            <th scope="col">Avaliadas</th>
+          </tr>
+        </thead>
+        <tbody>
+          <For each={props.areas}>
+            {(area) => {
+              const areaKey = area.name;
+              return (
+                <>
+                  <tr class="level-area">
+                    <th scope="row">
+                      <button
+                        type="button"
+                        class="link-button"
+                        aria-expanded={open().has(areaKey)}
+                        onClick={() => toggle(areaKey)}
+                      >
+                        {area.name}
+                      </button>{" "}
+                      <SmallSample stats={area.stats} />
+                    </th>
+                    <Cells stats={area.stats} />
+                  </tr>
+                  <Show when={open().has(areaKey)}>
+                    <For each={area.matters}>
+                      {(matter) => {
+                        const matterKey = `${area.name}\u0000${matter.name}`;
+                        return (
+                          <>
+                            <tr class="level-matter">
+                              <th scope="row">
+                                <button
+                                  type="button"
+                                  class="link-button"
+                                  aria-expanded={open().has(matterKey)}
+                                  onClick={() => toggle(matterKey)}
+                                >
+                                  {matter.name}
+                                </button>{" "}
+                                <SmallSample stats={matter.stats} />
+                              </th>
+                              <Cells stats={matter.stats} />
+                            </tr>
+                            <Show when={open().has(matterKey)}>
+                              <For each={matter.topics}>
+                                {(topic) => (
+                                  <tr class="level-topic">
+                                    <th scope="row">
+                                      {topic.name} <SmallSample stats={topic.stats} />
+                                    </th>
+                                    <Cells stats={topic.stats} />
+                                  </tr>
+                                )}
+                              </For>
+                            </Show>
+                          </>
+                        );
+                      }}
+                    </For>
+                  </Show>
+                </>
+              );
+            }}
+          </For>
+        </tbody>
+      </table>
+    </div>
   );
 }

@@ -34,7 +34,10 @@ export default function Settings() {
     <section class="page">
       <h1>Configurações</h1>
       <AppearanceSection />
-      <Show when={!loaded.error} fallback={<ErrorState error={loaded.error as unknown} />}>
+      <Show
+        when={!loaded.error}
+        fallback={<ErrorState error={loaded.error as unknown} onRetry={() => void refetch()} />}
+      >
         <Show when={loaded()} fallback={<Loading />}>
           {(settings) => <Form initial={settings()} onReload={() => void refetch()} />}
         </Show>

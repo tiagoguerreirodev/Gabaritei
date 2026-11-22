@@ -184,3 +184,134 @@
   justify-content: flex-end;
   margin-top: var(--space-3);
 }
+
+/* ---- Shared states: skeleton, empty action, error with retry ---- */
+
+.skeleton {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 40rem;
+}
+
+.skeleton-line {
+  display: block;
+  height: 1rem;
+  width: 60%;
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  animation: skeleton-pulse 1.4s var(--ease) infinite alternate;
+}
+
+.skeleton-line[data-wide="true"] {
+  width: 100%;
+}
+
+@keyframes skeleton-pulse {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0.45;
+  }
+}
+
+.state-action {
+  margin-top: var(--space-3);
+}
+
+.error-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.error-state .error {
+  margin: 0;
+}
+
+.secondary,
+.button-link {
+  display: inline-block;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.button-link.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* ---- Mastery bars (Início): length plus printed number, never color alone ---- */
+
+.area-list li {
+  display: block;
+}
+
+.mastery {
+  display: grid;
+  grid-template-columns: minmax(7rem, 1fr) minmax(6rem, 2fr) 4rem;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  width: 100%;
+}
+
+.mastery-name {
+  overflow-wrap: anywhere;
+}
+
+.mastery-track {
+  height: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+}
+
+.mastery-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-right: 2px solid var(--text);
+  transition: width var(--dur-base) var(--ease);
+}
+
+.mastery-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Narrow windows and the largest text size: name above, bar and number below. */
+@media (max-width: 40rem) {
+  .mastery {
+    grid-template-columns: 1fr 4rem;
+  }
+
+  .mastery-name {
+    grid-column: 1 / -1;
+  }
+
+  .attempt-list li,
+  .learning-list li {
+    grid-template-columns: 1fr;
+  }
+
+  .attempt-list .primary,
+  .learning-list button {
+    grid-row: auto;
+    grid-column: 1;
+    justify-self: start;
+  }
+}
+
+.waiting-list li {
+  flex-wrap: wrap;
+}

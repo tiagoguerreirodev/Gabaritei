@@ -5,7 +5,7 @@ import { openFolder } from "./openFolder";
 
 /** Where the study data lives on this computer, with a button to open it. */
 export default function DataFolderSection() {
-  const [folder] = createResource(() => api.dataFolder());
+  const [folder, { refetch }] = createResource(() => api.dataFolder());
 
   return (
     <section class="card" aria-labelledby="data-folder-title">
@@ -13,7 +13,10 @@ export default function DataFolderSection() {
       <p class="muted">
         O banco de dados e as imagens das questões ficam nesta pasta, neste computador.
       </p>
-      <Show when={!folder.error} fallback={<ErrorState error={folder.error as unknown} />}>
+      <Show
+        when={!folder.error}
+        fallback={<ErrorState error={folder.error as unknown} onRetry={() => void refetch()} />}
+      >
         <Show when={folder()} fallback={<Loading />}>
           {(path) => (
             <p class="actions">

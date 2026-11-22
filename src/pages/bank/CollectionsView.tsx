@@ -28,7 +28,7 @@ export default function CollectionsView() {
     page: page(),
     pageSize: PAGE_SIZE,
   });
-  const [result] = createResource(query, (q) => api.collections(q));
+  const [result, { refetch }] = createResource(query, (q) => api.collections(q));
   /** The latest page, or nothing if loading failed (reading a failed resource throws). */
   const current = () => (result.error ? undefined : result.latest);
 
@@ -82,9 +82,11 @@ export default function CollectionsView() {
       </div>
 
       <Switch>
-        <Match when={result.error as unknown}>{(error) => <ErrorState error={error()} />}</Match>
+        <Match when={result.error as unknown}>
+          {(error) => <ErrorState error={error()} onRetry={() => void refetch()} />}
+        </Match>
         <Match when={!current()}>
-          <Loading label="Carregando cadernos…" />
+          <Loading variant="skeleton" label="Carregando cadernos…" />
         </Match>
         <Match when={current()?.total === 0}>
           <EmptyState title={filtering() ? "Nenhum caderno encontrado." : "Nenhum caderno ainda."}>

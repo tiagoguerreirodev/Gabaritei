@@ -761,10 +761,15 @@ impl FolderProbe {
         #[cfg(test)]
         let overrides = tests::overrides();
         let spawned = std::thread::Builder::new().spawn(move || {
-            let _free = free;
+            // Held for the whole run, so a panic in `work` still frees the entry.
+            let free = free;
             #[cfg(test)]
             tests::apply(overrides);
-            let _ = done.send(work());
+            let value = work();
+            // Free the folder before the caller can see the result: otherwise a caller that
+            // answers at once may still find the entry occupied (and a test of that flaked).
+            drop(free);
+            let _ = done.send(value);
         });
         if spawned.is_err() {
             // The closure (and the guard in it) was dropped: the entry is already free.

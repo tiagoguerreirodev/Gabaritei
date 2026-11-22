@@ -55,7 +55,7 @@ describe("ErrorState", () => {
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
-  it("disables the button while busy and announces each new error again", async () => {
+  it("disables the button while busy and announces each new error again", () => {
     const [error, setError] = createSignal<unknown>(new Error("Falhou."));
     const [busy, setBusy] = createSignal(false);
     render(() => <ErrorState error={error()} onRetry={() => undefined} busy={busy()} />);

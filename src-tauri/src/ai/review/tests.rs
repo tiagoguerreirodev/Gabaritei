@@ -117,7 +117,7 @@ fn count(db: &Database, sql: &str) -> i64 {
 }
 
 #[test]
-fn the_summary_shows_counts_and_states_but_no_content() {
+fn a_question_the_checker_agreed_with_has_no_content_and_nothing_secret_leaks() {
     let db = Database::open_in_memory().unwrap();
     mixed(&db);
     let summary = summary_of(&db, "d1");
@@ -136,33 +136,72 @@ fn the_summary_shows_counts_and_states_but_no_content() {
         summary
             .lines
             .iter()
-            .map(|l| (l.position, l.state))
+            .map(|l| (l.position, l.state, l.content.is_some()))
             .collect::<Vec<_>>(),
         [
-            (1, LineState::Agreed),
-            (2, LineState::Disputed),
-            (3, LineState::Fixed)
+            (1, LineState::Agreed, false),
+            (2, LineState::Disputed, true),
+            (3, LineState::Fixed, false)
         ]
     );
     assert_eq!(summary.board.as_deref(), Some("Cebraspe"));
 
+    // The disputed question shows its stem and options.
+    let flagged = summary.lines[1].content.as_ref().unwrap();
+    assert_eq!(flagged.stem, "ENUNCIADO-q2 sobre o tema?");
+    assert_eq!(flagged.options.len(), 5);
+    assert_eq!(flagged.options[0].text, "OPCAO-q2-A");
+
+    // Never the key, explanation, references or the checker's reason, and nothing at all
+    // from the questions that were not flagged.
     let json = serde_json::to_string(&summary).unwrap();
     for secret in [
-        "ENUNCIADO",
-        "OPCAO",
+        "ENUNCIADO-q1",
+        "ENUNCIADO-q3",
+        "OPCAO-q1",
+        "OPCAO-q3",
         "EXPLICACAO",
         "REFERENCIA",
         "RAZAO-SECRETA",
         "answerId",
-        "stem",
         "explanation",
-        "options",
+        "refs",
     ] {
         assert!(
             !json.contains(secret),
             "the preview must not contain {secret:?}: {json}"
         );
     }
+}
+
+#[test]
+fn a_question_with_a_validation_problem_is_flagged_even_if_the_checker_agreed() {
+    let db = Database::open_in_memory().unwrap();
+    let mut no_key = question("q2", "b");
+    no_key["answerId"] = json!("z");
+    insert(
+        &db,
+        &draft_of(
+            "d1",
+            vec![question("q1", "a"), no_key],
+            Some(vec![
+                verdict("q1", VerdictState::Agreed),
+                verdict("q2", VerdictState::Agreed),
+            ]),
+        ),
+    );
+    let summary = summary_of(&db, "d1");
+    assert!(summary.lines[0].content.is_none());
+    assert!(summary.lines[1].content.is_some());
+    let json = serde_json::to_string(&summary).unwrap();
+    assert!(!json.contains("EXPLICACAO"), "{json}");
+}
+
+#[test]
+fn an_unchecked_question_without_problems_shows_no_content() {
+    let db = Database::open_in_memory().unwrap();
+    insert(&db, &draft_of("d1", vec![question("q1", "a")], None));
+    assert!(summary_of(&db, "d1").lines[0].content.is_none());
 }
 
 #[test]
@@ -187,7 +226,16 @@ fn problems_name_the_question_by_position_and_quote_nothing() {
     assert!(summary.problems.iter().any(|p| p.position == Some(3)));
     assert!(summary.problems.iter().all(|p| p.position != Some(1)));
     let json = serde_json::to_string(&summary).unwrap();
-    assert!(!json.contains("OPCAO"), "{json}");
+    // Flagged questions show their stem and options, so the problems themselves must not
+    // quote them, and the unflagged question stays hidden.
+    assert!(!json.contains("OPCAO-q1"), "{json}");
+    assert!(!json.contains("EXPLICACAO"), "{json}");
+    assert!(
+        summary
+            .problems
+            .iter()
+            .all(|p| !p.message.contains("OPCAO"))
+    );
 }
 
 #[test]
@@ -415,7 +463,10 @@ fn a_package_with_quotes_in_its_options_leaks_nothing_in_the_preview() {
             Some(vec![verdict("q1", VerdictState::Agreed)]),
         ),
     );
-    let shown = serde_json::to_string(&summary_of(&db, "d1")).unwrap();
+    // The question is flagged, so its options are shown as content; the problem text
+    // that describes it must still quote nothing.
+    let summary = summary_of(&db, "d1");
+    let shown = serde_json::to_string(&summary.problems).unwrap();
     assert!(shown.contains("mesmo texto"));
     assert!(
         !shown.contains("OPCAO-SEGREDO") && !shown.contains("princípio"),

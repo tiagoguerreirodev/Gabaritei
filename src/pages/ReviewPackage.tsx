@@ -20,8 +20,9 @@ const number = (n: number) => n.toLocaleString("pt-BR");
 const duration = (ms: number) => `${Math.max(1, Math.round(ms / 1000)).toLocaleString("pt-BR")} s`;
 
 /**
- * Revisar pacote. Shows counts, problems and one line per question ("Q3 · contestada"). It
- * never shows a stem, an option, a key or an explanation: the backend doesn't send them.
+ * Revisar pacote. Shows counts, problems and one line per question ("Q3 · contestada"). Only a
+ * flagged question expands to its stem and options. The key, explanation and references are
+ * never shown: the backend doesn't send them.
  */
 export default function ReviewPackage() {
   const [params] = useSearchParams<{ id?: string }>();
@@ -223,7 +224,26 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
           <For each={s().lines}>
             {(line) => (
               <li class={`line-${line.state}`}>
-                Q{line.position} · {lineText[line.state]}
+                <Show
+                  when={line.content}
+                  fallback={
+                    <>
+                      Q{line.position} · {lineText[line.state]}
+                    </>
+                  }
+                >
+                  {(content) => (
+                    <details>
+                      <summary>
+                        Q{line.position} · {lineText[line.state]}
+                      </summary>
+                      <p>{content().stem}</p>
+                      <ol class="flagged-options" type="A">
+                        <For each={content().options}>{(option) => <li>{option.text}</li>}</For>
+                      </ol>
+                    </details>
+                  )}
+                </Show>
               </li>
             )}
           </For>

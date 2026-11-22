@@ -1314,7 +1314,7 @@ mod tests {
         assert_eq!(summary["count"], json!(1));
         assert_eq!(
             summary["lines"],
-            json!([{ "position": 1, "state": "agreed" }])
+            json!([{ "position": 1, "state": "agreed", "content": null }])
         );
         let shown = summary.to_string();
         for secret in [

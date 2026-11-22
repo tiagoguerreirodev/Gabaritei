@@ -22,10 +22,20 @@ const summary: DraftSummary = {
   durationMs: 41_000,
   costUsd: null,
   lines: [
-    { position: 1, state: "agreed" },
-    { position: 2, state: "disputed" },
-    { position: 3, state: "fixed" },
-    { position: 4, state: "agreed" },
+    { position: 1, state: "agreed", content: null },
+    {
+      position: 2,
+      state: "disputed",
+      content: {
+        stem: "Enunciado da questão contestada?",
+        options: [
+          { id: "a", text: "Alternativa um" },
+          { id: "b", text: "Alternativa dois" },
+        ],
+      },
+    },
+    { position: 3, state: "fixed", content: null },
+    { position: 4, state: "agreed", content: null },
   ],
   problems: [],
   duplicates: 1,
@@ -92,7 +102,7 @@ beforeEach(() => {
 });
 
 describe("Revisar pacote", () => {
-  it("shows counts and one line per question, and nothing from the questions", async () => {
+  it("shows counts and one line per question, with content only for the flagged one", async () => {
     backend();
     renderAt("/revisar-pacote?id=d1");
 
@@ -104,12 +114,17 @@ describe("Revisar pacote", () => {
     expect(lines.getByText("Q3 · corrigida e conferida")).toBeVisible();
     expect(screen.getByText(/1 já existem no banco/)).toBeVisible();
 
-    // No stem, option, key or explanation is rendered, and the page never asks for them.
+    // The flagged question shows its stem and options, and only it.
+    expect(screen.getByText("Enunciado da questão contestada?")).toBeInTheDocument();
+    expect(screen.getByText("Alternativa dois")).toBeInTheDocument();
+    expect(document.querySelectorAll("details")).toHaveLength(1);
+
+    // No key, explanation or reference is rendered, and nothing can be answered here.
     const text = document.body.textContent ?? "";
-    for (const secret of ["Enunciado", "Alternativa", "Gabarito:", "Explicação", "answerId"]) {
+    for (const secret of ["Gabarito", "Explicação", "Referências", "answerId"]) {
       expect(text).not.toContain(secret);
     }
-    expect(document.querySelector("ol, textarea, [role=radio], [role=radiogroup]")).toBeNull();
+    expect(document.querySelector("textarea, [role=radio], [role=radiogroup], input")).toBeNull();
   });
 
   it("renders problems without any question content", async () => {

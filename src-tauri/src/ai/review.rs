@@ -2,8 +2,9 @@
 //! §3.2 "Preview").
 //!
 //! [`DraftSummary`] is the only draft type the frontend gets. It carries counts, validation
-//! problems and one state per question: no stems, options, keys, explanations or checker
-//! reasons.
+//! problems and one state per question. Only a *flagged* question (the blind check still
+//! disputes it, or it has a validation problem) also carries its stem and options, so the user can
+//! judge it. No key, explanation, reference or checker reason ever appears.
 
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,7 @@ use super::blind_check::{self, VerdictState};
 use super::draft::{self, Draft, DraftStatus};
 use super::generate::{DraftProblem, check_draft, draft_inputs};
 use crate::bank::store::import_questions;
-use crate::bank::{QuestionType, TopicPath};
+use crate::bank::{PackageQuestion, QuestionType, TopicPath};
 use crate::error::{AppError, AppResult};
 
 /// Where a question stands after the blind check, as one line of the preview ("Q3 · contestada").
@@ -39,6 +40,26 @@ pub struct QuestionLine {
     /// 1-based, as in "Q3".
     pub position: u32,
     pub state: LineState,
+    /// The stem and options, only when the question is flagged; `None` otherwise.
+    pub content: Option<FlaggedContent>,
+}
+
+/// What the user may read of a flagged question. Deliberately has no field for the key, the
+/// explanation or the references: adding one here would be a spoiler.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FlaggedContent {
+    pub stem: String,
+    pub options: Vec<FlaggedOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FlaggedOption {
+    pub id: String,
+    pub text: String,
 }
 
 /// Agent, model and effort that did one stage.
@@ -144,6 +165,21 @@ fn states(draft: &Draft) -> AppResult<(Vec<LineState>, Option<String>, bool)> {
     Ok((lines, failed, pending))
 }
 
+/// Copies the stem and options of a flagged question, and nothing else.
+fn flagged_content(question: &PackageQuestion) -> FlaggedContent {
+    FlaggedContent {
+        stem: question.stem.clone(),
+        options: question
+            .options
+            .iter()
+            .map(|option| FlaggedOption {
+                id: option.id.clone(),
+                text: option.text.clone(),
+            })
+            .collect(),
+    }
+}
+
 fn count(items: &[LineState], wanted: LineState) -> u32 {
     u32::try_from(items.iter().filter(|s| **s == wanted).count()).unwrap_or(u32::MAX)
 }
@@ -181,6 +217,8 @@ pub fn summary(conn: &Connection, id: &str) -> AppResult<DraftSummary> {
             .map(|(index, state)| QuestionLine {
                 position: u32::try_from(index + 1).unwrap_or(u32::MAX),
                 state: *state,
+                content: (*state == LineState::Disputed || check.is_blocked(index))
+                    .then(|| flagged_content(&draft.package.questions[index])),
             })
             .collect(),
         problems: check.problems,

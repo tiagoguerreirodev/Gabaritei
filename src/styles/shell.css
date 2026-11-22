@@ -226,3 +226,146 @@ button {
   font-size: var(--text-xs);
   font-weight: 600;
 }
+
+/* ---- Sidebar: icons + labels, collapsible ---- */
+
+.shell {
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+}
+
+.content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.sidebar-toggle {
+  display: inline-grid;
+  place-items: center;
+  padding: var(--space-1);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.sidebar-toggle:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.sidebar-menu {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.menu-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.menu-link .icon {
+  flex: none;
+}
+
+.menu-link[aria-current="page"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.menu-count {
+  margin-left: auto;
+}
+
+/* Collapsed to icons: the label stays in the accessibility tree (clipped, not removed). */
+.sidebar-collapsed {
+  --sidebar-width: 4.25rem;
+}
+
+.sidebar-collapsed .brand {
+  flex-direction: column;
+  padding: 0;
+}
+
+.sidebar-collapsed .brand-name,
+.sidebar-collapsed .version {
+  display: none;
+}
+
+.sidebar-collapsed .menu-link {
+  justify-content: center;
+  padding-inline: var(--space-2);
+}
+
+.sidebar-collapsed .menu-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.sidebar-collapsed .menu-count {
+  position: absolute;
+  top: 0;
+  right: 0;
+  margin: 0;
+  padding: 0 0.3rem;
+}
+
+/* Narrow windows (down to about 640px): always icons only; the toggle has nothing to do. */
+@media (max-width: 60rem) {
+  .shell {
+    --sidebar-width: 4.25rem;
+  }
+
+  .brand {
+    flex-direction: column;
+    padding: 0;
+  }
+
+  .brand-name,
+  .version,
+  .sidebar-toggle {
+    display: none;
+  }
+
+  .menu-link {
+    justify-content: center;
+    padding-inline: var(--space-2);
+  }
+
+  .menu-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .menu-count {
+    position: absolute;
+    top: 0;
+    right: 0;
+    margin: 0;
+    padding: 0 0.3rem;
+  }
+
+  .content {
+    padding: var(--space-6) var(--space-5);
+  }
+}

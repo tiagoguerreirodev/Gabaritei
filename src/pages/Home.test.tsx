@@ -1,3 +1,4 @@
+import { HashRouter, Route } from "@solidjs/router";
 import { render, screen, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -47,7 +48,11 @@ function backend(home: HomeSummary | { error: string }) {
 describe("Início", () => {
   it("shows the summary cards, achievement per area, attempts to resume and what waits", async () => {
     backend(summary);
-    render(() => <Home />);
+    render(() => (
+      <HashRouter>
+        <Route path="/" component={Home} />
+      </HashRouter>
+    ));
 
     const cards = await screen.findByRole("list", { name: "Resumo" });
     expect(within(cards).getByText("Aproveitamento").nextElementSibling).toHaveTextContent("60%");
@@ -75,7 +80,11 @@ describe("Início", () => {
   it("resumes an active attempt in the Resolver", async () => {
     backend(summary);
     const user = userEvent.setup();
-    render(() => <Home />);
+    render(() => (
+      <HashRouter>
+        <Route path="/" component={Home} />
+      </HashRouter>
+    ));
 
     expect(await screen.findByText(/Simulado · 4 de 10 respondidas/)).toBeVisible();
     await user.click(
@@ -106,7 +115,11 @@ describe("Início", () => {
       throw new Error(`Unexpected command: ${command}`);
     });
     const user = userEvent.setup();
-    render(() => <Home />);
+    render(() => (
+      <HashRouter>
+        <Route path="/" component={Home} />
+      </HashRouter>
+    ));
 
     expect(await screen.findByText("0 questões no banco.")).toBeVisible();
     await user.click(await screen.findByRole("button", { name: "Escolher pasta e importar" }));
@@ -118,7 +131,11 @@ describe("Início", () => {
 
   it("has pt-BR empty states for a fresh install", async () => {
     backend(emptyHome);
-    render(() => <Home />);
+    render(() => (
+      <HashRouter>
+        <Route path="/" component={Home} />
+      </HashRouter>
+    ));
 
     expect(await screen.findByText("Você ainda não finalizou nenhuma tentativa.")).toBeVisible();
     expect(screen.getByText("Nenhuma tentativa em andamento.")).toBeVisible();
@@ -127,7 +144,11 @@ describe("Início", () => {
 
   it("shows the backend's message when loading fails", async () => {
     backend({ error: "Falha ao ler o banco." });
-    render(() => <Home />);
+    render(() => (
+      <HashRouter>
+        <Route path="/" component={Home} />
+      </HashRouter>
+    ));
     expect(await screen.findByRole("alert")).toHaveTextContent("Falha ao ler o banco.");
   });
 });

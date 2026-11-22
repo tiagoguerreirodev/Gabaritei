@@ -1,3 +1,4 @@
+import { A } from "@solidjs/router";
 import { For, Match, Show, Switch, createResource } from "solid-js";
 import { api } from "../api";
 import LegacyImport from "../components/LegacyImport";
@@ -49,7 +50,7 @@ export default function Home() {
                       )}
                     </For>
                   </ul>
-                  <a href="#/desempenho">Ver desempenho completo</a>
+                  <A href="/desempenho">Ver desempenho completo</A>
                 </section>
               </Show>
 
@@ -88,7 +89,7 @@ export default function Home() {
                 <h2 id="waiting-title">Aguardando você</h2>
                 <ul class="waiting-list">
                   <li>
-                    <a href="#/erros-e-revisoes">Revisões pendentes</a>
+                    <A href="/erros-e-revisoes">Revisões pendentes</A>
                     <strong>{formatNumber(summary().dueReviews)}</strong>
                     <Show when={summary().dueInOpenAttempt > 0}>
                       <span class="muted">
@@ -98,7 +99,7 @@ export default function Home() {
                     </Show>
                   </li>
                   <li>
-                    <a href="#/revisar-pacote">Pacotes para revisar</a>
+                    <A href="/revisar-pacote">Pacotes para revisar</A>
                     <strong>{formatNumber(summary().draftsWaiting)}</strong>
                   </li>
                 </ul>

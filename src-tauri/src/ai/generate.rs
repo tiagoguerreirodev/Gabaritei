@@ -11,9 +11,10 @@ use ts_rs::TS;
 use super::draft::{self, Draft, DraftRequest, DraftStatus, GenerationInfo};
 use super::prompts;
 use super::roles::RoleConfig;
-use super::runner::{CancelToken, Progress, run_job};
+use super::runner::{CancelToken, Progress};
 use super::secrets::Secrets;
 use super::settings::{self, RemNoteMode, ResolvedClis, Sources};
+use super::task::{Task, ask};
 use crate::bank::question::{MAX_AREA, MAX_MATTER, MAX_TOPIC, Provenance};
 use crate::bank::store::{load_question, topic_stems};
 use crate::bank::{Package, QuestionType, TopicPath, canonicalize, package_json_schema};
@@ -413,31 +414,31 @@ pub fn generate_draft(
         .clone()
         .unwrap_or_else(|| settings.roles.blind_check.clone());
 
-    let spec = settings::job_spec(
-        &settings,
-        secrets,
-        runtime.clis,
-        &generator,
-        package_json_schema(),
-        Sources {
+    let task = Task {
+        schema: package_json_schema(),
+        sources: Sources {
             remnote: request.sources.remnote,
             web: request.sources.web,
         },
-        request
+        instructions: prompts::generate_instructions(),
+        prompt: prompts::generate_prompt(&request, &stems),
+        attachments: request
             .sources
             .attachments
             .iter()
             .map(PathBuf::from)
             .collect(),
-    )?
-    .with_input(
-        prompts::generate_instructions(),
-        prompts::generate_prompt(&request, &stems),
-    );
-
+    };
     let started_at = (runtime.now)();
-    let output = run_job(&spec, cancel, on_progress)?;
-    let package: Package = output.parse()?;
+    let (package, output) = ask::<Package>(
+        &settings,
+        secrets,
+        runtime.clis,
+        &generator,
+        task,
+        cancel,
+        on_progress,
+    )?;
     if package.questions.len() != request.count as usize {
         return Err(AppError::Invalid(format!(
             "A IA devolveu {} questões, mas você pediu {}. Tente de novo.",

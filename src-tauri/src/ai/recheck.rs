@@ -8,17 +8,19 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::ondemand::OnDemand;
+use super::invalid;
+use super::ondemand::{
+    OnDemand, RevealedAnswer, RevealedTask, ask_about_revealed, validate_sources,
+};
 use super::prompts;
-use super::roles::RoleConfig;
+use super::roles::{Role, RoleConfig};
+use super::runner::CancelToken;
 use super::secrets::Secrets;
-use super::settings::{self, ResolvedClis, Sources};
-use super::task::{Task, ask};
+use super::settings::ResolvedClis;
 use crate::attempts;
-use crate::bank::question::{MAX_REF, MAX_REFS};
-use crate::bank::store::load_question;
+use crate::bank::question::Question;
 use crate::db::Database;
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 use crate::ids::AttemptId;
 use crate::learning;
 
@@ -50,14 +52,22 @@ pub struct RecheckAnswer {
 
 /// A validated proposal, kept in the backend until the user confirms or dismisses it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Proposal {
-    pub verdict: RecheckVerdict,
-    pub corrected_key: Option<String>,
-    pub reasoning: String,
-    pub sources: Vec<String>,
-    pub by: RoleConfig,
-    /// The key the AI judged. A change of key in the meantime makes the proposal stale.
-    pub based_on_key: String,
+pub(super) enum Proposal {
+    Correct(ProposalDetails),
+    Wrong {
+        corrected_key: String,
+        details: ProposalDetails,
+        by: RoleConfig,
+        /// The key the AI judged. A change in the meantime makes the proposal stale.
+        based_on_key: String,
+    },
+    Ambiguous(ProposalDetails),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ProposalDetails {
+    reasoning: String,
+    sources: Vec<String>,
 }
 
 /// What the Resolver shows. Only produced after the question was revealed.
@@ -74,16 +84,23 @@ pub struct RecheckView {
 
 impl From<&Proposal> for RecheckView {
     fn from(proposal: &Proposal) -> Self {
+        let (verdict, corrected_key, details) = match proposal {
+            Proposal::Correct(details) => (RecheckVerdict::Correct, None, details),
+            Proposal::Wrong {
+                corrected_key,
+                details,
+                ..
+            } => (RecheckVerdict::Wrong, Some(corrected_key.clone()), details),
+            Proposal::Ambiguous(details) => (RecheckVerdict::Ambiguous, None, details),
+        };
         Self {
-            verdict: proposal.verdict,
-            corrected_key: proposal.corrected_key.clone(),
-            reasoning: proposal.reasoning.clone(),
-            sources: proposal.sources.clone(),
+            verdict,
+            corrected_key,
+            reasoning: details.reasoning.clone(),
+            sources: details.sources.clone(),
         }
     }
 }
-
-use super::invalid;
 
 /// Asks the re-check role about the revealed question at `position`. Blocking.
 pub fn ask_recheck(
@@ -93,66 +110,50 @@ pub fn ask_recheck(
     jobs: &OnDemand,
     attempt_id: &AttemptId,
     position: u32,
+    cancel: &CancelToken,
 ) -> AppResult<RecheckView> {
-    let (settings, question) = db.with(|conn| {
-        let id = attempts::revealed_question(conn, attempt_id, position)?;
-        let question =
-            load_question(conn, &id)?.ok_or_else(|| invalid("Questão não encontrada."))?;
-        Ok((settings::load(conn, secrets)?, question))
-    })?;
-    let role = settings.roles.recheck.clone();
-    let answer: RecheckAnswer = jobs.run(|cancel| {
-        let (answer, _) = ask(
-            &settings,
-            secrets,
-            clis,
-            &role,
-            Task {
-                schema: super::blind_check::schema_of::<RecheckAnswer>(),
-                // The question holds no private material, so the web is safe to allow.
-                sources: Sources {
-                    remnote: false,
-                    web: true,
-                },
-                instructions: prompts::recheck_instructions(),
-                prompt: prompts::recheck_prompt(&question),
-                attachments: Vec::new(),
-            },
-            cancel,
-            &mut |_| {},
-        )?;
-        Ok::<RecheckAnswer, AppError>(answer)
-    })?;
+    let RevealedAnswer::<RecheckAnswer> {
+        question,
+        role,
+        answer,
+    } = ask_about_revealed(
+        db,
+        secrets,
+        clis,
+        RevealedTask {
+            attempt_id,
+            position,
+            role: Role::Recheck,
+            instructions: prompts::recheck_instructions(),
+            prompt: |question: &Question| Ok(prompts::recheck_prompt(question)),
+        },
+        cancel,
+    )?;
 
     if answer.reasoning.trim().is_empty() || answer.reasoning.chars().count() > MAX_REASONING {
         return Err(invalid("A IA não justificou a revisão. Tente de novo."));
     }
-    if answer.sources.len() > MAX_REFS
-        || answer
-            .sources
-            .iter()
-            .any(|s| s.trim().is_empty() || s.chars().count() > MAX_REF)
-    {
-        return Err(invalid("A IA devolveu fontes inválidas. Tente de novo."));
-    }
-    let corrected_key = match answer.verdict {
-        RecheckVerdict::Wrong => match prompts::option_by_label(&question, &answer.corrected_key) {
-            Some(option) if option.id != question.answer_id => Some(option.id.clone()),
-            _ => {
-                return Err(invalid(
-                    "A IA disse que o gabarito está errado, mas não indicou uma alternativa válida.",
-                ));
-            }
-        },
-        RecheckVerdict::Correct | RecheckVerdict::Ambiguous => None,
-    };
-    let proposal = Proposal {
-        verdict: answer.verdict,
-        corrected_key,
+    let details = ProposalDetails {
         reasoning: answer.reasoning.trim().to_owned(),
-        sources: answer.sources.iter().map(|s| s.trim().to_owned()).collect(),
-        by: role,
-        based_on_key: question.answer_id.clone(),
+        sources: validate_sources(answer.sources)
+            .map_err(|_| invalid("A IA devolveu fontes inválidas. Tente de novo."))?,
+    };
+    let proposal = match answer.verdict {
+        RecheckVerdict::Wrong => {
+            let option = prompts::option_by_label(&question, &answer.corrected_key)
+                .filter(|option| option.id != question.answer_id)
+                .ok_or_else(|| invalid(
+                    "A IA disse que o gabarito está errado, mas não indicou uma alternativa válida.",
+                ))?;
+            Proposal::Wrong {
+                corrected_key: option.id.clone(),
+                details,
+                by: role,
+                based_on_key: question.answer_id,
+            }
+        }
+        RecheckVerdict::Correct => Proposal::Correct(details),
+        RecheckVerdict::Ambiguous => Proposal::Ambiguous(details),
     };
     let view = RecheckView::from(&proposal);
     jobs.keep(question.id, proposal);
@@ -172,7 +173,12 @@ pub fn apply(
     let proposal = jobs
         .take(&question_id)
         .ok_or_else(|| invalid("Não há uma revisão esperando confirmação. Peça de novo."))?;
-    let (RecheckVerdict::Wrong, Some(new_key)) = (proposal.verdict, proposal.corrected_key.clone())
+    let Proposal::Wrong {
+        corrected_key: new_key,
+        details,
+        by,
+        based_on_key,
+    } = proposal
     else {
         return Err(invalid("Esta revisão não propõe trocar o gabarito."));
     };
@@ -181,7 +187,7 @@ pub fn apply(
         params![question_id],
         |row| row.get(0),
     )?;
-    if old_key != proposal.based_on_key {
+    if old_key != based_on_key {
         return Err(invalid("O gabarito mudou desde a revisão. Peça de novo."));
     }
     // A corrected key settles the dispute; `key_changes` below keeps the history.
@@ -198,8 +204,8 @@ pub fn apply(
             question_id,
             old_key,
             new_key,
-            proposal.reasoning,
-            format!("recheck:{}/{}", proposal.by.agent.as_str(), proposal.by.model),
+            details.reasoning,
+            format!("recheck:{}/{}", by.agent.as_str(), by.model),
             now
         ],
     )?;

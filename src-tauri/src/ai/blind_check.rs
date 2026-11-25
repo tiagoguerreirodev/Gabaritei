@@ -17,7 +17,7 @@ use super::roles::RoleConfig;
 use super::runner::{CancelToken, Progress, ProgressKind};
 use super::secrets::Secrets;
 use super::settings::{self, AiSettings, ResolvedClis, Sources};
-use super::task::{Task, ask};
+use super::task::{Task, ask, schema_of};
 use crate::bank::PackageQuestion;
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
@@ -237,10 +237,6 @@ fn check_questions(
         return Err(missing_checker_answer());
     }
     Ok((by_id, output))
-}
-
-pub(super) fn schema_of<T: JsonSchema>() -> serde_json::Value {
-    serde_json::to_value(schemars::schema_for!(T)).expect("schema serializes")
 }
 
 fn sum_cost(a: Option<f64>, b: Option<f64>) -> Option<f64> {

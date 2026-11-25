@@ -772,7 +772,9 @@ pub async fn recheck_ask<R: Runtime>(
             vec![(roles.recheck.clone(), "Revisão sob demanda")]
         })?;
         let clis = resolve_job_clis(&db)?;
-        recheck::ask_recheck(&db, &secrets, &clis, &jobs, &attempt_id, position)
+        jobs.run(|cancel| {
+            recheck::ask_recheck(&db, &secrets, &clis, &jobs, &attempt_id, position, cancel)
+        })
     })
     .await
     .map_err(|error| AppError::Internal(error.to_string()))?
@@ -817,15 +819,17 @@ pub async fn explain_ask<R: Runtime>(
             vec![(roles.explain.clone(), "Explicação sob demanda")]
         })?;
         let clis = resolve_job_clis(&db)?;
-        explain::ask_explain(
-            &db,
-            &secrets,
-            &clis,
-            &jobs,
-            &attempt_id,
-            position,
-            crate::clock::now,
-        )
+        jobs.run(|cancel| {
+            explain::ask_explain(
+                &db,
+                &secrets,
+                &clis,
+                &attempt_id,
+                position,
+                cancel,
+                crate::clock::now,
+            )
+        })
     })
     .await
     .map_err(|error| AppError::Internal(error.to_string()))?

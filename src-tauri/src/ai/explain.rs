@@ -5,16 +5,19 @@ use rusqlite::params;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::ondemand::OnDemand;
+use super::invalid;
+use super::ondemand::{
+    RevealedAnswer, RevealedTask, SourceError, ask_about_revealed, validate_sources,
+};
 use super::prompts;
+use super::roles::Role;
+use super::runner::CancelToken;
 use super::secrets::Secrets;
-use super::settings::{self, ResolvedClis, Sources};
-use super::task::{Task, ask};
+use super::settings::ResolvedClis;
 use crate::attempts::{self, AttemptView};
-use crate::bank::question::{MAX_EXPLANATION, MAX_REF, MAX_REFS};
-use crate::bank::store::load_question;
+use crate::bank::question::{MAX_EXPLANATION, MAX_REFS, Question};
 use crate::db::Database;
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 use crate::ids::AttemptId;
 
 /// The explainer's structured answer.
@@ -27,50 +30,37 @@ pub struct ExplainAnswer {
     pub refs: Vec<String>,
 }
 
-use super::invalid;
-
 /// Writes the explanation for the revealed question at `position` and returns the attempt as the
 /// frontend may see it. Blocking. Refused if the question isn't revealed or already has one.
 pub fn ask_explain(
     db: &Database,
     secrets: &Secrets,
     clis: &ResolvedClis,
-    jobs: &OnDemand,
     attempt_id: &AttemptId,
     position: u32,
+    cancel: &CancelToken,
     now: impl FnOnce() -> String,
 ) -> AppResult<AttemptView> {
-    let (settings, question) = db.with(|conn| {
-        let id = attempts::revealed_question(conn, attempt_id, position)?;
-        let question =
-            load_question(conn, &id)?.ok_or_else(|| invalid("Questão não encontrada."))?;
-        Ok((settings::load(conn, secrets)?, question))
-    })?;
-    if !question.explanation.trim().is_empty() {
-        return Err(invalid("Esta questão já tem explicação."));
-    }
-    let role = settings.roles.explain.clone();
-    let answer: ExplainAnswer = jobs.run(|cancel| {
-        let (answer, _) = ask(
-            &settings,
-            secrets,
-            clis,
-            &role,
-            Task {
-                schema: super::blind_check::schema_of::<ExplainAnswer>(),
-                sources: Sources {
-                    remnote: false,
-                    web: true,
-                },
-                instructions: prompts::explain_instructions(),
-                prompt: prompts::explain_prompt(&question),
-                attachments: Vec::new(),
+    let RevealedAnswer::<ExplainAnswer> {
+        question, answer, ..
+    } = ask_about_revealed(
+        db,
+        secrets,
+        clis,
+        RevealedTask {
+            attempt_id,
+            position,
+            role: Role::Explain,
+            instructions: prompts::explain_instructions(),
+            prompt: |question: &Question| {
+                if !question.explanation.trim().is_empty() {
+                    return Err(invalid("Esta questão já tem explicação."));
+                }
+                Ok(prompts::explain_prompt(question))
             },
-            cancel,
-            &mut |_| {},
-        )?;
-        Ok::<ExplainAnswer, AppError>(answer)
-    })?;
+        },
+        cancel,
+    )?;
 
     let explanation = answer.explanation.trim().to_owned();
     if explanation.is_empty() || explanation.chars().count() > MAX_EXPLANATION {
@@ -79,17 +69,14 @@ pub fn ask_explain(
         ));
     }
     let too_many_refs = || invalid("A IA devolveu fontes demais. Tente de novo.");
-    if answer.refs.len() > MAX_REFS {
-        return Err(too_many_refs());
-    }
-    let mut refs = question.refs.clone();
-    for reference in &answer.refs {
-        let trimmed = reference.trim();
-        if trimmed.is_empty() || reference.chars().count() > MAX_REF {
-            return Err(invalid("A IA devolveu fontes inválidas. Tente de novo."));
-        }
-        if !refs.iter().any(|r| r == trimmed) {
-            refs.push(trimmed.to_owned());
+    let new_refs = validate_sources(answer.refs).map_err(|error| match error {
+        SourceError::TooMany => too_many_refs(),
+        SourceError::InvalidReference => invalid("A IA devolveu fontes inválidas. Tente de novo."),
+    })?;
+    let mut refs = question.refs;
+    for reference in new_refs {
+        if !refs.contains(&reference) {
+            refs.push(reference);
         }
     }
     if refs.len() > MAX_REFS {

@@ -4,6 +4,7 @@ use super::*;
 use crate::attempts::{FeedbackMode, SessionSource, SessionStart, answer as answer_question};
 use crate::bank::import_questions;
 use crate::bank::question::tests::multiple;
+use crate::bank::store::load_question;
 use rand::SeedableRng;
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -15,7 +16,6 @@ struct World {
     dir: tempfile::TempDir,
     db: Database,
     secrets: Secrets,
-    jobs: OnDemand,
     clis: ResolvedClis,
     attempt: AttemptId,
     key: String,
@@ -95,7 +95,6 @@ fn world(
         dir,
         db,
         secrets,
-        jobs: OnDemand::default(),
         clis: ResolvedClis::new(None, Some(cli)),
         attempt,
         key,
@@ -113,9 +112,9 @@ fn explain(world: &World) -> AppResult<AttemptView> {
         &world.db,
         &world.secrets,
         &world.clis,
-        &world.jobs,
         &world.attempt,
         0,
+        &CancelToken::new(),
         || EXPLAINED_AT.into(),
     )
 }
@@ -258,27 +257,39 @@ mod flow {
     }
 
     #[test]
-    fn bad_answers_save_nothing() {
-        for bad in [
-            json!({ "explanation": "  ", "refs": [] }),
-            json!({ "explanation": "Texto.", "refs": ["  "] }),
-            json!({ "explanation": "Texto.", "extra": 1, "refs": [] }),
-        ] {
-            let w = world("", FeedbackMode::Study, true, bad);
-            assert!(explain(&w).is_err());
-            let stored: String = w
-                .db
-                .with(|c| Ok(c.query_row("SELECT explanation FROM questions", [], |r| r.get(0))?))
+    fn a_blank_explanation_saves_nothing() {
+        assert_explanation_rejected(json!({ "explanation": "  ", "refs": [] }));
+    }
+
+    #[test]
+    fn a_blank_reference_saves_nothing() {
+        assert_explanation_rejected(json!({ "explanation": "Texto.", "refs": ["  "] }));
+    }
+
+    #[test]
+    fn an_answer_with_an_unknown_field_saves_nothing() {
+        assert_explanation_rejected(json!({ "explanation": "Texto.", "extra": 1, "refs": [] }));
+    }
+
+    fn assert_explanation_rejected(answer: serde_json::Value) {
+        let w = world("", FeedbackMode::Study, true, answer);
+        assert!(explain(&w).is_err());
+        let stored: String =
+            w.db.with(|c| Ok(c.query_row("SELECT explanation FROM questions", [], |r| r.get(0))?))
                 .unwrap();
-            assert_eq!(stored, "");
-        }
+        assert_eq!(stored, "");
     }
 }
 
 #[test]
-fn the_explain_schema_is_strict_and_matches_its_snapshot() {
-    let schema = crate::ai::blind_check::schema_of::<ExplainAnswer>();
+fn the_explain_schema_is_strict() {
+    let schema = crate::ai::task::schema_of::<ExplainAnswer>();
     assert_eq!(schema["additionalProperties"], json!(false));
+}
+
+#[test]
+fn the_explain_schema_matches_its_snapshot() {
+    let schema = crate::ai::task::schema_of::<ExplainAnswer>();
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("schemas/explain.schema.json");
     let generated = serde_json::to_string_pretty(&schema).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {

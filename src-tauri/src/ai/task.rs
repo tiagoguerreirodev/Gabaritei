@@ -1,5 +1,7 @@
 //! Running one structured job for a role, shared by every AI feature.
 
+use schemars::JsonSchema;
+
 use super::roles::RoleConfig;
 use super::runner::{CancelToken, JobOutput, Progress, run_job};
 use super::secrets::Secrets;
@@ -14,6 +16,10 @@ pub(super) struct Task {
     pub prompt: String,
     /// Files copied into the run folder for the agent to read.
     pub attachments: Vec<std::path::PathBuf>,
+}
+
+pub(super) fn schema_of<T: JsonSchema>() -> serde_json::Value {
+    serde_json::to_value(schemars::schema_for!(T)).expect("schema serializes")
 }
 
 /// Runs one structured job for `config`.

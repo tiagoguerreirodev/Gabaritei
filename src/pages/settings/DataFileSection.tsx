@@ -2,7 +2,7 @@ import { Show, createSignal } from "solid-js";
 import { api } from "../../api";
 import ConfirmModal from "../../components/ConfirmModal";
 import { showError, showToast } from "../../components/toasts";
-import type { Busy } from "./busy";
+import type { Busy } from "../../actions";
 
 /** Moves the study data between computers with one file. */
 export default function DataFileSection(props: {

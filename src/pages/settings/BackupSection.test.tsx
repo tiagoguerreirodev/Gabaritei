@@ -6,7 +6,7 @@ import type { BackupStatus } from "../../bindings/BackupStatus";
 import { Toaster } from "../../components/toasts";
 import BackupSection from "./BackupSection";
 import type { RelocateReport } from "../../bindings/RelocateReport";
-import { createBusy } from "./busy";
+import { createBusy } from "../../actions";
 
 const old = {
   name: "backup-20261118-100000-000",

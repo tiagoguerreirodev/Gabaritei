@@ -8,7 +8,7 @@ import type { LegacyImportStatus } from "../bindings/LegacyImportStatus";
 import Home from "../pages/Home";
 import { emptyHome } from "../test/fixtures";
 import Settings from "../pages/Settings";
-import { createBusy } from "../pages/settings/busy";
+import { createBusy } from "../actions";
 import LegacyImport from "./LegacyImport";
 
 const report: LegacyImportReport = {

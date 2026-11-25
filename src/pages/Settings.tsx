@@ -14,7 +14,7 @@ import AppearanceSection from "./settings/AppearanceSection";
 import BackupSection from "./settings/BackupSection";
 import DataFolderSection from "./settings/DataFolderSection";
 import DataFileSection from "./settings/DataFileSection";
-import { createBusy } from "./settings/busy";
+import { createBusy } from "../actions";
 import AgentsSection from "./settings/AgentsSection";
 import RemNoteSection from "./settings/RemNoteSection";
 import RolesSection from "./settings/RolesSection";

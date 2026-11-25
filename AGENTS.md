@@ -60,6 +60,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src-tauri/migrations/` | SQL migrations, numbered `NNNN_name.sql`. Each one is listed in `MIGRATIONS` in `db.rs`; `PRAGMA user_version` records how many have run. |
 | `src/` | Solid.js + TypeScript + Vite frontend. Renders state and sends commands; holds no business rules. |
 | `src/api.ts` | The only place that calls `invoke`. One function per command. |
+| `src/actions.ts` | Shared busy state for asynchronous UI actions. |
 | `src/format.ts`, `src/labels.ts` | Shared display formatting and pt-BR labels. |
 | `src/navigation.ts` | Navigation helpers usable outside router components. |
 | `src/bindings/` | TypeScript types **generated** from Rust by `cargo test` (ts-rs). Committed; never edit by hand. |

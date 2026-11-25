@@ -2,7 +2,7 @@ import { formatDate, formatNumber } from "../format";
 import { Match, Show, Switch, createSignal } from "solid-js";
 import { api } from "../api";
 import type { LegacyImportReport } from "../bindings/LegacyImportReport";
-import type { Busy } from "../pages/settings/busy";
+import type { Busy } from "../actions";
 import { errorMessage, InlineError } from "./states";
 import { showToast } from "./toasts";
 

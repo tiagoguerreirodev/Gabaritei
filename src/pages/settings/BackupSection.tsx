@@ -7,7 +7,7 @@ import type { LeftBehind } from "../../bindings/LeftBehind";
 import ConfirmModal from "../../components/ConfirmModal";
 import { InlineError, ResourceView } from "../../components/states";
 import { showError, showToast } from "../../components/toasts";
-import type { Busy } from "./busy";
+import type { Busy } from "../../actions";
 import { openFolder } from "./openFolder";
 
 /** Backups of the study data: the folder, a backup now, and restore. */

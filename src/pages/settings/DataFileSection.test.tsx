@@ -4,7 +4,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Toaster, dismissToast } from "../../components/toasts";
 import DataFileSection from "./DataFileSection";
-import { createBusy } from "./busy";
+import { createBusy } from "../../actions";
 
 function backend(results: { export?: boolean; import?: boolean | { message: string } } = {}) {
   const calls: string[] = [];

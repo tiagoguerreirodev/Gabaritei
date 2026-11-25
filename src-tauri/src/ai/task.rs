@@ -3,7 +3,7 @@
 use super::roles::RoleConfig;
 use super::runner::{CancelToken, JobOutput, Progress, run_job};
 use super::secrets::Secrets;
-use super::settings::{self, AiSettings, Sources};
+use super::settings::{self, AiSettings, ResolvedClis, Sources};
 use crate::error::AppResult;
 
 /// What one structured job asks of a role.
@@ -20,15 +20,22 @@ pub(super) struct Task {
 pub(super) fn ask<T: serde::de::DeserializeOwned>(
     settings: &AiSettings,
     secrets: &Secrets,
+    clis: &ResolvedClis,
     config: &RoleConfig,
     task: Task,
     cancel: &CancelToken,
     progress: &mut dyn FnMut(Progress),
 ) -> AppResult<(T, JobOutput)> {
-    let mut spec = settings::job_spec(settings, secrets, config, task.schema, task.sources)?;
-    spec.instructions = task.instructions;
-    spec.prompt = task.prompt;
-    spec.attachments = task.attachments;
+    let spec = settings::job_spec(
+        settings,
+        secrets,
+        clis,
+        config,
+        task.schema,
+        task.sources,
+        task.attachments,
+    )?
+    .with_input(task.instructions, task.prompt);
     let output = run_job(&spec, cancel, progress)?;
     Ok((output.parse()?, output))
 }

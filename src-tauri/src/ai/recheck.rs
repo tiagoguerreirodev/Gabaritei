@@ -12,7 +12,7 @@ use super::ondemand::OnDemand;
 use super::prompts;
 use super::roles::RoleConfig;
 use super::secrets::Secrets;
-use super::settings::{self, Sources};
+use super::settings::{self, ResolvedClis, Sources};
 use super::task::{Task, ask};
 use crate::attempts;
 use crate::bank::store::load_question;
@@ -92,6 +92,7 @@ fn invalid(message: &str) -> AppError {
 pub fn ask_recheck(
     db: &Database,
     secrets: &Secrets,
+    clis: &ResolvedClis,
     jobs: &OnDemand,
     attempt_id: &AttemptId,
     position: u32,
@@ -107,6 +108,7 @@ pub fn ask_recheck(
         let (answer, _) = ask(
             &settings,
             secrets,
+            clis,
             &role,
             Task {
                 schema: super::blind_check::schema_of::<RecheckAnswer>(),

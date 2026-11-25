@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,7 @@ use super::prompts;
 use super::roles::RoleConfig;
 use super::runner::{CancelToken, Progress, run_job};
 use super::secrets::Secrets;
-use super::settings::{self, RemNoteMode, Sources};
+use super::settings::{self, RemNoteMode, ResolvedClis, Sources};
 use crate::bank::question::{MAX_AREA, MAX_MATTER, MAX_TOPIC, Provenance};
 use crate::bank::store::{load_question, topic_stems};
 use crate::bank::{Package, QuestionType, TopicPath, canonicalize, package_json_schema};
@@ -368,12 +369,20 @@ pub fn check_draft(conn: &Connection, draft: &Draft) -> AppResult<DraftCheck> {
     Ok(check)
 }
 
+/// Executables and clocks supplied by the command for a generation or retry.
+pub struct GenerationRuntime<'a> {
+    pub clis: &'a ResolvedClis,
+    pub now: &'a dyn Fn() -> String,
+    pub monotonic_time: &'a dyn Fn() -> Duration,
+}
+
 /// Runs the generator and saves the result as a draft. Blocking: call from a worker thread.
 ///
 /// The database is only locked briefly before and after the run, never during it.
 pub fn generate_draft(
     db: &Database,
     secrets: &Secrets,
+    runtime: &GenerationRuntime<'_>,
     mut request: GenerateRequest,
     cancel: &CancelToken,
     on_progress: &mut dyn FnMut(Progress),
@@ -399,26 +408,29 @@ pub fn generate_draft(
         .clone()
         .unwrap_or_else(|| settings.roles.blind_check.clone());
 
-    let mut spec = settings::job_spec(
+    let spec = settings::job_spec(
         &settings,
         secrets,
+        runtime.clis,
         &generator,
         package_json_schema(),
         Sources {
             remnote: request.sources.remnote,
             web: request.sources.web,
         },
-    )?;
-    spec.instructions = prompts::generate_instructions();
-    spec.prompt = prompts::generate_prompt(&request, &stems);
-    spec.attachments = request
-        .sources
-        .attachments
-        .iter()
-        .map(PathBuf::from)
-        .collect();
+        request
+            .sources
+            .attachments
+            .iter()
+            .map(PathBuf::from)
+            .collect(),
+    )?
+    .with_input(
+        prompts::generate_instructions(),
+        prompts::generate_prompt(&request, &stems),
+    );
 
-    let started_at = crate::clock::now();
+    let started_at = (runtime.now)();
     let output = run_job(&spec, cancel, on_progress)?;
     let package: Package = output.parse()?;
     if package.questions.len() != request.count as usize {
@@ -431,7 +443,7 @@ pub fn generate_draft(
 
     let draft = Draft {
         id: ids::generate::<DraftId>(&mut rand::rng()),
-        created_at: crate::clock::now(),
+        created_at: (runtime.now)(),
         status: DraftStatus::Review,
         request: DraftRequest {
             request: request.for_storage(),

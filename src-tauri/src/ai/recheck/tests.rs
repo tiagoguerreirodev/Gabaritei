@@ -1,7 +1,6 @@
 #![cfg_attr(not(unix), allow(dead_code, unused_imports))] // fake CLIs need `sh`
 
 use super::*;
-use crate::ai::settings::AiSettingsInput;
 use crate::attempts::{
     self, FeedbackMode, Outcome, SessionSource, SessionStart, answer as answer_question, finish,
 };
@@ -20,6 +19,7 @@ struct World {
     db: Database,
     secrets: Secrets,
     jobs: OnDemand,
+    clis: ResolvedClis,
     question_id: QuestionId,
     old_key: String,
     other_option: String,
@@ -89,24 +89,12 @@ fn world(answer: impl FnOnce(&str, &str) -> Value) -> World {
     )
     .unwrap();
     let cli = fake_codex(dir.path());
-    db.with(|conn| {
-        let mut current = settings::load(conn, &secrets)?;
-        current.cli_paths.codex = Some(cli.to_string_lossy().into_owned());
-        settings::save(
-            conn,
-            AiSettingsInput {
-                cli_paths: current.cli_paths,
-                roles: current.roles,
-                remnote: current.remnote,
-            },
-        )
-    })
-    .unwrap();
     World {
         dir,
         db,
         secrets,
         jobs: OnDemand::default(),
+        clis: ResolvedClis::new(None, Some(cli)),
         question_id,
         old_key,
         other_option,
@@ -148,7 +136,14 @@ fn calls(world: &World) -> usize {
 }
 
 fn ask_it(world: &World, attempt: &AttemptId) -> AppResult<RecheckView> {
-    ask_recheck(&world.db, &world.secrets, &world.jobs, attempt, 0)
+    ask_recheck(
+        &world.db,
+        &world.secrets,
+        &world.clis,
+        &world.jobs,
+        attempt,
+        0,
+    )
 }
 
 fn wrong_answer(_old: &str, new: &str) -> Value {
@@ -188,7 +183,8 @@ mod flow {
 
     #[test]
     fn it_is_refused_before_the_answer_is_revealed() {
-        let w = world(wrong_answer);
+        let mut w = world(wrong_answer);
+        w.clis = ResolvedClis::new(None, None);
         let attempt = start(&w, FeedbackMode::Exam);
         answer_with(&w, &attempt, &w.old_key);
         let error = ask_it(&w, &attempt).unwrap_err();

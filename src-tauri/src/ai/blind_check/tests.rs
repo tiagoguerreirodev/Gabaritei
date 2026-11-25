@@ -4,11 +4,11 @@ use super::*;
 use crate::ai::agent::{Agent, Effort};
 use crate::ai::draft::{DraftRequest, GenerationInfo};
 use crate::ai::generate::GenerateSources;
-use crate::ai::settings::AiSettingsInput;
 use crate::bank::Package;
 use crate::bank::question::tests::topic;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 const SECRET_EXPLANATION: &str = "EXPLICACAO-SECRETA-DO-GABARITO";
 const SECRET_REF: &str = "REFERENCIA-SECRETA";
@@ -100,6 +100,23 @@ struct Setup {
     db: Database,
     secrets: Secrets,
     draft_id: DraftId,
+    clis: ResolvedClis,
+}
+
+impl Setup {
+    fn runtime(&self) -> GenerationRuntime<'_> {
+        fn now() -> String {
+            "2026-11-20T00:00:00.000Z".into()
+        }
+        fn monotonic_time() -> Duration {
+            Duration::ZERO
+        }
+        GenerationRuntime {
+            clis: &self.clis,
+            now: &now,
+            monotonic_time: &monotonic_time,
+        }
+    }
 }
 
 fn files_dir(s: &Setup) -> PathBuf {
@@ -112,20 +129,6 @@ fn setup(package: Package, replies: &[Value]) -> Setup {
     let cli = fake_cli(dir.path(), replies);
     let db = Database::open_in_memory().unwrap();
     let secrets = Secrets::memory();
-    db.with(|conn| {
-        let mut current = settings::load(conn, &secrets)?;
-        current.cli_paths.codex = Some(cli.to_string_lossy().into_owned());
-        let roles = current.roles.clone();
-        settings::save(
-            conn,
-            AiSettingsInput {
-                cli_paths: current.cli_paths,
-                roles,
-                remnote: current.remnote,
-            },
-        )
-    })
-    .unwrap();
     let roles = crate::ai::roles::RoleSettings::default();
     let draft = Draft {
         id: "draft-1".into(),
@@ -162,6 +165,7 @@ fn setup(package: Package, replies: &[Value]) -> Setup {
         db,
         secrets,
         draft_id: draft.id,
+        clis: ResolvedClis::new(None, Some(cli)),
     }
 }
 
@@ -169,6 +173,7 @@ fn run_check(setup: &Setup) -> AppResult<BlindCheck> {
     run(
         &setup.db,
         &setup.secrets,
+        &setup.runtime(),
         &setup.draft_id,
         &[],
         &CancelToken::new(),
@@ -324,6 +329,7 @@ mod flow {
         run(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &s.draft_id,
             std::slice::from_ref(&file),
             &CancelToken::new(),
@@ -369,6 +375,7 @@ mod flow {
         let error = recheck_draft(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             &s.draft_id,
             &CancelToken::new(),
@@ -396,6 +403,7 @@ mod flow {
         recheck_draft(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             &s.draft_id,
             &CancelToken::new(),
@@ -481,6 +489,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             request(1),
             &CancelToken::new(),
@@ -514,6 +523,7 @@ mod pipeline {
         generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             request(1),
             &CancelToken::new(),
@@ -545,6 +555,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &dir,
             job,
             &CancelToken::new(),
@@ -577,6 +588,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             job,
             &CancelToken::new(),
@@ -588,6 +600,7 @@ mod pipeline {
         recheck_draft(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             &id,
             &CancelToken::new(),
@@ -612,6 +625,7 @@ mod pipeline {
         let draft = crate::ai::generate::generate_draft(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             request(1),
             &CancelToken::new(),
             &mut |_| {},
@@ -630,6 +644,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             request(1),
             &CancelToken::new(),
@@ -645,6 +660,78 @@ mod pipeline {
     }
 
     #[test]
+    fn a_missing_checker_keeps_the_generated_draft_with_a_failure() {
+        let s = setup_pipeline(&[generated(vec![question("q1", "c")])]);
+        let mut job = request(1);
+        job.checker = Some(RoleConfig {
+            agent: Agent::Claude,
+            model: "sonnet".into(),
+            effort: Effort::Low,
+            fast: false,
+        });
+
+        let id = generate_and_check(
+            &s.db,
+            &s.secrets,
+            &s.runtime(),
+            &files_dir(&s),
+            job,
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+
+        let draft = only_draft(&s.db);
+        assert_eq!((draft.id.clone(), draft.status), (id, DraftStatus::Review));
+        assert_eq!(
+            stored(&draft).unwrap().unwrap(),
+            BlindCheck {
+                verdicts: Vec::new(),
+                failed: Some(
+                    "O Claude Code não foi encontrado. Confira Configurações › Agentes.".into(),
+                ),
+                info: None,
+                pending: false,
+            }
+        );
+        assert_eq!(calls(s.dir.path()), 1);
+    }
+
+    #[test]
+    fn checker_provenance_uses_the_injected_clocks() {
+        let s = setup(
+            package(vec![question("q1", "c")]),
+            &[answers(vec![answer("q1", "c")])],
+        );
+        let time = std::cell::Cell::new(Duration::from_secs(5));
+        let runtime = GenerationRuntime {
+            now: &|| "2026-11-20T12:00:00.000Z".into(),
+            monotonic_time: &|| {
+                let now = time.get();
+                time.set(now + Duration::from_millis(75));
+                now
+            },
+            ..s.runtime()
+        };
+        let check = run(
+            &s.db,
+            &s.secrets,
+            &runtime,
+            &s.draft_id,
+            &[],
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+
+        let info = check.info.unwrap();
+        assert_eq!(
+            (info.started_at.as_str(), info.duration_ms),
+            ("2026-11-20T12:00:00.000Z", 75)
+        );
+    }
+
+    #[test]
     fn a_failed_check_can_be_run_again() {
         let s = setup_pipeline(&[
             generated(vec![question("q1", "c")]),
@@ -654,6 +741,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             request(1),
             &CancelToken::new(),
@@ -663,6 +751,7 @@ mod pipeline {
         recheck_draft(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             &id,
             &CancelToken::new(),
@@ -689,6 +778,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             job,
             &CancelToken::new(),
@@ -702,6 +792,7 @@ mod pipeline {
         recheck_draft(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             &id,
             &CancelToken::new(),
@@ -738,6 +829,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             job,
             &CancelToken::new(),
@@ -749,6 +841,7 @@ mod pipeline {
         recheck_draft(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             &id,
             &CancelToken::new(),
@@ -771,6 +864,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             job,
             &CancelToken::new(),
@@ -805,20 +899,8 @@ if [ "$n" = 1 ]; then cp "$dir/answer-1.json" "$out"; else sleep 60; fi"#,
                 dir.path().display()
             ),
         );
-        let s = setup_pipeline(&[]);
-        s.db.with(|conn| {
-            let mut current = settings::load(conn, &s.secrets)?;
-            current.cli_paths.codex = Some(cli.to_string_lossy().into_owned());
-            settings::save(
-                conn,
-                AiSettingsInput {
-                    cli_paths: current.cli_paths,
-                    roles: current.roles,
-                    remnote: current.remnote,
-                },
-            )
-        })
-        .unwrap();
+        let mut s = setup_pipeline(&[]);
+        s.clis = ResolvedClis::new(None, Some(cli));
         let token = CancelToken::new();
         let canceller = token.clone();
         let counter = dir.path().join("counter");
@@ -840,8 +922,16 @@ if [ "$n" = 1 ]; then cp "$dir/answer-1.json" "$out"; else sleep 60; fi"#,
         std::fs::write(&original, "texto").unwrap();
         let mut job = request(1);
         job.sources.attachments = vec![original.to_string_lossy().into_owned()];
-        let error = generate_and_check(&s.db, &s.secrets, &files_dir(&s), job, &token, &mut |_| {})
-            .unwrap_err();
+        let error = generate_and_check(
+            &s.db,
+            &s.secrets,
+            &s.runtime(),
+            &files_dir(&s),
+            job,
+            &token,
+            &mut |_| {},
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("cancelada"));
         let draft = only_draft(&s.db);
         assert_eq!(draft.status, DraftStatus::Discarded);

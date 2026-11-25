@@ -2,6 +2,9 @@
 //!
 //! Every command must also be added to [`crate::register`] and wrapped in `src/api.ts`.
 
+use std::path::Path;
+use std::time::Instant;
+
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_dialog::DialogExt;
@@ -13,14 +16,14 @@ use crate::ai::catalog::{self as model_catalog, CatalogCache};
 use crate::ai::discovery::{self, CliStatus};
 use crate::ai::draft_files;
 use crate::ai::explain;
-use crate::ai::generate::GenerateRequest;
+use crate::ai::generate::{GenerateRequest, GenerationRuntime};
 use crate::ai::jobs::{GenerationKind, GenerationManager, GenerationStatus};
 use crate::ai::ondemand::OnDemand;
 use crate::ai::recheck::{self, RecheckView};
 use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportResult};
 use crate::ai::roles::RoleSettings;
 use crate::ai::secrets::Secrets;
-use crate::ai::settings::{self, AiSettings, AiSettingsInput, RemNoteTest};
+use crate::ai::settings::{self, AiSettings, AiSettingsInput, RemNoteTest, ResolvedClis};
 use crate::appearance::{self, Appearance};
 use crate::attempts::{self, AttemptView, SessionStart};
 use crate::backup::{BackupInfo, BackupService, BackupStatus, OpenableFolder, RelocateOutcome};
@@ -578,9 +581,30 @@ pub fn remnote_test(
 /// Name of the window event that carries every [`GenerationStatus`] change.
 pub const GENERATION_EVENT: &str = "generation-status";
 
+fn resolve_job_clis(db: &Database) -> AppResult<ResolvedClis> {
+    let overrides = db.with(|conn| settings::load_cli_paths(conn))?;
+    let resolve = |agent| discovery::find_cli(agent, overrides.get(agent).map(Path::new));
+    Ok(ResolvedClis::new(
+        resolve(Agent::Claude),
+        resolve(Agent::Codex),
+    ))
+}
+
+fn with_generation_runtime<T>(
+    clis: &ResolvedClis,
+    work: impl FnOnce(&GenerationRuntime<'_>) -> AppResult<T>,
+) -> AppResult<T> {
+    let origin = Instant::now();
+    work(&GenerationRuntime {
+        clis,
+        now: &crate::clock::now,
+        monotonic_time: &|| origin.elapsed(),
+    })
+}
+
 /// Starts a generation in the background. Fails at once if the form is invalid or another
 /// generation is running. Progress and the result arrive as [`GENERATION_EVENT`] events.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn generation_start<R: Runtime>(
     app: AppHandle<R>,
     manager: State<'_, GenerationManager>,
@@ -612,14 +636,20 @@ pub fn generation_start<R: Runtime>(
             ]
         },
     )?;
+    let clis = resolve_job_clis(&app.state::<Database>())?;
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
         GenerationKind::Generate,
+        crate::clock::now(),
         move |cancel, progress| {
             let db = worker.state::<Database>();
             let secrets = worker.state::<Secrets>();
-            blind_check::generate_and_check(&db, &secrets, &files_dir, request, cancel, progress)
+            with_generation_runtime(&clis, |runtime| {
+                blind_check::generate_and_check(
+                    &db, &secrets, runtime, &files_dir, request, cancel, progress,
+                )
+            })
         },
         move |status| {
             let _ = app.emit(GENERATION_EVENT, status);
@@ -629,7 +659,7 @@ pub fn generation_start<R: Runtime>(
 
 /// Runs the blind check again on a draft whose check failed. Uses the same background slot as
 /// a generation, so only one runs at a time.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn blind_check_start<R: Runtime>(
     app: AppHandle<R>,
     manager: State<'_, GenerationManager>,
@@ -643,14 +673,20 @@ pub fn blind_check_start<R: Runtime>(
         &app.state::<CatalogCache>(),
         |roles| vec![(roles.blind_check.clone(), "Conferência às cegas")],
     )?;
+    let clis = resolve_job_clis(&app.state::<Database>())?;
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
         GenerationKind::Recheck,
+        crate::clock::now(),
         move |cancel, progress| {
             let db = worker.state::<Database>();
             let secrets = worker.state::<Secrets>();
-            blind_check::recheck_draft(&db, &secrets, &files_dir, &draft_id, cancel, progress)
+            with_generation_runtime(&clis, |runtime| {
+                blind_check::recheck_draft(
+                    &db, &secrets, runtime, &files_dir, &draft_id, cancel, progress,
+                )
+            })
         },
         move |status| {
             let _ = app.emit(GENERATION_EVENT, status);
@@ -735,7 +771,8 @@ pub async fn recheck_ask<R: Runtime>(
         ensure_roles_listed(&db, &catalog, |roles| {
             vec![(roles.recheck.clone(), "Revisão sob demanda")]
         })?;
-        recheck::ask_recheck(&db, &secrets, &jobs, &attempt_id, position)
+        let clis = resolve_job_clis(&db)?;
+        recheck::ask_recheck(&db, &secrets, &clis, &jobs, &attempt_id, position)
     })
     .await
     .map_err(|error| AppError::Internal(error.to_string()))?
@@ -779,7 +816,16 @@ pub async fn explain_ask<R: Runtime>(
         ensure_roles_listed(&db, &catalog, |roles| {
             vec![(roles.explain.clone(), "Explicação sob demanda")]
         })?;
-        explain::ask_explain(&db, &secrets, &jobs, &attempt_id, position)
+        let clis = resolve_job_clis(&db)?;
+        explain::ask_explain(
+            &db,
+            &secrets,
+            &clis,
+            &jobs,
+            &attempt_id,
+            position,
+            crate::clock::now,
+        )
     })
     .await
     .map_err(|error| AppError::Internal(error.to_string()))?

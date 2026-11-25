@@ -209,12 +209,14 @@ fn role_values_feed_the_runner() {
     let spec = job_spec(
         &settings,
         &secrets,
+        &ResolvedClis::new(None, Some(fake.clone())),
         settings.roles.get(Role::BlindCheck),
         serde_json::json!({}),
         Sources {
             remnote: false,
             web: true,
         },
+        Vec::new(),
     )
     .unwrap();
     assert_eq!(spec.agent, Agent::Codex);
@@ -227,16 +229,9 @@ fn role_values_feed_the_runner() {
 
 #[test]
 fn a_missing_cli_is_a_clear_error() {
-    let settings = AiSettings {
-        cli_paths: CliPaths {
-            claude: Some("/no/such/claude".into()),
-            codex: None,
-        },
-        roles: RoleSettings::default(),
-        remnote: RemNoteSettings::default(),
-        has_remnote_token: false,
-    };
-    let error = resolve_cli(&settings, Agent::Claude).unwrap_err();
+    let error = ResolvedClis::new(None, None)
+        .require(Agent::Claude)
+        .unwrap_err();
     assert!(error.to_string().contains("Claude Code não foi encontrado"));
 }
 

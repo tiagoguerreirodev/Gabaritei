@@ -1,7 +1,6 @@
 #![cfg_attr(not(unix), allow(dead_code, unused_imports))] // fake CLIs need `sh`
 
 use super::*;
-use crate::ai::settings::AiSettingsInput;
 use crate::attempts::{FeedbackMode, SessionSource, SessionStart, answer as answer_question};
 use crate::bank::import_questions;
 use crate::bank::question::tests::multiple;
@@ -10,12 +9,14 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 
 const T0: &str = "2026-11-20T10:00:00.000Z";
+const EXPLAINED_AT: &str = "2026-11-20T11:00:00.000Z";
 
 struct World {
     dir: tempfile::TempDir,
     db: Database,
     secrets: Secrets,
     jobs: OnDemand,
+    clis: ResolvedClis,
     attempt: AttemptId,
     key: String,
 }
@@ -70,19 +71,6 @@ fn world(
     let _ = id;
     std::fs::write(dir.path().join("answer.json"), answer.to_string()).unwrap();
     let cli = fake_codex(dir.path());
-    db.with(|conn| {
-        let mut current = settings::load(conn, &secrets)?;
-        current.cli_paths.codex = Some(cli.to_string_lossy().into_owned());
-        settings::save(
-            conn,
-            AiSettingsInput {
-                cli_paths: current.cli_paths,
-                roles: current.roles,
-                remnote: current.remnote,
-            },
-        )
-    })
-    .unwrap();
     let attempt = db
         .transaction(|tx| {
             attempts::start(
@@ -108,6 +96,7 @@ fn world(
         db,
         secrets,
         jobs: OnDemand::default(),
+        clis: ResolvedClis::new(None, Some(cli)),
         attempt,
         key,
     }
@@ -120,7 +109,15 @@ fn calls(world: &World) -> usize {
 }
 
 fn explain(world: &World) -> AppResult<AttemptView> {
-    ask_explain(&world.db, &world.secrets, &world.jobs, &world.attempt, 0)
+    ask_explain(
+        &world.db,
+        &world.secrets,
+        &world.clis,
+        &world.jobs,
+        &world.attempt,
+        0,
+        || EXPLAINED_AT.into(),
+    )
 }
 
 fn good() -> serde_json::Value {
@@ -138,10 +135,16 @@ mod flow {
         let reveal = view.questions[0].reveal.as_ref().unwrap();
         assert!(reveal.explanation.starts_with("A alternativa certa é a B"));
         assert_eq!(reveal.refs, ["Lei 1", "CF/88, art. 5º"]);
-        let stored: String =
-            w.db.with(|c| Ok(c.query_row("SELECT explanation FROM questions", [], |r| r.get(0))?))
-                .unwrap();
-        assert_eq!(stored, reveal.explanation);
+        let stored: (String, String) =
+            w.db.with(|c| {
+                Ok(
+                    c.query_row("SELECT explanation, updated_at FROM questions", [], |r| {
+                        Ok((r.get(0)?, r.get(1)?))
+                    })?,
+                )
+            })
+            .unwrap();
+        assert_eq!(stored, (reveal.explanation.clone(), EXPLAINED_AT.into()));
         let sent = std::fs::read_to_string(w.dir.path().join("stdin.txt")).unwrap();
         // The key is named by letter, never by the internal hex id, and the AI is told to cite
         // the alternative's content because the order is shuffled in the exam.
@@ -172,7 +175,8 @@ mod flow {
 
     #[test]
     fn it_is_refused_before_the_answer_is_revealed() {
-        let w = world("", FeedbackMode::Exam, true, good());
+        let mut w = world("", FeedbackMode::Exam, true, good());
+        w.clis = ResolvedClis::new(None, None);
         let error = explain(&w).unwrap_err();
         assert!(error.to_string().contains("depois de ver o gabarito"));
         assert_eq!(calls(&w), 0);

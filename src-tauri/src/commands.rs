@@ -2,7 +2,8 @@
 //!
 //! Every command must also be added to [`crate::register`] and wrapped in `src/api.ts`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
@@ -12,17 +13,19 @@ use ts_rs::TS;
 use crate::ai::agent::Agent;
 use crate::ai::blind_check;
 use crate::ai::catalog::{self as model_catalog, CatalogCache};
-use crate::ai::discovery::CliStatus;
+use crate::ai::discovery::{self, CliStatus};
 use crate::ai::explain;
-use crate::ai::generate::GenerateRequest;
+use crate::ai::generate::{GenerateRequest, GenerationRuntime};
 use crate::ai::jobs::{self, DataReplacement, GenerationKind, GenerationManager, GenerationStatus};
 use crate::ai::ondemand::OnDemand;
 use crate::ai::recheck::{self, RecheckView};
 use crate::ai::remnote_probe::{self, RemNoteTest};
-use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportResult};
-use crate::ai::roles::{self, Role};
+use crate::ai::review::{
+    self, DraftListItem, DraftSummary, ImportAllOutcome, ImportMode, ImportResult,
+};
+use crate::ai::roles::{self, Role, RoleConfig};
 use crate::ai::secrets::Secrets;
-use crate::ai::settings::{self, AiSettings, AiSettingsInput};
+use crate::ai::settings::{self, AiSettings, AiSettingsInput, ResolvedClis};
 use crate::appearance::{self, Appearance};
 use crate::attempts::{self, AttemptView, SessionStart};
 use crate::backup::{BackupInfo, BackupService, BackupStatus, OpenableFolder, RelocateOutcome};
@@ -92,6 +95,21 @@ pub fn keyboard_shortcuts(db: State<'_, Database>) -> AppResult<bool> {
 #[tauri::command]
 pub fn save_keyboard_shortcuts(db: State<'_, Database>, enabled: bool) -> AppResult<bool> {
     db.with(|conn| shortcuts::save(conn, enabled))
+}
+
+#[tauri::command]
+pub fn question_count_limits(
+    context: crate::question_count::CountContext,
+) -> AppResult<crate::question_count::CountLimits> {
+    Ok(context.limits())
+}
+
+#[tauri::command(async)]
+pub fn topic_choices(
+    db: State<'_, Database>,
+    path: crate::bank::TopicPath,
+) -> AppResult<catalog::TopicChoices> {
+    db.with(|conn| catalog::topic_choices(conn, &path))
 }
 
 /// Area › matter › topic with question counts.
@@ -477,6 +495,29 @@ pub fn ai_catalog(
     Ok(model_catalog::catalog(&cache, &cli_paths, refresh))
 }
 
+/// Catalog choices and validation for the role being edited, without loading the CLI.
+#[tauri::command]
+pub fn ai_role_options(
+    db: State<'_, Database>,
+    cache: State<'_, CatalogCache>,
+    config: RoleConfig,
+) -> AppResult<model_catalog::RoleOptions> {
+    let cli_paths = db.with(|conn| settings::load_cli_paths(conn))?;
+    Ok(cache.role_options(&cli_paths, &config))
+}
+
+/// Changes the agent or model and reconciles its effort and Fast Mode.
+#[tauri::command]
+pub fn ai_change_role(
+    db: State<'_, Database>,
+    cache: State<'_, CatalogCache>,
+    config: RoleConfig,
+    change: model_catalog::RoleChange,
+) -> AppResult<RoleConfig> {
+    let cli_paths = db.with(|conn| settings::load_cli_paths(conn))?;
+    Ok(cache.change_role(&cli_paths, &config, &change))
+}
+
 /// Validates and saves the AI settings, and returns them as saved.
 #[tauri::command]
 pub fn save_ai_settings(
@@ -518,9 +559,30 @@ pub fn remnote_test(
 /// Name of the window event that carries every [`GenerationStatus`] change.
 pub const GENERATION_EVENT: &str = "generation-status";
 
+fn resolve_job_clis(db: &Database) -> AppResult<ResolvedClis> {
+    let overrides = db.with(|conn| settings::load_cli_paths(conn))?;
+    let resolve = |agent| discovery::find_cli(agent, overrides.get(agent).map(Path::new));
+    Ok(ResolvedClis::new(
+        resolve(Agent::Claude),
+        resolve(Agent::Codex),
+    ))
+}
+
+fn with_generation_runtime<T>(
+    clis: &ResolvedClis,
+    work: impl FnOnce(&GenerationRuntime<'_>) -> AppResult<T>,
+) -> AppResult<T> {
+    let origin = Instant::now();
+    work(&GenerationRuntime {
+        clis,
+        now: &crate::clock::now,
+        monotonic_time: &|| origin.elapsed(),
+    })
+}
+
 /// Starts a generation in the background. Fails at once if the form is invalid or another
 /// generation is running. Progress and the result arrive as [`GENERATION_EVENT`] events.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn generation_start<R: Runtime>(
     app: AppHandle<R>,
     manager: State<'_, GenerationManager>,
@@ -534,14 +596,20 @@ pub fn generation_start<R: Runtime>(
         &app.state::<CatalogCache>(),
         &mut request,
     )?;
+    let clis = resolve_job_clis(&app.state::<Database>())?;
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
         GenerationKind::Generate,
+        crate::clock::now(),
         move |cancel, progress| {
             let db = worker.state::<Database>();
             let secrets = worker.state::<Secrets>();
-            blind_check::generate_and_check(&db, &secrets, &files_dir, request, cancel, progress)
+            with_generation_runtime(&clis, |runtime| {
+                blind_check::generate_and_check(
+                    &db, &secrets, runtime, &files_dir, request, cancel, progress,
+                )
+            })
         },
         move |status| emit_generation_status(&app, status),
     )
@@ -549,7 +617,7 @@ pub fn generation_start<R: Runtime>(
 
 /// Runs the blind check again on a draft whose check failed. Uses the same background slot as
 /// a generation, so only one runs at a time.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn blind_check_start<R: Runtime>(
     app: AppHandle<R>,
     manager: State<'_, GenerationManager>,
@@ -563,14 +631,20 @@ pub fn blind_check_start<R: Runtime>(
         &app.state::<CatalogCache>(),
         Role::BlindCheck,
     )?;
+    let clis = resolve_job_clis(&app.state::<Database>())?;
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
         GenerationKind::Recheck,
+        crate::clock::now(),
         move |cancel, progress| {
             let db = worker.state::<Database>();
             let secrets = worker.state::<Secrets>();
-            blind_check::recheck_draft(&db, &secrets, &files_dir, &draft_id, cancel, progress)
+            with_generation_runtime(&clis, |runtime| {
+                blind_check::recheck_draft(
+                    &db, &secrets, runtime, &files_dir, &draft_id, cancel, progress,
+                )
+            })
         },
         move |status| emit_generation_status(&app, status),
     )
@@ -603,6 +677,39 @@ pub fn draft_import(
         mode,
         &crate::clock::now(),
     )
+}
+
+/// Imports every question, running the blind check first when needed.
+#[tauri::command]
+pub async fn draft_import_all<R: Runtime>(
+    app: AppHandle<R>,
+    id: DraftId,
+) -> AppResult<ImportAllOutcome> {
+    run_blocking(app, move |app| {
+        let db = app.state::<Database>();
+        let files_dir = app.state::<AppPaths>().draft_files_dir();
+        review::import_all(
+            &db,
+            &files_dir,
+            &id,
+            &app.state::<GenerationManager>(),
+            crate::clock::now,
+            |cancel, progress| {
+                app.state::<BackupService>().ensure_idle()?;
+                roles::validate_saved_role(&db, &app.state::<CatalogCache>(), Role::BlindCheck)?;
+                let secrets = app.state::<Secrets>();
+                let clis = resolve_job_clis(&db)?;
+                with_generation_runtime(&clis, |runtime| {
+                    blind_check::recheck_draft(
+                        &db, &secrets, runtime, &files_dir, &id, cancel, progress,
+                    )
+                })?;
+                Ok(())
+            },
+            |status| emit_generation_status(&app, status),
+        )
+    })
+    .await
 }
 
 /// Discards a draft that is waiting for review.
@@ -651,7 +758,10 @@ pub async fn recheck_ask<R: Runtime>(
         let jobs = app.state::<OnDemand>();
         let catalog = app.state::<CatalogCache>();
         roles::validate_saved_role(&db, &catalog, Role::Recheck)?;
-        recheck::ask_recheck(&db, &secrets, &jobs, &attempt_id, position)
+        let clis = resolve_job_clis(&db)?;
+        jobs.run(|cancel| {
+            recheck::ask_recheck(&db, &secrets, &clis, &jobs, &attempt_id, position, cancel)
+        })
     })
     .await
 }
@@ -692,7 +802,18 @@ pub async fn explain_ask<R: Runtime>(
         let jobs = app.state::<OnDemand>();
         let catalog = app.state::<CatalogCache>();
         roles::validate_saved_role(&db, &catalog, Role::Explain)?;
-        explain::ask_explain(&db, &secrets, &jobs, &attempt_id, position)
+        let clis = resolve_job_clis(&db)?;
+        jobs.run(|cancel| {
+            explain::ask_explain(
+                &db,
+                &secrets,
+                &clis,
+                &attempt_id,
+                position,
+                cancel,
+                crate::clock::now,
+            )
+        })
     })
     .await
 }
@@ -1356,6 +1477,7 @@ mod tests {
         ]});
         std::fs::write(dir.path().join("answer-1.json"), package.to_string()).unwrap();
         std::fs::write(dir.path().join("answer-2.json"), verdicts.to_string()).unwrap();
+        std::fs::write(dir.path().join("answer-3.json"), verdicts.to_string()).unwrap();
         let cli = crate::ai::runner::tests::write_script(
             dir.path(),
             "codex",
@@ -1483,6 +1605,36 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn draft_import_all_checks_an_unfinished_draft_and_imports_it_in_one_call() {
+        let CheckedDraft { app, cli, id, .. } = generate_checked_draft();
+        app._app
+            .state::<Database>()
+            .with(|conn| {
+                conn.execute("UPDATE drafts SET blind_check = NULL WHERE id = ?1", [&id])?;
+                Ok(())
+            })
+            .unwrap();
+        let summary = app.call("draft_summary", json!({ "id": id })).unwrap();
+        assert_eq!(summary["needsCheck"], json!(true));
+
+        let outcome = app.call("draft_import_all", json!({ "id": id })).unwrap();
+
+        assert_eq!(outcome["kind"], json!("imported"));
+        assert_eq!(outcome["result"]["imported"], json!(1));
+        assert_eq!(
+            std::fs::read_to_string(cli.path().join("counter"))
+                .unwrap()
+                .trim(),
+            "3"
+        );
+        assert_eq!(app.call("drafts_waiting", json!({})).unwrap(), json!([]));
+        let status = app.call("generation_status", json!({})).unwrap();
+        assert_eq!(status["running"], json!(false));
+        assert_eq!(status["outcome"], Value::Null);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn generation_dismiss_clears_the_finished_status() {
         let CheckedDraft { app, .. } = generate_checked_draft();
         app.call("generation_dismiss", json!({})).unwrap();
@@ -1538,7 +1690,7 @@ mod tests {
     }
 
     #[test]
-    fn saving_the_settings_makes_the_next_catalog_read_load_again() {
+    fn changing_a_cli_path_makes_the_next_catalog_read_load_again() {
         use std::sync::atomic::Ordering;
         let loads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let cache = crate::ai::catalog::CatalogCache::new(vec![Box::new(OneModel(loads.clone()))]);
@@ -1550,13 +1702,89 @@ mod tests {
 
         let settings = app.call("ai_settings", json!({})).unwrap();
         let input = json!({
-            "cliPaths": settings["cliPaths"], "roles": settings["roles"], "remnote": settings["remnote"],
+            "cliPaths": { "codex": "/opt/new-codex", "claude": null },
+            "roles": settings["roles"], "remnote": settings["remnote"],
         });
         app.call("save_ai_settings", json!({ "input": input }))
             .unwrap();
 
         app.call("ai_catalog", json!({ "refresh": false })).unwrap();
         assert_eq!(loads.load(Ordering::SeqCst), before + 2);
+    }
+
+    #[test]
+    fn a_changed_cli_path_accepts_a_model_absent_from_the_previous_list() {
+        let cache = CatalogCache::new(vec![Box::new(OneModel::default())]);
+        cache.get(&settings::CliPaths::default());
+        let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
+        let mut input = app.call("ai_settings", json!({})).unwrap();
+        input["cliPaths"]["codex"] = json!("/opt/new-codex");
+        input["roles"]["generate"]["model"] = json!("new-model");
+        assert_eq!(
+            app.call("save_ai_settings", json!({ "input": input.clone() }))
+                .unwrap(),
+            input,
+        );
+    }
+
+    #[test]
+    fn saving_a_new_unlisted_model_leaves_the_roles_unchanged() {
+        let cache = CatalogCache::new(vec![Box::new(OneModel::default())]);
+        cache.get(&settings::CliPaths::default());
+        let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
+        let saved = app.call("ai_settings", json!({})).unwrap();
+        let mut edited = saved.clone();
+        edited["roles"]["generate"]["model"] = json!("obsolete");
+
+        let problem = app
+            .call("save_ai_settings", json!({ "input": edited }))
+            .unwrap_err();
+        assert!(problem["message"].as_str().unwrap().contains("obsolete"));
+        assert_eq!(app.call("ai_settings", json!({})).unwrap(), saved);
+    }
+
+    #[test]
+    fn an_unchanged_stale_role_allows_an_unrelated_settings_save() {
+        let cache = CatalogCache::new(vec![Box::new(OneModel::default())]);
+        cache.get(&settings::CliPaths::default());
+        let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
+        let mut input = app.call("ai_settings", json!({})).unwrap();
+        input["remnote"] = json!({ "mode": "server", "url": "https://r.example/mcp", "tools": [] });
+        assert_eq!(
+            app.call("save_ai_settings", json!({ "input": input.clone() }))
+                .unwrap(),
+            input,
+        );
+    }
+
+    #[test]
+    fn editing_a_role_gets_the_catalogs_options_and_problem() {
+        let cache = CatalogCache::new(vec![Box::new(OneModel::default())]);
+        cache.get(&settings::CliPaths::default());
+        let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
+        let config = json!({ "agent": "codex", "model": "m1", "effort": "high", "fast": false });
+        assert_eq!(
+            app.call("ai_role_options", json!({ "config": config }))
+                .unwrap(),
+            json!({
+                "efforts": ["low"], "showFast": false,
+                "problem": "O esforço “high” não existe para o modelo “m1”. Escolha outro."
+            })
+        );
+    }
+
+    #[test]
+    fn switching_agents_uses_the_backend_role_transition() {
+        let cache = CatalogCache::new(vec![Box::new(OneModel::default())]);
+        cache.get(&settings::CliPaths::default());
+        let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
+        assert_eq!(
+            app.call("ai_change_role", json!({
+                "config": { "agent": "claude", "model": "sonnet", "effort": "high", "fast": true },
+                "change": { "kind": "agent", "agent": "codex" }
+            })).unwrap(),
+            json!({ "agent": "codex", "model": "m1", "effort": "low", "fast": false }),
+        );
     }
 
     #[test]

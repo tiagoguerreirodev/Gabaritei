@@ -72,6 +72,78 @@ pub fn topic_tree(conn: &Connection) -> AppResult<TopicTree> {
     Ok(TopicTree { areas, questions })
 }
 
+/// Suggestions and the canonical spelling for each level of a generation topic.
+#[derive(Debug, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TopicChoices {
+    pub path: super::TopicPath,
+    pub matters: Vec<String>,
+    pub topics: Vec<String>,
+    pub questions: Option<u32>,
+    pub is_new: bool,
+}
+
+fn matching_name<'a>(choices: &'a [String], typed: &str) -> Option<&'a str> {
+    let typed = typed.trim();
+    choices
+        .iter()
+        .find(|s| s.as_str() == typed)
+        .or_else(|| {
+            let key = fold(typed);
+            choices.iter().find(|s| fold(s) == key)
+        })
+        .map(String::as_str)
+}
+
+/// Reads names from the taxonomy index. Only the selected topic needs a question count.
+pub fn topic_choices(conn: &Connection, typed: &super::TopicPath) -> AppResult<TopicChoices> {
+    fn names(conn: &Connection, sql: &str, args: &[&str]) -> AppResult<Vec<String>> {
+        let mut values = conn
+            .prepare(sql)?
+            .query_map(rusqlite::params_from_iter(args), |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        values.sort_by(|a, b| cmp_pt(a, b));
+        Ok(values)
+    }
+    let areas = names(conn, "SELECT DISTINCT area FROM topics", &[])?;
+    let area = matching_name(&areas, &typed.area).unwrap_or(typed.area.trim());
+    let matters = names(
+        conn,
+        "SELECT DISTINCT matter FROM topics WHERE area = ?1",
+        &[area],
+    )?;
+    let matter = matching_name(&matters, &typed.matter).unwrap_or(typed.matter.trim());
+    let topics = names(
+        conn,
+        "SELECT topic FROM topics WHERE area = ?1 AND matter = ?2",
+        &[area, matter],
+    )?;
+    let found = matching_name(&topics, &typed.topic);
+    let path = super::TopicPath::new(area, matter, found.unwrap_or(typed.topic.trim()));
+    let questions = found
+        .map(|topic| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM question_topics qt JOIN topics t ON t.id = qt.topic_id
+         WHERE t.area = ?1 AND t.matter = ?2 AND t.topic = ?3",
+                params![area, matter, topic],
+                |row| row.get(0),
+            )
+        })
+        .transpose()?;
+    let is_new = questions.is_none()
+        && [&path.area, &path.matter, &path.topic]
+            .iter()
+            .all(|s| !s.is_empty());
+    Ok(TopicChoices {
+        path,
+        matters,
+        topics,
+        questions,
+        is_new,
+    })
+}
+
 type ByAreaAndMatter<T> = BTreeMap<String, BTreeMap<String, T>>;
 
 fn area_counts(conn: &Connection) -> AppResult<BTreeMap<String, u32>> {
@@ -459,6 +531,41 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn topic_choices_recognize_accents_and_preserve_the_spelling_used_by_the_bank() {
+        let (db, _) = bank();
+        let choices = db
+            .with(|conn| {
+                topic_choices(
+                    conn,
+                    &TopicPath::new(" direito ", "CONSTITUCIONAL", "acao direta"),
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            (choices.path, choices.questions, choices.is_new),
+            (
+                TopicPath::new("Direito", "Constitucional", "Ação direta"),
+                Some(1),
+                false
+            )
+        );
+    }
+
+    #[test]
+    fn topic_choices_only_mark_complete_unmatched_paths_as_new() {
+        let (db, _) = bank();
+        for (text, expected) in [("Novo", true), (" ", false)] {
+            let choices = db
+                .with(|conn| {
+                    topic_choices(conn, &TopicPath::new("DIREITO", "constitucional", text))
+                })
+                .unwrap();
+            assert_eq!((choices.questions, choices.is_new), (None, expected));
+            assert!(choices.topics.contains(&"Ação direta".into()));
+        }
     }
 
     #[test]

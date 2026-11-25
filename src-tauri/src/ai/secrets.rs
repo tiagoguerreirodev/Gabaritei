@@ -1,6 +1,8 @@
 //! Where the RemNote token lives: the OS keychain, never SQLite, logs or exports.
 
+#[cfg(test)]
 use std::collections::HashMap;
+#[cfg(test)]
 use std::sync::Mutex;
 
 use crate::error::{AppError, AppResult};
@@ -50,9 +52,11 @@ impl SecretStore for Keychain {
 }
 
 /// An in-memory store for tests.
+#[cfg(test)]
 #[derive(Default)]
-pub struct MemorySecrets(Mutex<HashMap<String, String>>);
+struct MemorySecrets(Mutex<HashMap<String, String>>);
 
+#[cfg(test)]
 impl SecretStore for MemorySecrets {
     fn get(&self, name: &str) -> AppResult<Option<String>> {
         Ok(self.0.lock().unwrap().get(name).cloned())
@@ -80,6 +84,7 @@ impl Secrets {
         Self(Box::new(Keychain))
     }
 
+    #[cfg(test)]
     pub fn memory() -> Self {
         Self(Box::<MemorySecrets>::default())
     }

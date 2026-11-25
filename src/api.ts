@@ -27,6 +27,7 @@ import type { DraftListItem } from "./bindings/DraftListItem";
 import type { DraftSummary } from "./bindings/DraftSummary";
 import type { LearningOverview } from "./bindings/LearningOverview";
 import type { HomeSummary } from "./bindings/HomeSummary";
+import type { ImportAllOutcome } from "./bindings/ImportAllOutcome";
 import type { ImportMode } from "./bindings/ImportMode";
 import type { ImportResult } from "./bindings/ImportResult";
 import type { LegacyImportOutcome } from "./bindings/LegacyImportOutcome";
@@ -36,7 +37,14 @@ import type { Performance } from "./bindings/Performance";
 import type { PerformanceQuery } from "./bindings/PerformanceQuery";
 import type { RemNoteTest } from "./bindings/RemNoteTest";
 import type { RecheckView } from "./bindings/RecheckView";
+import type { RoleChange } from "./bindings/RoleChange";
+import type { RoleConfig } from "./bindings/RoleConfig";
+import type { RoleOptions } from "./bindings/RoleOptions";
 import type { SessionStart } from "./bindings/SessionStart";
+import type { TopicPath } from "./bindings/TopicPath";
+import type { CountLimits } from "./bindings/CountLimits";
+import type { CountContext } from "./bindings/CountContext";
+import type { TopicChoices } from "./bindings/TopicChoices";
 import type { TopicTree } from "./bindings/TopicTree";
 
 const FALLBACK_MESSAGE = "Ocorreu um erro inesperado. Tente novamente.";
@@ -80,6 +88,9 @@ export const api = {
   /** Opens a folder picker and imports the legacy bank. `null` if the user cancels. */
   importLegacyBank: () => call<LegacyImportOutcome | null>("import_legacy_bank"),
   /** Area › matter › topic with question counts. */
+  questionCountLimits: (context: CountContext) =>
+    call<CountLimits>("question_count_limits", { context }),
+  topicChoices: (path: TopicPath) => call<TopicChoices>("topic_choices", { path }),
   topicsTree: () => call<TopicTree>("topics_tree"),
   /** One page of collections matching the search and filters. */
   collections: (query: CollectionQuery) => call<CollectionPage>("collections", { query }),
@@ -151,6 +162,11 @@ export const api = {
   aiCatalog: () => call<Catalog>("ai_catalog", { refresh: false }),
   /** Reads the agents' models and efforts from the CLIs again. */
   refreshAiCatalog: () => call<Catalog>("ai_catalog", { refresh: true }),
+  /** The efforts, Fast Mode visibility and validation message for a role. */
+  aiRoleOptions: (config: RoleConfig) => call<RoleOptions>("ai_role_options", { config }),
+  /** Applies an agent or model switch using the cached catalog. */
+  aiChangeRole: (config: RoleConfig, change: RoleChange) =>
+    call<RoleConfig>("ai_change_role", { config, change }),
   /** Validates and saves the AI settings; returns them as saved. */
   saveAiSettings: (input: AiSettingsInput) => call<AiSettings>("save_ai_settings", { input }),
   /** Saves the RemNote token in the OS keychain (`null` or blank removes it). */
@@ -167,6 +183,8 @@ export const api = {
   draftSummary: (id: string) => call<DraftSummary>("draft_summary", { id }),
   /** Imports a draft as a new generated collection: every question, or only the confirmed ones. */
   draftImport: (id: string, mode: ImportMode) => call<ImportResult>("draft_import", { id, mode }),
+  /** Imports a whole draft, checking it first when needed. */
+  draftImportAll: (id: string) => call<ImportAllOutcome>("draft_import_all", { id }),
   /** Discards a draft that is waiting for review. */
   draftDiscard: (id: string) => call<null>("draft_discard", { id }),
   /** Asks which PDF, Markdown or text files to attach. Empty if the user cancels. */

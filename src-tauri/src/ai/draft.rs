@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::agent::{Agent, Effort};
+use super::blind_check::BlindCheck;
 use super::generate::GenerateRequest;
 use super::roles::RoleConfig;
 use crate::bank::Package;
@@ -64,7 +65,7 @@ pub struct Draft {
     pub request: DraftRequest,
     pub package: Package,
     /// Blind-check verdicts (#17), stored as JSON.
-    pub blind_check: Option<serde_json::Value>,
+    pub blind_check: Option<BlindCheck>,
 }
 
 pub fn insert(conn: &Connection, draft: &Draft) -> AppResult<()> {
@@ -114,15 +115,11 @@ pub fn load(conn: &Connection, id: &DraftId) -> AppResult<Draft> {
     })
 }
 
-pub fn set_blind_check(
-    conn: &Connection,
-    id: &DraftId,
-    verdicts: &serde_json::Value,
-) -> AppResult<()> {
+pub fn set_blind_check(conn: &Connection, id: &DraftId, check: &BlindCheck) -> AppResult<()> {
     // Only a draft still waiting for review: one that was imported or discarded stays as it is.
     conn.execute(
         "UPDATE drafts SET blind_check = ?2 WHERE id = ?1 AND status = ?3",
-        params![id, serde_json::to_string(verdicts)?, DraftStatus::Review],
+        params![id, serde_json::to_string(check)?, DraftStatus::Review],
     )?;
     Ok(())
 }

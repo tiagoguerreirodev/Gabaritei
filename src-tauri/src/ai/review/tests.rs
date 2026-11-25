@@ -1,5 +1,5 @@
 use super::*;
-use crate::ai::blind_check::{BlindCheck, Confidence, Verdict, pending_record};
+use crate::ai::blind_check::{self, BlindCheck, Confidence, Verdict, pending_record};
 use crate::ai::draft::{DraftRequest, GenerationInfo};
 use crate::ai::generate::{GenerateRequest, GenerateSources};
 use crate::ai::roles::RoleSettings;
@@ -64,14 +64,9 @@ fn draft_of(id: &str, questions: Vec<Value>, verdicts: Option<Vec<Verdict>>) -> 
         },
         package: Package::parse(&json!({ "questions": questions, "notes": [] }).to_string())
             .unwrap(),
-        blind_check: verdicts.map(|verdicts| {
-            serde_json::to_value(BlindCheck {
-                verdicts,
-                failed: None,
-                info: None,
-                pending: false,
-            })
-            .unwrap()
+        blind_check: verdicts.map(|verdicts| BlindCheck::Done {
+            verdicts,
+            info: None,
         }),
     }
 }
@@ -538,6 +533,159 @@ fn keep_attachment(root: &Path, id: &DraftId) -> std::path::PathBuf {
     let source = root.join("source.md");
     std::fs::write(&source, "Synthetic attachment").unwrap();
     draft_files::keep(root, id, &[source]).unwrap().remove(0)
+}
+
+#[test]
+fn the_summary_counts_confirmed_questions_and_flags_an_unfinished_check() {
+    let db = Database::open_in_memory().unwrap();
+    let draft = draft_of(
+        "d1",
+        vec![
+            question("q1", "a"),
+            question("q2", "a"),
+            question("q3", "a"),
+        ],
+        Some(vec![
+            verdict("q1", VerdictState::Agreed),
+            verdict("q2", VerdictState::Fixed),
+        ]),
+    );
+    insert(&db, &draft);
+
+    let summary = summary_of(&db, "d1");
+
+    assert_eq!((summary.confirmed, summary.needs_check), (2, true));
+}
+
+#[test]
+fn a_checked_draft_imports_every_question_without_running_the_checker_again() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = mixed(&db);
+
+    let outcome = import_all(
+        &db,
+        files.path(),
+        &draft.id,
+        &GenerationManager::default(),
+        || NOW.into(),
+        |_, _| panic!("the draft was already fully checked"),
+        |_| {},
+    )
+    .unwrap();
+
+    let ImportAllOutcome::Imported { result } = outcome else {
+        panic!("expected an import");
+    };
+    assert_eq!((result.imported, result.skipped), (3, 0));
+}
+
+#[test]
+fn the_generation_slot_stays_held_until_the_checked_draft_is_imported() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = draft_of("d1", vec![question("q1", "a")], None);
+    let checked = draft_of(
+        "d1",
+        vec![question("q1", "a")],
+        Some(vec![verdict("q1", VerdictState::Agreed)]),
+    );
+    insert(&db, &draft);
+    let manager = GenerationManager::default();
+    let events = std::cell::RefCell::new(Vec::new());
+
+    let outcome = import_all(
+        &db,
+        files.path(),
+        &draft.id,
+        &manager,
+        || NOW.into(),
+        |_, _| {
+            assert!(manager.status().running);
+            db.with(|conn| draft::set_blind_check(conn, &draft.id, &checked.blind_check.unwrap()))
+        },
+        |status| {
+            events.borrow_mut().push((
+                status.running,
+                status.can_cancel,
+                manager.cancel(),
+                summary_of(&db, "d1").status,
+            ));
+        },
+    )
+    .unwrap();
+
+    assert!(matches!(outcome, ImportAllOutcome::Imported { .. }));
+    assert_eq!(
+        events.into_inner(),
+        [
+            (true, false, false, DraftStatus::Review),
+            (false, false, false, DraftStatus::Imported),
+        ]
+    );
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM questions"), 1);
+}
+
+#[test]
+fn a_cancelled_check_leaves_the_draft_waiting_for_review() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = draft_of("d1", vec![question("q1", "a")], None);
+    insert(&db, &draft);
+    let manager = GenerationManager::default();
+
+    let outcome = import_all(
+        &db,
+        files.path(),
+        &draft.id,
+        &manager,
+        || NOW.into(),
+        |cancel, _| {
+            assert!(manager.cancel());
+            assert!(cancel.is_cancelled());
+            Ok(())
+        },
+        |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcome,
+        ImportAllOutcome::Pending {
+            message: "A conferência não terminou: A conferência foi cancelada. Nada foi importado."
+                .into(),
+        }
+    );
+    assert_eq!(summary_of(&db, "d1").status, DraftStatus::Review);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM questions"), 0);
+}
+
+#[test]
+fn a_failed_check_reports_its_message_without_importing_any_questions() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = draft_of("d1", vec![question("q1", "a")], None);
+    insert(&db, &draft);
+
+    let outcome = import_all(
+        &db,
+        files.path(),
+        &draft.id,
+        &GenerationManager::default(),
+        || NOW.into(),
+        |_, _| blind_check::record_failure(&db, &draft.id, "Conferência indisponível."),
+        |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcome,
+        ImportAllOutcome::Pending {
+            message: "A conferência não terminou: Conferência indisponível. Nada foi importado."
+                .into(),
+        }
+    );
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM questions"), 0);
 }
 
 #[test]

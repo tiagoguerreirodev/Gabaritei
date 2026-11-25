@@ -41,7 +41,7 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         allowed.extend(WEB_TOOLS.iter().map(|t| (*t).to_owned()));
     }
     // RemNote: only the exact read-only tools the user approved, never the whole server.
-    if work.mcp_config.is_some()
+    if work.mcp_config().is_some()
         && let Some(RemNoteAccess { tools, .. }) = &spec.remnote
     {
         allowed.extend(
@@ -86,11 +86,11 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         args.push("--settings".into());
         args.push(r#"{"fastMode":true}"#.into());
     }
-    if let Some(config) = &work.mcp_config {
+    if let Some(config) = work.mcp_config() {
         args.push("--mcp-config".into());
         args.push(config.to_string_lossy().into_owned());
     }
-    if let Some(file) = &work.instructions {
+    if let Some(file) = work.instructions() {
         args.push("--append-system-prompt-file".into());
         args.push(file.to_string_lossy().into_owned());
     }
@@ -112,7 +112,7 @@ impl Parser for ClaudeParser {
         let event: Value = serde_json::from_str(line).ok()?;
         match event.get("type")?.as_str()? {
             "system" if event.get("subtype").and_then(Value::as_str) == Some("init") => {
-                Some(Progress::new(ProgressKind::Started, "Iniciando…"))
+                Some(Progress::from_kind(ProgressKind::Started))
             }
             "assistant" => event["message"]["content"]
                 .as_array()?
@@ -157,12 +157,10 @@ fn tool_progress(block: &Value) -> Option<Progress> {
     }
     let name = block.get("name")?.as_str()?;
     Some(match name {
-        "Read" | "Grep" | "Glob" => Progress::new(ProgressKind::Reading, "Lendo as fontes…"),
-        "WebSearch" | "WebFetch" => Progress::new(ProgressKind::Searching, "Pesquisando na web…"),
-        "StructuredOutput" => Progress::new(ProgressKind::Writing, "Redigindo a resposta…"),
-        n if n.starts_with("mcp__") => {
-            Progress::new(ProgressKind::Searching, "Consultando o RemNote…")
-        }
-        _ => Progress::new(ProgressKind::Thinking, "Raciocinando…"),
+        "Read" | "Grep" | "Glob" => Progress::from_kind(ProgressKind::Reading),
+        "WebSearch" | "WebFetch" => Progress::from_kind(ProgressKind::Searching),
+        "StructuredOutput" => Progress::from_kind(ProgressKind::Writing),
+        n if n.starts_with("mcp__") => Progress::consulting_remnote(),
+        _ => Progress::from_kind(ProgressKind::Thinking),
     })
 }

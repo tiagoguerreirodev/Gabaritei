@@ -1,11 +1,9 @@
 import { createResource } from "solid-js";
 import { createStore, reconcile, unwrap } from "solid-js/store";
 import { api } from "../api";
-import { refreshCatalog } from "../catalog";
+import { createRoleEditor, refreshCatalog, resetCatalog } from "../catalog";
 import type { Agent } from "../bindings/Agent";
 import type { AiSettings } from "../bindings/AiSettings";
-import type { RoleConfig } from "../bindings/RoleConfig";
-import type { RoleSettings } from "../bindings/RoleSettings";
 import { cloneJson } from "../json";
 import LegacyImport from "../components/LegacyImport";
 import { ResourceView } from "../components/states";
@@ -17,6 +15,7 @@ import DataFileSection from "./settings/DataFileSection";
 import { createAction } from "../actions";
 import AgentsSection from "./settings/AgentsSection";
 import RemNoteSection from "./settings/RemNoteSection";
+import { roleOrder } from "../labels";
 import RolesSection from "./settings/RolesSection";
 import ShortcutsSection from "./settings/ShortcutsSection";
 
@@ -64,18 +63,29 @@ function Form(props: { initial: AiSettings; onReload: () => void }) {
   const [draft, setDraft] = createStore<AiSettings>(cloneJson(props.initial));
   const saving = createAction();
   let savedPaths = JSON.stringify(props.initial.cliPaths);
+  const editors = roleOrder.map(({ role, key }) => ({
+    role,
+    editor: createRoleEditor(
+      () => draft.roles[key],
+      (config) => setDraft("roles", key, config),
+    ),
+  }));
+  const changingRole = () => editors.some(({ editor }) => editor.changing());
 
-  const persistSettings = () =>
-    saving.run(async () => {
+  const persistSettings = () => {
+    if (changingRole()) return Promise.resolve(false);
+    return saving.run(async () => {
       const { cliPaths, roles, remnote } = cloneJson(unwrap(draft));
       const saved = await api.saveAiSettings({ cliPaths, roles, remnote });
       setDraft(reconcile(saved));
       // The model lists come from the CLIs, so a different CLI path means different lists.
       if (JSON.stringify(saved.cliPaths) !== savedPaths) {
         savedPaths = JSON.stringify(saved.cliPaths);
+        resetCatalog();
         void refreshCatalog();
       }
     });
+  };
 
   const saveSettings = async () => {
     if (await persistSettings()) showToast("Configurações salvas.");
@@ -88,10 +98,7 @@ function Form(props: { initial: AiSettings; onReload: () => void }) {
         onChange={(agent: Agent, path: string) => setDraft("cliPaths", agent, path || null)}
         beforeTest={persistSettings}
       />
-      <RolesSection
-        roles={draft.roles}
-        onChange={(key: keyof RoleSettings, config: RoleConfig) => setDraft("roles", key, config)}
-      />
+      <RolesSection editors={editors} />
       <RemNoteSection
         remnote={draft.remnote}
         hasToken={draft.hasRemnoteToken}
@@ -103,7 +110,7 @@ function Form(props: { initial: AiSettings; onReload: () => void }) {
         <button
           type="button"
           class="primary"
-          disabled={saving.active()}
+          disabled={saving.active() || changingRole()}
           onClick={() => void saveSettings()}
         >
           {saving.active() ? "Salvando…" : "Salvar configurações"}

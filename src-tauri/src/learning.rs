@@ -63,6 +63,24 @@ impl From<ErrorFilter> for bool {
     }
 }
 
+/// Review date as shown in the computer's local calendar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum DueState {
+    Overdue,
+    Today,
+    Upcoming,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ScheduledReview {
+    pub at: String,
+    pub state: DueState,
+}
+
 /// One row of the *Erros e revisões* list. Deliberately carries no stem, option or key: it
 /// links to the past attempt, where the question has already been revealed.
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
@@ -73,7 +91,7 @@ pub struct LearningItem {
     pub topics: Vec<TopicPath>,
     /// When the next review is due. `None` for an error with no review (never the case for
     /// a finished attempt, but kept honest).
-    pub due_at: Option<String>,
+    pub review: Option<ScheduledReview>,
     /// The latest answered response is wrong (or the latest result is blank, when blanks are
     /// included).
     pub is_error: bool,
@@ -103,6 +121,8 @@ pub struct LearningOverview {
     pub practice_errors: u32,
     /// Due reviews first (most overdue first), then upcoming ones, then errors with no review.
     pub items: Vec<LearningItem>,
+    /// The next instant at which a count or a local calendar label can change.
+    pub refresh_at: Option<String>,
 }
 
 /// Recomputes one question's review from its whole history. Call it when an attempt finishes,
@@ -227,6 +247,7 @@ pub fn overview(conn: &Connection, now: &str, filter: ErrorFilter) -> AppResult<
         practice: practice.len() as u32,
         practice_errors,
         items,
+        refresh_at: schedule.refresh_at,
     })
 }
 
@@ -429,7 +450,8 @@ fn fill_review_session(
 
 #[derive(Default)]
 struct ReviewSchedule {
-    dates: HashMap<QuestionId, String>,
+    dates: HashMap<QuestionId, ScheduledReview>,
+    refresh_at: Option<String>,
     due: u32,
     due_in_open_attempt: u32,
     practice_due: Vec<QuestionId>,
@@ -441,11 +463,26 @@ fn review_schedule(
     in_open_attempt: &HashSet<QuestionId>,
 ) -> AppResult<ReviewSchedule> {
     let mut stmt = conn.prepare(&format!(
-        "SELECT question_id, due_at, {DUE_SQL}
+        "SELECT question_id, due_at, {DUE_SQL},
+                date(due_at, 'localtime') = date(?1, 'localtime')
          FROM review_state ORDER BY due_at, question_id"
     ))?;
     let rows = stmt.query_map([now], |r| {
-        Ok((r.get::<_, QuestionId>(0)?, r.get(1)?, r.get::<_, bool>(2)?))
+        let due: bool = r.get(2)?;
+        let today: bool = r.get(3)?;
+        let state = match (today, due) {
+            (true, _) => DueState::Today,
+            (false, true) => DueState::Overdue,
+            (false, false) => DueState::Upcoming,
+        };
+        Ok((
+            r.get::<_, QuestionId>(0)?,
+            ScheduledReview {
+                at: r.get(1)?,
+                state,
+            },
+            due,
+        ))
     })?;
     let mut schedule = ReviewSchedule::default();
     for row in rows {
@@ -458,7 +495,21 @@ fn review_schedule(
                 schedule.practice_due.push(id.clone());
             }
         }
+        if !is_due && schedule.refresh_at.is_none() {
+            schedule.refresh_at = Some(date.at.clone());
+        }
         schedule.dates.insert(id, date);
+    }
+    if !schedule.dates.is_empty() {
+        let midnight: String = conn.query_row(
+            "SELECT strftime('%Y-%m-%dT%H:%M:%fZ', ?1, 'localtime', 'start of day', '+1 day', 'utc')",
+            [now], |row| row.get(0),
+        )?;
+        schedule.refresh_at = Some(
+            schedule
+                .refresh_at
+                .map_or(midnight.clone(), |at| at.min(midnight)),
+        );
     }
     Ok(schedule)
 }
@@ -489,22 +540,22 @@ fn question_topics(conn: &Connection) -> AppResult<HashMap<QuestionId, Vec<Topic
 
 fn overview_items(
     latest: Vec<Latest>,
-    dates: &HashMap<QuestionId, String>,
+    dates: &HashMap<QuestionId, ScheduledReview>,
     mut topics: HashMap<QuestionId, Vec<TopicPath>>,
     now: &str,
     filter: ErrorFilter,
 ) -> Vec<LearningItem> {
     let mut items = Vec::new();
     for latest in latest {
-        let due_at = dates.get(&latest.question_id).cloned();
+        let review = dates.get(&latest.question_id).cloned();
         let is_error = latest.is_error(filter);
-        if due_at.is_none() && !is_error {
+        if review.is_none() && !is_error {
             continue;
         }
         items.push(LearningItem {
             topics: topics.remove(&latest.question_id).unwrap_or_default(),
             question_id: latest.question_id,
-            due_at,
+            review,
             is_error,
             last_attempt_id: latest.attempt_id,
             last_answered_at: latest.at,
@@ -513,14 +564,14 @@ fn overview_items(
     // Reviews by due date; errors without one go last. `latest_results` is newest first, and
     // the sort is stable.
     items.sort_by(|a, b| {
-        crate::ordering::some_first(a.due_at.as_ref(), b.due_at.as_ref(), Ord::cmp)
+        crate::ordering::some_first(a.review.as_ref(), b.review.as_ref(), |a, b| a.at.cmp(&b.at))
     });
 
     // Upcoming reviews of questions that are not errors can be thousands: the list keeps the
     // soonest few (the count above stays whole).
     let mut upcoming_only = 0;
     items.retain(|i| {
-        let only_upcoming = i.due_at.as_deref().is_some_and(|d| d > now) && !i.is_error;
+        let only_upcoming = i.review.as_ref().is_some_and(|r| r.at.as_str() > now) && !i.is_error;
         if only_upcoming {
             upcoming_only += 1;
         }

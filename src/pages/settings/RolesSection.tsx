@@ -1,16 +1,19 @@
 import { InlineError } from "../../components/states";
 import { For, Show } from "solid-js";
-import type { Agent } from "../../bindings/Agent";
-import type { RoleConfig } from "../../bindings/RoleConfig";
-import type { RoleSettings } from "../../bindings/RoleSettings";
-import { catalogState, refreshCatalog, roleForAgent, roleProblem } from "../../catalog";
-import { CatalogNotice, EffortField, FastField, ModelField } from "../../components/ModelOptions";
-import { agentLabels, agents, roleLabels, roleOrder } from "../../labels";
+import type { Role } from "../../bindings/Role";
+import { refreshCatalog, type RoleEditor } from "../../catalog";
+import {
+  AgentField,
+  CatalogNotice,
+  EffortField,
+  FastField,
+  ModelField,
+} from "../../components/ModelOptions";
+import { roleLabels } from "../../labels";
 
 /** Agent, model, effort for each of the four roles. */
 export default function RolesSection(props: {
-  roles: RoleSettings;
-  onChange: (key: keyof RoleSettings, config: RoleConfig) => void;
+  editors: Array<{ role: Role; editor: RoleEditor }>;
 }) {
   return (
     <section class="card wide" aria-labelledby="roles-title">
@@ -36,11 +39,9 @@ export default function RolesSection(props: {
             </tr>
           </thead>
           <tbody>
-            <For each={roleOrder}>
-              {({ role, key }) => {
-                const config = () => props.roles[key];
+            <For each={props.editors}>
+              {({ role, editor }) => {
                 const name = roleLabels[role].name;
-                const change = (next: RoleConfig) => props.onChange(key, next);
                 return (
                   <tr>
                     <th scope="row">
@@ -48,30 +49,14 @@ export default function RolesSection(props: {
                       <span class="muted role-hint">{roleLabels[role].hint}</span>
                     </th>
                     <td>
-                      <select
-                        aria-label={`Agente: ${name}`}
-                        value={config().agent}
-                        onChange={(event) =>
-                          change(
-                            roleForAgent(
-                              catalogState(),
-                              event.currentTarget.value as Agent,
-                              config(),
-                            ),
-                          )
-                        }
-                      >
-                        <For each={agents}>
-                          {(agent) => <option value={agent}>{agentLabels[agent]}</option>}
-                        </For>
-                      </select>
+                      <AgentField label={name} editor={editor} />
                     </td>
                     <td>
-                      <ModelField label={name} value={config()} onChange={change} />
+                      <ModelField label={name} editor={editor} />
                     </td>
                     <td>
-                      <EffortField label={name} value={config()} onChange={change} />
-                      <FastField label={name} value={config()} onChange={change} />
+                      <EffortField label={name} editor={editor} />
+                      <FastField label={name} editor={editor} />
                     </td>
                   </tr>
                 );
@@ -80,10 +65,12 @@ export default function RolesSection(props: {
           </tbody>
         </table>
       </div>
-      <CatalogNotice agents={[...new Set(roleOrder.map(({ key }) => props.roles[key].agent))]} />
-      <For each={roleOrder}>
-        {({ role, key }) => (
-          <Show when={roleProblem(catalogState(), props.roles[key])}>
+      <CatalogNotice
+        agents={[...new Set(props.editors.map(({ editor }) => editor.value().agent))]}
+      />
+      <For each={props.editors}>
+        {({ role, editor }) => (
+          <Show when={editor.options()?.problem}>
             {(problem) => (
               <InlineError>
                 {roleLabels[role].name}: {problem()}

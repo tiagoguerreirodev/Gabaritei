@@ -22,6 +22,7 @@ pub mod metrics;
 pub mod migrate;
 mod ordering;
 pub mod paths;
+mod question_count;
 pub mod shortcuts;
 mod sync;
 
@@ -69,6 +70,8 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::export_data,
             commands::import_data,
             commands::topics_tree,
+            commands::topic_choices,
+            commands::question_count_limits,
             commands::collections,
             commands::collection,
             commands::legacy_import_status,
@@ -88,6 +91,8 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::unannul,
             commands::ai_settings,
             commands::ai_catalog,
+            commands::ai_role_options,
+            commands::ai_change_role,
             commands::save_ai_settings,
             commands::set_remnote_token,
             commands::cli_test,
@@ -97,6 +102,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::drafts_waiting,
             commands::draft_summary,
             commands::draft_import,
+            commands::draft_import_all,
             commands::draft_discard,
             commands::pick_attachments,
             commands::recheck_ask,

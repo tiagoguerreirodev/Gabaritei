@@ -2,13 +2,13 @@
 
 use super::*;
 use crate::ai::agent::{Agent, Effort};
-use crate::ai::draft::{DraftRequest, GenerationInfo};
+use crate::ai::draft::{Draft, DraftRequest, GenerationInfo};
 use crate::ai::generate::GenerateSources;
-use crate::ai::settings::AiSettingsInput;
 use crate::bank::Package;
 use crate::bank::question::tests::topic;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 const SECRET_EXPLANATION: &str = "EXPLICACAO-SECRETA-DO-GABARITO";
 const SECRET_REF: &str = "REFERENCIA-SECRETA";
@@ -100,6 +100,23 @@ struct Setup {
     db: Database,
     secrets: Secrets,
     draft_id: DraftId,
+    clis: ResolvedClis,
+}
+
+impl Setup {
+    fn runtime(&self) -> GenerationRuntime<'_> {
+        fn now() -> String {
+            "2026-11-20T00:00:00.000Z".into()
+        }
+        fn monotonic_time() -> Duration {
+            Duration::ZERO
+        }
+        GenerationRuntime {
+            clis: &self.clis,
+            now: &now,
+            monotonic_time: &monotonic_time,
+        }
+    }
 }
 
 fn files_dir(s: &Setup) -> PathBuf {
@@ -112,20 +129,6 @@ fn setup(package: Package, replies: &[Value]) -> Setup {
     let cli = fake_cli(dir.path(), replies);
     let db = Database::open_in_memory().unwrap();
     let secrets = Secrets::memory();
-    db.with(|conn| {
-        let mut current = settings::load(conn, &secrets)?;
-        current.cli_paths.codex = Some(cli.to_string_lossy().into_owned());
-        let roles = current.roles.clone();
-        settings::save(
-            conn,
-            AiSettingsInput {
-                cli_paths: current.cli_paths,
-                roles,
-                remnote: current.remnote,
-            },
-        )
-    })
-    .unwrap();
     let roles = crate::ai::roles::RoleSettings::default();
     let draft = Draft {
         id: "draft-1".into(),
@@ -162,6 +165,7 @@ fn setup(package: Package, replies: &[Value]) -> Setup {
         db,
         secrets,
         draft_id: draft.id,
+        clis: ResolvedClis::new(None, Some(cli)),
     }
 }
 
@@ -169,6 +173,7 @@ fn run_check(setup: &Setup) -> AppResult<BlindCheck> {
     run(
         &setup.db,
         &setup.secrets,
+        &setup.runtime(),
         &setup.draft_id,
         &[],
         &CancelToken::new(),
@@ -178,10 +183,38 @@ fn run_check(setup: &Setup) -> AppResult<BlindCheck> {
 
 fn states(check: &BlindCheck) -> Vec<(&str, VerdictState)> {
     check
-        .verdicts
+        .verdicts()
         .iter()
         .map(|v| (v.question_id.as_str(), v.state))
         .collect()
+}
+
+#[test]
+fn finished_legacy_checks_can_omit_pending() {
+    let old = json!({ "verdicts": [], "failed": null, "info": null });
+    assert_eq!(
+        serde_json::from_value::<BlindCheck>(old).unwrap(),
+        BlindCheck::Done {
+            verdicts: Vec::new(),
+            info: None,
+        },
+    );
+}
+
+#[test]
+fn failed_checks_keep_the_legacy_json_shape() {
+    let failed = BlindCheck::Failed("Falhou.".into());
+    let old = json!({ "verdicts": [], "failed": "Falhou.", "info": null, "pending": false });
+    assert_eq!(serde_json::to_value(&failed).unwrap(), old);
+    assert_eq!(serde_json::from_value::<BlindCheck>(old).unwrap(), failed);
+}
+
+#[test]
+fn a_pending_check_serializes_for_restart_recovery() {
+    assert_eq!(
+        serde_json::to_value(BlindCheck::Pending).unwrap(),
+        json!({ "verdicts": [], "failed": null, "info": null, "pending": true }),
+    );
 }
 
 #[cfg(unix)]
@@ -205,11 +238,11 @@ mod flow {
             "no generator call without a disagreement"
         );
         let stored = s.db.with(|conn| draft::load(conn, &s.draft_id)).unwrap();
-        assert_eq!(super::super::stored(&stored).unwrap().unwrap(), check);
+        assert_eq!(stored.blind_check, Some(check));
     }
 
     #[test]
-    fn a_disagreement_fixed_by_the_generator_and_accepted_on_recheck() {
+    fn a_confirmed_revision_replaces_the_disputed_question() {
         let revised = question("q2", "b");
         let s = setup(
             package(vec![question("q1", "c"), question("q2", "a")]),
@@ -224,7 +257,7 @@ mod flow {
             states(&check),
             [("q1", VerdictState::Agreed), ("q2", VerdictState::Fixed)]
         );
-        assert!(check.verdicts[1].objected);
+        assert!(check.verdicts()[1].objected);
         assert_eq!(calls(s.dir.path()), 3);
         // Only the revised question goes back to the checker.
         let third = prompt(s.dir.path(), 3);
@@ -247,8 +280,8 @@ mod flow {
         );
         let check = run_check(&s).unwrap();
         assert_eq!(states(&check), [("q1", VerdictState::Disputed)]);
-        assert_eq!(check.verdicts[0].final_choice, "d");
-        assert_eq!(check.verdicts[0].first_choice, "a");
+        assert_eq!(check.verdicts()[0].final_choice, "d");
+        assert_eq!(check.verdicts()[0].first_choice, "a");
     }
 
     #[test]
@@ -324,6 +357,7 @@ mod flow {
         run(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &s.draft_id,
             std::slice::from_ref(&file),
             &CancelToken::new(),
@@ -369,6 +403,7 @@ mod flow {
         let error = recheck_draft(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             &s.draft_id,
             &CancelToken::new(),
@@ -390,12 +425,13 @@ mod flow {
 
         s.db.with(|conn| recover_interrupted(conn)).unwrap();
         let stored = s.db.with(|conn| draft::load(conn, &s.draft_id)).unwrap();
-        let check = super::stored(&stored).unwrap().unwrap();
-        assert!(!check.pending);
-        assert!(check.failed.unwrap().contains("interrompida"));
+        let check = stored.blind_check.unwrap();
+        assert!(!check.is_pending());
+        assert!(check.failure().unwrap().contains("interrompida"));
         recheck_draft(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             &s.draft_id,
             &CancelToken::new(),
@@ -404,7 +440,7 @@ mod flow {
         .unwrap();
         let stored = s.db.with(|conn| draft::load(conn, &s.draft_id)).unwrap();
         assert_eq!(
-            states(&super::stored(&stored).unwrap().unwrap()),
+            states(stored.blind_check.as_ref().unwrap()),
             [("q1", VerdictState::Agreed)]
         );
     }
@@ -481,6 +517,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             request(1),
             &CancelToken::new(),
@@ -490,7 +527,7 @@ mod pipeline {
         )
         .unwrap();
         let draft = s.db.with(|conn| draft::load(conn, &id)).unwrap();
-        let check = stored(&draft).unwrap().unwrap();
+        let check = draft.blind_check.unwrap();
         assert_eq!(states(&check), [("q1", VerdictState::Agreed)]);
         assert!(labels.iter().any(|l| l.contains("Gerando")));
         assert!(labels.iter().any(|l| l.contains("Conferindo")));
@@ -514,6 +551,7 @@ mod pipeline {
         generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             request(1),
             &CancelToken::new(),
@@ -545,6 +583,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &dir,
             job,
             &CancelToken::new(),
@@ -562,8 +601,7 @@ mod pipeline {
         assert_eq!(draft_files::load(&dir, &id).unwrap().len(), 1);
     }
 
-    #[test]
-    fn a_recheck_never_announces_generating_and_the_missing_files_notice_keeps_the_stage() {
+    fn retry_without_kept_files() -> Vec<Progress> {
         let s = setup_pipeline(&[
             generated(vec![question("q1", "c")]),
             answers(vec![]),
@@ -577,6 +615,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             job,
             &CancelToken::new(),
@@ -588,16 +627,28 @@ mod pipeline {
         recheck_draft(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             &id,
             &CancelToken::new(),
             &mut |p| events.push(p),
         )
         .unwrap();
+        events
+    }
+
+    #[test]
+    fn retry_starts_at_checking() {
+        let events = retry_without_kept_files();
         assert_eq!(
             stages_of(&events),
             [GenerationStage::Checking, GenerationStage::Resolving]
         );
+    }
+
+    #[test]
+    fn the_missing_attachments_notice_does_not_change_the_stage() {
+        let events = retry_without_kept_files();
         let notice = events
             .iter()
             .find(|p| p.label.contains("anexos originais"))
@@ -612,17 +663,17 @@ mod pipeline {
         let draft = crate::ai::generate::generate_draft(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             request(1),
             &CancelToken::new(),
             &mut |_| {},
         )
         .unwrap();
         let stored = s.db.with(|conn| draft::load(conn, &draft.id)).unwrap();
-        assert!(super::stored(&stored).unwrap().unwrap().pending);
+        assert_eq!(stored.blind_check, Some(BlindCheck::Pending));
     }
 
-    #[test]
-    fn a_failed_check_keeps_the_draft_and_says_so() {
+    fn failed_check_draft() -> (DraftId, Draft) {
         let s = setup_pipeline(&[
             generated(vec![question("q1", "c")]),
             answers(vec![]), // the checker answered nothing
@@ -630,6 +681,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             request(1),
             &CancelToken::new(),
@@ -637,11 +689,94 @@ mod pipeline {
         )
         .unwrap();
         let draft = only_draft(&s.db);
+        (id, draft)
+    }
+
+    #[test]
+    fn a_failed_check_keeps_its_draft() {
+        let (id, draft) = failed_check_draft();
         assert_eq!(draft.id, id);
         assert_eq!(draft.status, DraftStatus::Review);
-        let check = stored(&draft).unwrap().unwrap();
-        assert!(check.verdicts.is_empty());
-        assert!(check.failed.unwrap().contains("não respondeu todas"));
+    }
+
+    #[test]
+    fn a_failed_check_records_the_failure() {
+        let (_, draft) = failed_check_draft();
+        let check = draft.blind_check.unwrap();
+        assert!(check.verdicts().is_empty());
+        assert!(check.failure().unwrap().contains("não respondeu todas"));
+    }
+
+    #[test]
+    fn a_missing_checker_keeps_the_generated_draft_with_a_failure() {
+        let s = setup_pipeline(&[generated(vec![question("q1", "c")])]);
+        let mut job = request(1);
+        job.checker = Some(RoleConfig {
+            agent: Agent::Claude,
+            model: "sonnet".into(),
+            effort: Effort::Low,
+            fast: false,
+        });
+
+        let id = generate_and_check(
+            &s.db,
+            &s.secrets,
+            &s.runtime(),
+            &files_dir(&s),
+            job,
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+
+        let draft = only_draft(&s.db);
+        assert_eq!((draft.id.clone(), draft.status), (id, DraftStatus::Review));
+        assert_eq!(
+            draft.blind_check,
+            Some(BlindCheck::Failed(
+                "O Claude Code não foi encontrado. Confira Configurações › Agentes.".into(),
+            )),
+        );
+        assert_eq!(calls(s.dir.path()), 1);
+    }
+
+    #[test]
+    fn checker_provenance_uses_the_injected_clocks() {
+        let s = setup(
+            package(vec![question("q1", "c")]),
+            &[answers(vec![answer("q1", "c")])],
+        );
+        let time = std::cell::Cell::new(Duration::from_secs(5));
+        let runtime = GenerationRuntime {
+            now: &|| "2026-11-20T12:00:00.000Z".into(),
+            monotonic_time: &|| {
+                let now = time.get();
+                time.set(now + Duration::from_millis(75));
+                now
+            },
+            ..s.runtime()
+        };
+        let check = run(
+            &s.db,
+            &s.secrets,
+            &runtime,
+            &s.draft_id,
+            &[],
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+
+        let BlindCheck::Done {
+            info: Some(info), ..
+        } = check
+        else {
+            panic!("a completed check has provenance");
+        };
+        assert_eq!(
+            (info.started_at.as_str(), info.duration_ms),
+            ("2026-11-20T12:00:00.000Z", 75)
+        );
     }
 
     #[test]
@@ -654,6 +789,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             request(1),
             &CancelToken::new(),
@@ -663,14 +799,15 @@ mod pipeline {
         recheck_draft(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             &id,
             &CancelToken::new(),
             &mut |_| {},
         )
         .unwrap();
-        let check = stored(&only_draft(&s.db)).unwrap().unwrap();
-        assert!(check.failed.is_none());
+        let check = only_draft(&s.db).blind_check.unwrap();
+        assert!(check.failure().is_none());
         assert_eq!(states(&check), [("q1", VerdictState::Agreed)]);
     }
 
@@ -689,6 +826,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             job,
             &CancelToken::new(),
@@ -702,6 +840,7 @@ mod pipeline {
         recheck_draft(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             &id,
             &CancelToken::new(),
@@ -715,13 +854,7 @@ mod pipeline {
                 .all(|label| !label.contains("anexos originais")),
             "no warning when the copies exist"
         );
-        assert!(
-            stored(&only_draft(&s.db))
-                .unwrap()
-                .unwrap()
-                .failed
-                .is_none()
-        );
+        assert!(only_draft(&s.db).blind_check.unwrap().failure().is_none());
     }
 
     #[test]
@@ -738,6 +871,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             job,
             &CancelToken::new(),
@@ -749,6 +883,7 @@ mod pipeline {
         recheck_draft(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             &id,
             &CancelToken::new(),
@@ -759,7 +894,7 @@ mod pipeline {
     }
 
     #[test]
-    fn kept_copies_hold_the_original_file_names_and_content() {
+    fn kept_copies_preserve_the_original_attachments() {
         let s = setup_pipeline(&[
             generated(vec![question("q1", "c")]),
             answers(vec![answer("q1", "c")]),
@@ -771,6 +906,7 @@ mod pipeline {
         let id = generate_and_check(
             &s.db,
             &s.secrets,
+            &s.runtime(),
             &files_dir(&s),
             job,
             &CancelToken::new(),
@@ -805,20 +941,8 @@ if [ "$n" = 1 ]; then cp "$dir/answer-1.json" "$out"; else sleep 60; fi"#,
                 dir.path().display()
             ),
         );
-        let s = setup_pipeline(&[]);
-        s.db.with(|conn| {
-            let mut current = settings::load(conn, &s.secrets)?;
-            current.cli_paths.codex = Some(cli.to_string_lossy().into_owned());
-            settings::save(
-                conn,
-                AiSettingsInput {
-                    cli_paths: current.cli_paths,
-                    roles: current.roles,
-                    remnote: current.remnote,
-                },
-            )
-        })
-        .unwrap();
+        let mut s = setup_pipeline(&[]);
+        s.clis = ResolvedClis::new(None, Some(cli));
         let token = CancelToken::new();
         let canceller = token.clone();
         let counter = dir.path().join("counter");
@@ -840,8 +964,16 @@ if [ "$n" = 1 ]; then cp "$dir/answer-1.json" "$out"; else sleep 60; fi"#,
         std::fs::write(&original, "texto").unwrap();
         let mut job = request(1);
         job.sources.attachments = vec![original.to_string_lossy().into_owned()];
-        let error = generate_and_check(&s.db, &s.secrets, &files_dir(&s), job, &token, &mut |_| {})
-            .unwrap_err();
+        let error = generate_and_check(
+            &s.db,
+            &s.secrets,
+            &s.runtime(),
+            &files_dir(&s),
+            job,
+            &token,
+            &mut |_| {},
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("cancelada"));
         let draft = only_draft(&s.db);
         assert_eq!(draft.status, DraftStatus::Discarded);
@@ -874,8 +1006,12 @@ mod schemas {
     }
 
     #[test]
-    fn the_checker_and_dispute_schemas_match_their_snapshots() {
+    fn the_checker_schema_matches_its_snapshot() {
         snapshot("checker.schema.json", &schema_of::<CheckerAnswers>());
+    }
+
+    #[test]
+    fn the_dispute_schema_matches_its_snapshot() {
         snapshot("dispute.schema.json", &schema_of::<DisputeResolutions>());
     }
 

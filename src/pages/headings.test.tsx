@@ -57,6 +57,10 @@ describe("page headings", () => {
             practiceErrors: 0,
             items: [],
           };
+        case "question_count_limits":
+          return { min: 1, max: 30, initial: 10 };
+        case "topic_choices":
+          return { matters: [], topics: [], questions: null, isNew: false };
         case "topics_tree":
           return { areas: [], questions: 0 };
         case "collections":

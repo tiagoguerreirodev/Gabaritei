@@ -1,5 +1,6 @@
+import { For, Show, createResource } from "solid-js";
+import { api } from "../../api";
 import { formatNumber } from "../../format";
-import { For, Show } from "solid-js";
 import type { TopicPath } from "../../bindings/TopicPath";
 import type { TopicTree } from "../../bindings/TopicTree";
 
@@ -16,16 +17,16 @@ export default function TopicPicker(props: {
 }) {
   const invalid = (text: string) => (props.error && !text.trim() ? "true" : undefined);
   const describedBy = (text: string) => (props.error && !text.trim() ? props.errorId : undefined);
-  const matters = () =>
-    props.tree.areas.find((area) => area.name === props.value.area.trim())?.matters ?? [];
-  const topics = () => matters().find((m) => m.name === props.value.matter.trim())?.topics ?? [];
-  const isNew = () => {
-    const { area, matter, topic } = props.value;
-    if (!area.trim() || !matter.trim() || !topic.trim()) return false;
-    return !topics().some((t) => t.name === topic.trim());
-  };
-  const existing = () => topics().find((t) => t.name === props.value.topic.trim());
+  const [choices] = createResource(
+    () => ({ ...props.value }),
+    (path) => api.topicChoices(path),
+  );
+  const current = () => (choices.loading || choices.error ? undefined : choices());
 
+  const existingQuestions = () => {
+    const count = current()?.questions;
+    return count == null ? undefined : { count };
+  };
   return (
     <div
       class="topic-path"
@@ -61,7 +62,7 @@ export default function TopicPicker(props: {
         onInput={(event) => props.onChange({ ...props.value, matter: event.currentTarget.value })}
       />
       <datalist id="topic-matters">
-        <For each={matters()}>{(matter) => <option value={matter.name} />}</For>
+        <For each={current()?.matters}>{(matter) => <option value={matter} />}</For>
       </datalist>
       <input
         type="text"
@@ -76,17 +77,17 @@ export default function TopicPicker(props: {
         onInput={(event) => props.onChange({ ...props.value, topic: event.currentTarget.value })}
       />
       <datalist id="topic-topics">
-        <For each={topics()}>{(topic) => <option value={topic.name} />}</For>
+        <For each={current()?.topics}>{(topic) => <option value={topic} />}</For>
       </datalist>
-      <Show when={isNew()}>
+      <Show when={current()?.isNew}>
         <p class="muted" role="note">
           Assunto novo: será criado quando você importar o pacote.
         </p>
       </Show>
-      <Show when={existing()}>
+      <Show when={existingQuestions()}>
         {(found) => (
           <p class="muted" role="note">
-            Já existem {formatNumber(found().questions)} questões neste assunto; a IA vai evitar
+            Já existem {formatNumber(found().count)} questões neste assunto; a IA vai evitar
             repeti-las.
           </p>
         )}

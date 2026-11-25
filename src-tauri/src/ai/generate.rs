@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -10,9 +11,10 @@ use ts_rs::TS;
 use super::draft::{self, Draft, DraftRequest, DraftStatus, GenerationInfo};
 use super::prompts;
 use super::roles::{Role, RoleConfig};
-use super::runner::{CancelToken, Progress, run_job};
+use super::runner::{CancelToken, Progress};
 use super::secrets::Secrets;
-use super::settings::{self, RemNoteMode, Sources};
+use super::settings::{self, RemNoteMode, ResolvedClis, Sources};
+use super::task::{Task, ask};
 use crate::bank::question::{MAX_AREA, MAX_MATTER, MAX_TOPIC, Provenance};
 use crate::bank::store::{load_question, topic_stems};
 use crate::bank::{Package, QuestionType, TopicPath, canonicalize, package_json_schema};
@@ -65,7 +67,7 @@ fn blank(text: &str) -> bool {
 impl GenerateRequest {
     /// Checks the form and tidies it (trimmed names, blank optionals removed).
     pub fn validate(&mut self) -> AppResult<()> {
-        if !(1..=MAX_COUNT).contains(&self.count) {
+        if !(crate::question_count::MIN_COUNT..=MAX_COUNT).contains(&self.count) {
             return Err(AppError::Invalid(format!(
                 "Escolha de 1 a {MAX_COUNT} questões."
             )));
@@ -373,18 +375,27 @@ impl DraftCheck {
     }
 }
 
+/// Executables and clocks supplied by the command for a generation or retry.
+pub struct GenerationRuntime<'a> {
+    pub clis: &'a ResolvedClis,
+    pub now: &'a dyn Fn() -> String,
+    pub monotonic_time: &'a dyn Fn() -> Duration,
+}
+
 /// Runs the generator and saves the result as a draft. Blocking: call from a worker thread.
 ///
 /// The database is only locked briefly before and after the run, never during it.
 pub fn generate_draft(
     db: &Database,
     secrets: &Secrets,
+    runtime: &GenerationRuntime<'_>,
     mut request: GenerateRequest,
     cancel: &CancelToken,
     on_progress: &mut dyn FnMut(Progress),
 ) -> AppResult<Draft> {
     request.validate()?;
     let (settings, stems) = db.with(|conn| {
+        request.topic = crate::bank::catalog::topic_choices(conn, &request.topic)?.path;
         Ok((
             settings::load(conn, secrets)?,
             topic_stems(conn, &request.topic)?,
@@ -404,28 +415,31 @@ pub fn generate_draft(
         .resolve(Role::BlindCheck, request.checker.as_ref())
         .clone();
 
-    let mut spec = settings::job_spec(
-        &settings,
-        secrets,
-        &generator,
-        package_json_schema(),
-        Sources {
+    let task = Task {
+        schema: package_json_schema(),
+        sources: Sources {
             remnote: request.sources.remnote,
             web: request.sources.web,
         },
+        instructions: prompts::generate_instructions(),
+        prompt: prompts::generate_prompt(&request, &stems),
+        attachments: request
+            .sources
+            .attachments
+            .iter()
+            .map(PathBuf::from)
+            .collect(),
+    };
+    let started_at = (runtime.now)();
+    let (package, output) = ask::<Package>(
+        &settings,
+        secrets,
+        runtime.clis,
+        &generator,
+        task,
+        cancel,
+        on_progress,
     )?;
-    spec.instructions = prompts::generate_instructions();
-    spec.prompt = prompts::generate_prompt(&request, &stems);
-    spec.attachments = request
-        .sources
-        .attachments
-        .iter()
-        .map(PathBuf::from)
-        .collect();
-
-    let started_at = crate::clock::now();
-    let output = run_job(&spec, cancel, on_progress)?;
-    let package: Package = output.parse()?;
     if package.questions.len() != request.count as usize {
         return Err(AppError::Invalid(format!(
             "A IA devolveu {} questões, mas você pediu {}. Tente de novo.",
@@ -436,7 +450,7 @@ pub fn generate_draft(
 
     let draft = Draft {
         id: ids::generate::<DraftId>(&mut rand::rng()),
-        created_at: crate::clock::now(),
+        created_at: (runtime.now)(),
         status: DraftStatus::Review,
         request: DraftRequest {
             request: request.for_storage(),

@@ -1,6 +1,7 @@
-import { For, Show, createResource, createSignal } from "solid-js";
+import { For, Show, createEffect, createResource, createSignal, onCleanup } from "solid-js";
 import { api } from "../api";
 import type { LearningItem } from "../bindings/LearningItem";
+import type { ScheduledReview } from "../bindings/ScheduledReview";
 import type { SessionSource } from "../bindings/SessionSource";
 import { EmptyState, Loading, ResourceView } from "../components/states";
 import { formatDate, formatNumber } from "../format";
@@ -13,12 +14,16 @@ const topicLabel = (item: LearningItem) =>
     : item.topics.map((t) => `${t.area} › ${t.matter} › ${t.topic}`).join("; ");
 
 /** "Vence hoje", "Venceu em 12/11/2026" or "Próxima revisão em 25/11/2026". */
-function dueText(dueAt: string, now: number) {
-  const due = new Date(dueAt);
-  if (due.toDateString() === new Date(now).toDateString()) return "Vence hoje";
-  return due.getTime() > now
-    ? `Próxima revisão em ${formatDate(dueAt)}`
-    : `Venceu em ${formatDate(dueAt)}`;
+function dueText(review: ScheduledReview | null) {
+  if (!review) return "Sem revisão agendada";
+  switch (review.state) {
+    case "today":
+      return "Vence hoje";
+    case "upcoming":
+      return `Próxima revisão em ${formatDate(review.at)}`;
+    case "overdue":
+      return `Venceu em ${formatDate(review.at)}`;
+  }
 }
 
 /**
@@ -36,7 +41,13 @@ export default function Learning() {
   const [practice, setPractice] = createSignal<{ title: string; source: SessionSource } | null>(
     null,
   );
-  const now = () => Date.now();
+  createEffect(() => {
+    if (overview.error || overview.loading) return;
+    const at = overview()?.refreshAt;
+    if (!at) return;
+    const timer = setTimeout(() => void refetch(), Math.max(0, Date.parse(at) - Date.now()));
+    onCleanup(() => clearTimeout(timer));
+  });
 
   return (
     <section class="page">
@@ -125,7 +136,7 @@ export default function Learning() {
                     <li>
                       <span class="learning-topic">{topicLabel(item)}</span>
                       <span class="muted">
-                        {item.dueAt ? dueText(item.dueAt, now()) : "Sem revisão agendada"}
+                        {dueText(item.review)}
                         <Show when={item.isError}>
                           {" "}
                           · <span class="badge">Erro</span>

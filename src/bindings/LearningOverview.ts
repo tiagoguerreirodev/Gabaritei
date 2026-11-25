@@ -32,4 +32,8 @@ practiceErrors: number,
 /**
  * Due reviews first (most overdue first), then upcoming ones, then errors with no review.
  */
-items: Array<LearningItem>, };
+items: Array<LearningItem>, 
+/**
+ * The next instant at which a count or a local calendar label can change.
+ */
+refreshAt: string | null, };

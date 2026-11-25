@@ -6,6 +6,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { Catalog } from "../bindings/Catalog";
 import type { GenerateRequest } from "../bindings/GenerateRequest";
+import type { RoleChange } from "../bindings/RoleChange";
+import type { RoleConfig } from "../bindings/RoleConfig";
+import type { RoleOptions } from "../bindings/RoleOptions";
 import type { GenerationStatus } from "../bindings/GenerationStatus";
 import GenerationBanner from "../components/GenerationBanner";
 import { Toaster } from "../components/toasts";
@@ -25,11 +28,20 @@ const settings: AiSettings = {
   remnote: { mode: "server", url: "https://r.example/mcp", tools: ["search"] },
   hasRemnoteToken: true,
 };
+const steps: GenerationStatus["stages"] = [
+  { id: "generating", label: "Gerando as questões" },
+  { id: "checking", label: "Conferindo às cegas" },
+  { id: "resolving", label: "Resolvendo as contestações" },
+];
+const checkSteps = steps.slice(1);
 const idle: GenerationStatus = {
   running: false,
   startedAt: null,
   kind: null,
   stage: "preparing",
+  stages: [],
+  canCancel: false,
+  cancelDiscardsDraft: false,
   progress: null,
   outcome: null,
   outcomeKind: null,
@@ -75,12 +87,26 @@ function backend(
   status: GenerationStatus = idle,
   aiSettings: AiSettings = settings,
   catalog?: Catalog,
+  counts = { min: 1, max: 30, initial: 10 },
 ) {
   const calls: { command: string; args: Record<string, unknown> }[] = [];
   mockIPC((command, raw) => {
     const args = (raw ?? {}) as Record<string, unknown>;
     calls.push({ command, args });
     switch (command) {
+      case "question_count_limits":
+        return counts;
+      case "topic_choices": {
+        const path = args.path as { area: string; matter: string; topic: string };
+        const match = ["Controle de constitucionalidade", "CONTROLE"].includes(path.topic);
+        return {
+          path,
+          matters: ["Constitucional"],
+          topics: ["Controle de constitucionalidade"],
+          questions: match ? 5 : null,
+          isNew: Boolean(path.area && path.matter && path.topic && !match),
+        };
+      }
       case "topics_tree":
         return tree;
       case "ai_catalog":
@@ -88,6 +114,24 @@ function backend(
         return catalog;
       case "ai_settings":
         return aiSettings;
+      case "ai_role_options": {
+        const config = args.config as RoleConfig;
+        const options: RoleOptions = {
+          efforts: ["high", "xhigh"],
+          showFast: true,
+          problem:
+            config.model === "antigo"
+              ? "O modelo “antigo” não está mais disponível. Escolha outro."
+              : null,
+        };
+        return options;
+      }
+      case "ai_change_role": {
+        const change = args.change as RoleChange;
+        return change.kind === "agent" && change.agent === "claude"
+          ? { ...role, agent: "claude", model: "" }
+          : role;
+      }
       case "generation_status":
         return status;
       case "generation_start":
@@ -205,6 +249,16 @@ describe("Gerar", () => {
     expect(request.checker?.fast).toBe(false);
   });
 
+  it("uses the count limits supplied by the backend", async () => {
+    backend(idle, settings, undefined, { min: 2, max: 7, initial: 4 });
+    renderPage();
+    const count = await screen.findByLabelText("Quantidade");
+    expect(count).toHaveValue(4);
+    expect(count).toHaveAttribute("min", "2");
+    expect(count).toHaveAttribute("max", "7");
+    expect(screen.getByText(/De 2 a 7/)).toBeVisible();
+  });
+
   it("notes whether the topic is new or already has questions", async () => {
     backend();
     const user = userEvent.setup();
@@ -213,6 +267,18 @@ describe("Gerar", () => {
     expect(await screen.findByText(/Já existem 5 questões neste assunto/)).toBeVisible();
     await user.type(screen.getByLabelText("Assunto"), " novo");
     expect(await screen.findByText(/Assunto novo: será criado/)).toBeVisible();
+  });
+
+  it("renders an existing topic even when the returned name differs from the typed path", async () => {
+    backend();
+    const user = userEvent.setup();
+    renderPage();
+    await fillTopic(user);
+    const topic = screen.getByLabelText("Assunto");
+    await user.clear(topic);
+    await user.type(topic, "CONTROLE");
+    expect(await screen.findByText(/Já existem 5 questões/)).toBeVisible();
+    expect(screen.queryByText(/Assunto novo:/)).toBeNull();
   });
 
   it("lets the web be combined with attachments and RemNote", async () => {
@@ -252,6 +318,9 @@ describe("Gerar", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "preparing",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "reading", label: "Lendo as fontes…" },
       outcome: null,
       outcomeKind: null,
@@ -271,6 +340,9 @@ describe("Gerar", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "resolving",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: true,
       progress: { kind: "thinking", label: "Resolvendo as contestações…" },
       outcome: null,
       outcomeKind: null,
@@ -330,6 +402,9 @@ describe("Gerar", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "generating",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
       outcomeKind: null,
@@ -404,11 +479,7 @@ describe("Gerar", () => {
 
   it("links to the finished package and lets the user dismiss the result", async () => {
     const calls = backend({
-      running: false,
-      startedAt: null,
-      kind: null,
-      stage: "preparing",
-      progress: null,
+      ...idle,
       outcome: { kind: "draft", draftId: "d7" },
       outcomeKind: null,
     });
@@ -420,11 +491,7 @@ describe("Gerar", () => {
 
   it("shows why a generation failed", async () => {
     backend({
-      running: false,
-      startedAt: null,
-      kind: null,
-      stage: "preparing",
-      progress: null,
+      ...idle,
       outcome: { kind: "failed", message: "A IA devolveu 2 questões, mas você pediu 3." },
       outcomeKind: null,
     });
@@ -443,6 +510,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "checking",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: true,
       progress: { kind: "thinking", label: "Conferindo às cegas…" },
       outcome: null,
       outcomeKind: null,
@@ -457,12 +527,29 @@ describe("Aviso de geração", () => {
     expect(screen.getByRole("button", { name: "Cancelar" })).toBeVisible();
   });
 
+  it("renders stage labels and cancellation availability from the backend", async () => {
+    backend({
+      ...idle,
+      running: true,
+      kind: "recheck",
+      stage: "checking",
+      stages: [{ id: "checking", label: "Conferindo este pacote" }],
+    });
+    renderPage("/outra");
+
+    expect(await screen.findByText(/Etapa 1 de 1: Conferindo este pacote/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Cancelar" })).not.toBeInTheDocument();
+  });
+
   it("keeps the announced text to the stage, not the per-tool label", async () => {
     backend({
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "generating",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
       outcomeKind: null,
@@ -474,6 +561,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "generating",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "reading", label: "Lendo a fonte 3…" },
       outcome: null,
       outcomeKind: null,
@@ -490,6 +580,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "generating",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
       outcomeKind: null,
@@ -501,26 +594,20 @@ describe("Aviso de geração", () => {
   });
 
   it("keeps Cancelar in the banner while the Gerar page is loading or failed", async () => {
-    backend({
+    const running: GenerationStatus = {
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "generating",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
       outcomeKind: null,
-    });
+    };
     mockIPC((command) => {
-      if (command === "generation_status")
-        return {
-          running: true,
-          startedAt: "2026-11-20T10:00:00.000Z",
-          kind: "generate",
-          stage: "generating",
-          progress: { kind: "started", label: "Gerando as questões…" },
-          outcome: null,
-          outcomeKind: null,
-        };
+      if (command === "generation_status") return running;
       if (command === "draft_waiting" || command === "drafts_waiting") return [];
       throw new Error("sem acesso");
     });
@@ -535,6 +622,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "generating",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
       outcomeKind: null,
@@ -552,6 +642,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "generating",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
       outcomeKind: null,
@@ -564,6 +657,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "checking",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: true,
       progress: { kind: "thinking", label: "Conferindo às cegas…" },
       outcome: null,
       outcomeKind: null,
@@ -586,6 +682,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "recheck",
       stage: "checking",
+      stages: checkSteps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Conferindo às cegas…" },
       outcome: null,
       outcomeKind: null,
@@ -608,6 +707,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "recheck",
       stage: "checking",
+      stages: checkSteps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: null,
       outcome: null,
       outcomeKind: null,
@@ -623,6 +725,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "recheck",
       stage: "checking",
+      stages: checkSteps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Conferindo às cegas…" },
       outcome: null,
       outcomeKind: null,
@@ -648,7 +753,7 @@ describe("Aviso de geração", () => {
 
     // Claude offers no list: free text, and the Codex model name is not carried over.
     await user.selectOptions(generator.getByLabelText("Agente: Gerador"), "claude");
-    expect(generator.getByRole("textbox", { name: "Modelo: Gerador" })).toHaveValue("");
+    expect(await generator.findByRole("textbox", { name: "Modelo: Gerador" })).toHaveValue("");
 
     await user.selectOptions(generator.getByLabelText("Agente: Gerador"), "codex");
     expect(await generator.findByRole("combobox", { name: "Modelo: Gerador" })).toHaveValue(

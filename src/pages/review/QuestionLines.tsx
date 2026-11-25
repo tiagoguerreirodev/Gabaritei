@@ -1,8 +1,9 @@
 import { For, Show, createSignal } from "solid-js";
+import type { DraftSummary } from "../../bindings/DraftSummary";
 import type { LineState } from "../../bindings/LineState";
 import RichText from "../../components/RichText";
 import { formatNumber, optionLetters } from "../../format";
-import type { DraftSummary } from "../../bindings/DraftSummary";
+import { VerdictSentence } from "./VerdictCounts";
 
 const lineText: Record<LineState, string> = {
   agreed: "conferida",
@@ -13,7 +14,6 @@ const lineText: Record<LineState, string> = {
 
 export default function QuestionLines(props: { summary: DraftSummary }) {
   const s = () => props.summary;
-  const checking = () => s().checking;
   const [onlyFlagged, setOnlyFlagged] = createSignal(false);
   const [expanded, setExpanded] = createSignal<ReadonlySet<number>>(new Set());
   const flagged = () => s().lines.filter((line) => line.content !== null);
@@ -28,23 +28,12 @@ export default function QuestionLines(props: { summary: DraftSummary }) {
       else next.delete(position);
       return next;
     });
-  const visibleLines = () =>
-    onlyFlagged() ? s().lines.filter((line) => line.content !== null) : s().lines;
+  const visibleLines = () => (onlyFlagged() ? flagged() : s().lines);
 
   return (
     <section class="card wide" aria-labelledby="checks-title">
       <h2 id="checks-title">Conferência às cegas</h2>
-      <Show
-        when={!checking()}
-        fallback={<p>Conferência em andamento. Os resultados aparecem quando ela terminar.</p>}
-      >
-        <p>
-          {formatNumber(s().agreed)} conferidas
-          {s().fixed > 0 ? `, ${formatNumber(s().fixed)} corrigidas e conferidas` : ""}
-          {s().disputed > 0 ? `, ${formatNumber(s().disputed)} contestadas` : ""}
-          {s().unchecked > 0 ? `, ${formatNumber(s().unchecked)} sem conferência` : ""}.
-        </p>
-      </Show>
+      <VerdictSentence summary={s()} />
       <Show when={flagged().length > 0}>
         <div class="curate-toolbar">
           <label>

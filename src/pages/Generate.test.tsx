@@ -197,7 +197,7 @@ describe("Gerar", () => {
     expect(checker.getByLabelText("Esforço: Conferente")).toHaveValue("high");
   });
 
-  it("starts a generation with what the form says", async () => {
+  async function submitConfiguredForm() {
     const calls = backend();
     const user = userEvent.setup();
     renderPage();
@@ -215,8 +215,11 @@ describe("Gerar", () => {
       expect(call).toBeDefined();
       return call!;
     });
-    const request = start.args.request as GenerateRequest;
-    expect(request).toMatchObject({
+    return start.args.request as GenerateRequest;
+  }
+
+  it("submits the selected topic and generation options", async () => {
+    expect(await submitConfiguredForm()).toMatchObject({
       topic: {
         area: "Direito",
         matter: "Constitucional",
@@ -227,6 +230,11 @@ describe("Gerar", () => {
       format: "boolean",
       instructions: "Foque em jurisprudência",
       sources: { remnote: false, web: false, attachments: [] },
+    });
+  });
+
+  it("submits the configured generator and per-run checker override", async () => {
+    expect(await submitConfiguredForm()).toMatchObject({
       generator: { agent: "codex", model: "gpt-6.2-sol", effort: "xhigh", fast: false },
       checker: { agent: "codex", model: "gpt-6.2-sol-x", effort: "high", fast: false },
     });
@@ -431,11 +439,16 @@ describe("Gerar", () => {
     expect(screen.getByLabelText("Estilo da banca")).toBeVisible();
   });
 
-  it("explains in text what is missing, links it to the fields and focuses the first one", async () => {
+  async function submitEmptyForm() {
     const calls = backend();
     const user = userEvent.setup();
     renderPage();
     await user.click(await screen.findByRole("button", { name: "Gerar" }));
+    return { user, calls };
+  }
+
+  it("links the missing topic error to the first invalid field", async () => {
+    const { calls } = await submitEmptyForm();
     const message = await screen.findByText("Informe a área, a matéria e o assunto.");
     expect(message).toBeVisible();
     // Only the summary is an alert; the per-field text is not.
@@ -446,11 +459,17 @@ describe("Gerar", () => {
       "Informe a área, a matéria e o assunto.",
     );
     expect(calls.some((c) => c.command === "generation_start")).toBe(false);
+  });
 
+  it("keeps the topic error while typing between validation events", async () => {
+    const { user } = await submitEmptyForm();
     // Typing does not make the message flicker; it is re-checked on submit or blur.
     await user.type(screen.getByLabelText("Área"), "Direito");
     expect(screen.getByText("Informe a área, a matéria e o assunto.")).toBeVisible();
+  });
 
+  it("moves focus to the empty count after a valid topic", async () => {
+    const { user, calls } = await submitEmptyForm();
     await fillTopic(user);
     await user.clear(screen.getByLabelText("Quantidade"));
     await user.click(screen.getByRole("button", { name: "Gerar" }));

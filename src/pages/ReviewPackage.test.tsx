@@ -111,29 +111,47 @@ beforeEach(() => {
 });
 
 describe("Revisar pacote", () => {
-  it("shows counts and one line per question, with content only for the flagged one", async () => {
+  async function openSummary() {
     backend();
     renderAt("/revisar-pacote?id=d1");
 
     await screen.findByRole("heading", { name: /Direito › Constitucional/ });
+  }
+
+  it("shows the package format and duplicate counts", async () => {
+    await openSummary();
     expect(screen.getByText(/4 questões, 3 de múltipla escolha, 1 Certo\/Errado/)).toBeVisible();
+    expect(screen.getByText(/1 já existem no banco/)).toBeVisible();
+  });
+
+  it("lists each question with its blind-check verdict", async () => {
+    await openSummary();
     const lines = within(screen.getByRole("list", { name: "Questões do pacote" }));
     expect(lines.getByText("Q1 · conferida")).toBeVisible();
     expect(lines.getByText("Q2 · contestada")).toBeVisible();
     expect(lines.getByText("Q3 · corrigida e conferida")).toBeVisible();
-    expect(screen.getByText(/1 já existem no banco/)).toBeVisible();
+    expect(lines.getByText("Q4 · conferida")).toBeVisible();
+  });
 
+  it("shows the stem and options only for a flagged question", async () => {
+    await openSummary();
     // The flagged question shows its stem and options, and only it.
     expect(screen.getByText("Enunciado da questão contestada?")).toBeInTheDocument();
     expect(screen.getByText("Alternativa dois")).toBeInTheDocument();
     expect(screen.getByText("B")).toBeInTheDocument();
     expect(document.querySelectorAll("details")).toHaveLength(1);
+  });
 
-    // No key, explanation or reference is rendered, and nothing can be answered here.
+  it("keeps answer keys, explanations and references off the preview", async () => {
+    await openSummary();
     const text = document.body.textContent ?? "";
     for (const secret of ["Gabarito", "Explicação", "Referências", "answerId"]) {
       expect(text).not.toContain(secret);
     }
+  });
+
+  it("does not let the user answer a question in the preview", async () => {
+    await openSummary();
     expect(document.querySelector("textarea, [role=radio], [role=radiogroup]")).toBeNull();
     const inputs = [...document.querySelectorAll("input")];
     expect(inputs).toHaveLength(1);
@@ -221,6 +239,14 @@ describe("Revisar pacote", () => {
     expect(headings[0]).toBe("Resumo da conferência");
   });
 
+  it("includes the verdict counts above the question lines", async () => {
+    await openSummary();
+    const checks = within(screen.getByRole("region", { name: "Conferência às cegas" }));
+    expect(
+      checks.getByText("2 conferidas, 1 corrigidas e conferidas, 1 contestadas."),
+    ).toBeVisible();
+  });
+
   describe("curating flagged questions", () => {
     const flaggedLine = (position: number, stem: string) => ({
       position,
@@ -263,23 +289,36 @@ describe("Revisar pacote", () => {
       expect(lines.getByText("Q1 · conferida")).toBeVisible();
     });
 
-    it("expands and collapses every flagged line, never showing key or explanation", async () => {
+    async function openFlaggedSummary() {
       backend(two);
       const user = userEvent.setup();
       renderAt("/revisar-pacote?id=d1");
       await screen.findByText("Q2 · contestada");
-      const open = () => document.querySelectorAll("details[open]").length;
-      expect(open()).toBe(0);
+      return user;
+    }
 
+    it("opens every flagged question when asked to expand all", async () => {
+      const user = await openFlaggedSummary();
+      expect(document.querySelectorAll("details[open]")).toHaveLength(0);
       await user.click(screen.getByRole("button", { name: "Expandir todas" }));
-      expect(open()).toBe(2);
+      expect(document.querySelectorAll("details[open]")).toHaveLength(2);
       expect(screen.getByText("Opção A de Segundo enunciado")).toBeVisible();
+    });
+
+    it("closes every flagged question when asked to collapse all", async () => {
+      const user = await openFlaggedSummary();
+      await user.click(screen.getByRole("button", { name: "Expandir todas" }));
+      await user.click(screen.getByRole("button", { name: "Recolher todas" }));
+      expect(document.querySelectorAll("details[open]")).toHaveLength(0);
+    });
+
+    it("keeps keys and explanations hidden even when all flagged lines are open", async () => {
+      const user = await openFlaggedSummary();
+      await user.click(screen.getByRole("button", { name: "Expandir todas" }));
+      expect(document.querySelectorAll("details[open]")).toHaveLength(2);
       for (const secret of ["Gabarito", "Explicação", "Referências", "answerId"]) {
         expect(document.body.textContent ?? "").not.toContain(secret);
       }
-
-      await user.click(screen.getByRole("button", { name: "Recolher todas" }));
-      expect(open()).toBe(0);
     });
 
     it("hides the toolbar when nothing is flagged", async () => {
@@ -377,12 +416,21 @@ describe("Revisar pacote", () => {
     expect(screen.queryByText(/0 conferidas/)).not.toBeInTheDocument();
   });
 
-  it("calls one command to check and import the whole package", async () => {
+  async function checkThenImport() {
     const calls = backend({ ...summary, needsCheck: true });
     const user = userEvent.setup();
     renderAt("/revisar-pacote?id=d1");
     await user.click(await screen.findByRole("button", { name: "Conferir e importar tudo" }));
+    return calls;
+  }
 
+  it("opens the bank when the checked package has been imported", async () => {
+    await checkThenImport();
+    expect(await screen.findByRole("heading", { name: "Banco" })).toBeVisible();
+  });
+
+  it("submits one check-and-import request without polling", async () => {
+    const calls = await checkThenImport();
     await screen.findByRole("heading", { name: "Banco" });
     expect(calls.filter((c) => c.command === "draft_import_all").map((c) => c.args)).toEqual([
       { id: "d1" },

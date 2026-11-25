@@ -190,6 +190,7 @@ describe("BackupSection", () => {
 
     await user.click(await screen.findByRole("button", { name: "Escolher pasta…" }));
     expect(await screen.findByTestId("backup-folder")).toHaveTextContent("/outra");
+    expect(screen.getByRole("button", { name: "Usar a pasta padrão" })).toBeVisible();
   });
 
   it("uses the default folder when requested", async () => {

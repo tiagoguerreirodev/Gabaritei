@@ -22,7 +22,7 @@ export default function CountField(props: {
         aria-describedby={props.error ? "gen-count-hint gen-count-error" : "gen-count-hint"}
         value={props.value}
         onInput={(event) => props.onInput(Number(event.currentTarget.value))}
-        onBlur={props.onBlur}
+        onBlur={() => props.onBlur()}
       />
       <p class="hint muted" id="gen-count-hint">
         Obrigatório. De {props.counts.min} a {props.counts.max}. Cada questão passa pela conferência

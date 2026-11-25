@@ -6,10 +6,22 @@ use crate::sync::lock;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
+
+use super::invalid;
 use super::recheck::Proposal;
+use super::roles::{Role, RoleConfig};
 use super::runner::CancelToken;
-use crate::error::{AppError, AppResult};
-use crate::ids::QuestionId;
+use super::secrets::Secrets;
+use super::settings::{self, ResolvedClis, Sources};
+use super::task::{Task, ask, schema_of};
+use crate::attempts;
+use crate::bank::question::{MAX_REF, MAX_REFS, Question};
+use crate::bank::store::load_question;
+use crate::db::Database;
+use crate::error::AppResult;
+use crate::ids::{AttemptId, QuestionId};
 
 #[derive(Default)]
 pub struct OnDemand {
@@ -24,8 +36,8 @@ impl OnDemand {
         {
             let mut current = lock(&self.current);
             if current.is_some() {
-                return Err(AppError::Invalid(
-                    "Já há uma consulta à IA em andamento. Espere ou cancele.".into(),
+                return Err(invalid(
+                    "Já há uma consulta à IA em andamento. Espere ou cancele.",
                 ));
             }
             *current = Some(token.clone());
@@ -59,14 +71,89 @@ impl OnDemand {
             .is_some()
     }
 
-    pub fn keep(&self, question_id: QuestionId, proposal: Proposal) {
+    pub(super) fn keep(&self, question_id: QuestionId, proposal: Proposal) {
         lock(&self.proposals).insert(question_id, proposal);
     }
 
     /// Takes the proposal for a question, if the AI produced one that is still waiting.
-    pub fn take(&self, question_id: &QuestionId) -> Option<Proposal> {
+    pub(super) fn take(&self, question_id: &QuestionId) -> Option<Proposal> {
         lock(&self.proposals).remove(question_id)
     }
+}
+
+pub(super) struct RevealedTask<'a, Prompt> {
+    pub attempt_id: &'a AttemptId,
+    pub position: u32,
+    pub role: Role,
+    pub instructions: String,
+    pub prompt: Prompt,
+}
+
+pub(super) struct RevealedAnswer<T> {
+    pub question: Question,
+    pub role: RoleConfig,
+    pub answer: T,
+}
+
+/// Loads the question only after the attempt permits its reveal, then runs the configured role.
+pub(super) fn ask_about_revealed<T: DeserializeOwned + JsonSchema>(
+    db: &Database,
+    secrets: &Secrets,
+    clis: &ResolvedClis,
+    task: RevealedTask<'_, impl FnOnce(&Question) -> AppResult<String>>,
+    cancel: &CancelToken,
+) -> AppResult<RevealedAnswer<T>> {
+    let (settings, question) = db.with(|conn| {
+        let id = attempts::revealed_question(conn, task.attempt_id, task.position)?;
+        let question =
+            load_question(conn, &id)?.ok_or_else(|| invalid("Questão não encontrada."))?;
+        Ok((settings::load(conn, secrets)?, question))
+    })?;
+    let role = settings.roles.get(task.role).clone();
+    let (answer, _) = ask(
+        &settings,
+        secrets,
+        clis,
+        &role,
+        Task {
+            schema: schema_of::<T>(),
+            sources: Sources {
+                remnote: false,
+                web: true,
+            },
+            instructions: task.instructions,
+            prompt: (task.prompt)(&question)?,
+            attachments: Vec::new(),
+        },
+        cancel,
+        &mut |_| {},
+    )?;
+    Ok(RevealedAnswer {
+        question,
+        role,
+        answer,
+    })
+}
+
+pub(super) enum SourceError {
+    TooMany,
+    InvalidReference,
+}
+
+pub(super) fn validate_sources(sources: Vec<String>) -> Result<Vec<String>, SourceError> {
+    if sources.len() > MAX_REFS {
+        return Err(SourceError::TooMany);
+    }
+    sources
+        .into_iter()
+        .map(|reference| {
+            let trimmed = reference.trim();
+            if trimmed.is_empty() || reference.chars().count() > MAX_REF {
+                return Err(SourceError::InvalidReference);
+            }
+            Ok(trimmed.to_owned())
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 use super::*;
-use crate::ai::blind_check::{BlindCheck, Confidence, Verdict, pending_record};
+use crate::ai::blind_check::{self, BlindCheck, Confidence, Verdict, pending_record};
 use crate::ai::draft::{DraftRequest, GenerationInfo};
 use crate::ai::generate::{GenerateRequest, GenerateSources};
 use crate::ai::roles::RoleSettings;
@@ -64,14 +64,9 @@ fn draft_of(id: &str, questions: Vec<Value>, verdicts: Option<Vec<Verdict>>) -> 
         },
         package: Package::parse(&json!({ "questions": questions, "notes": [] }).to_string())
             .unwrap(),
-        blind_check: verdicts.map(|verdicts| {
-            serde_json::to_value(BlindCheck {
-                verdicts,
-                failed: None,
-                info: None,
-                pending: false,
-            })
-            .unwrap()
+        blind_check: verdicts.map(|verdicts| BlindCheck::Done {
+            verdicts,
+            info: None,
         }),
     }
 }

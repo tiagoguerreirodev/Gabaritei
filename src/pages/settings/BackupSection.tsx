@@ -12,12 +12,9 @@ import { InlineError, ResourceView } from "../../components/states";
 import { showToast } from "../../components/toasts";
 import type { ActionRunner } from "../../actions";
 import { openFolder } from "./openFolder";
+import LeftBehindNotice from "./LeftBehindNotice";
 
 /** Backups of the study data: the folder, a backup now, and restore. */
-function availableOffer(offer: LeftBehind) {
-  return offer.state === "available" ? offer : undefined;
-}
-
 export default function BackupSection(props: {
   /** Shared with the data-file section, so only one action runs at a time. */
   busy: ActionRunner;
@@ -129,69 +126,19 @@ export default function BackupSection(props: {
       </p>
       <Show when={leftBehind()}>
         {(left) => (
-          <div class="notice" role="status" data-testid="left-behind">
-            <Show
-              when={availableOffer(left())}
-              fallback={
-                <p>
-                  A pasta anterior (<code>{left().folder}</code>) tinha backups que ficaram para
-                  trás, mas não está acessível agora (um disco desconectado ou uma pasta de rede
-                  fora do ar, por exemplo). Se ela voltar, a oferta de copiar ou mover aparece de
-                  novo aqui. Se não for mais voltar, dispense o aviso.
-                </p>
-              }
-            >
-              {(offer) => (
-                <>
-                  <p>
-                    A pasta anterior (<code>{offer().folder}</code>) ainda tem{" "}
-                    {offer().backups === 1
-                      ? "1 backup, que não aparece mais aqui."
-                      : `${offer().backups} backups, que não aparecem mais aqui.`}
-                    <Show when={offer().safety > 0}>
-                      {" "}
-                      {offer().backups === 1
-                        ? "Ele é uma cópia feita antes de restaurar ou importar"
-                        : offer().safety === 1
-                          ? "Um deles é uma cópia feita antes de restaurar ou importar"
-                          : `${offer().safety} deles são cópias feitas antes de restaurar ou importar`}
-                      ; para voltar atrás, volte para aquela pasta.
-                    </Show>{" "}
-                    <Show
-                      when={relocated()}
-                      fallback="Nada foi movido nem apagado. Se quiser, leve os backups para a pasta nova: cada cópia é conferida antes de qualquer original ser apagado. Os backups do outro computador, se houver, ficam onde estão."
-                    >
-                      O que não foi movido continua na pasta anterior. Você pode tentar de novo. Os
-                      backups levados passam a contar no limite da pasta nova (7 diários, 7 manuais
-                      e 5 de antes de restaurar).
-                    </Show>
-                  </p>
-                  <button type="button" disabled={busy.active()} onClick={() => void copyBackups()}>
-                    Copiar para a pasta nova
-                  </button>{" "}
-                  <button
-                    type="button"
-                    disabled={busy.active()}
-                    onClick={() => setConfirmingMove(true)}
-                  >
-                    Mover para a pasta nova
-                  </button>{" "}
-                </>
-              )}
-            </Show>
-            <button
-              type="button"
-              disabled={busy.active()}
-              onClick={() =>
-                void run(async () => {
-                  await api.backupForgetLeftBehind();
-                  setLeftBehind(null);
-                })
-              }
-            >
-              Entendi
-            </button>
-          </div>
+          <LeftBehindNotice
+            offer={left()}
+            relocated={relocated()}
+            busy={busy.active()}
+            onCopy={() => void copyBackups()}
+            onMove={() => setConfirmingMove(true)}
+            onDismiss={() =>
+              void run(async () => {
+                await api.backupForgetLeftBehind();
+                setLeftBehind(null);
+              })
+            }
+          />
         )}
       </Show>
       <ResourceView

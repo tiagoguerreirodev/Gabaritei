@@ -114,8 +114,6 @@ pub struct BackupInfo {
 pub struct BackupStatus {
     pub folder: String,
     pub is_default_folder: bool,
-    /// Newest first.
-    pub backups: Vec<BackupInfo>,
     /// pt-BR reason the last automatic or manual backup failed, until one succeeds.
     pub last_error: Option<String>,
     /// Set while the old folder still holds this computer's backups after a folder change. It is
@@ -123,9 +121,20 @@ pub struct BackupStatus {
     /// failures keeps it), the user dismisses it, the folder is changed again, or the old folder
     /// holds none of this computer's backups.
     pub left_behind: Option<LeftBehind>,
-    /// The backup folder did not answer in time (a disconnected drive, a share that is offline),
-    /// so `backups` is empty because it could not be read, not because there are none.
-    pub folder_unavailable: bool,
+    pub listing: BackupListing,
+}
+
+/// Whether the Dados page can show the backup list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(tag = "state", rename_all = "camelCase")]
+#[ts(export)]
+pub enum BackupListing {
+    /// Backups, newest first.
+    Ready { backups: Vec<BackupInfo> },
+    /// The folder answered, but its manifests are still taking too long to read.
+    Slow,
+    /// The folder could not be opened or did not answer in time.
+    FolderUnavailable,
 }
 
 /// How long reading the manifests of a healthy backup folder may take: a cloud-synced folder may
@@ -545,12 +554,13 @@ pub fn set_folder(conn: &Connection, paths: &AppPaths, chosen: Option<&Path>) ->
 }
 
 /// Backups in `folder`, newest first. Folders that aren't complete backups are ignored.
+#[cfg(test)]
 pub fn list(folder: &Path) -> Vec<BackupInfo> {
     try_list(folder).unwrap_or_default()
 }
 
-/// Like [`list`], but `None` when the folder can't be read at all (a drive that is unplugged, a
-/// share that is offline), which is not the same as a folder with no backups.
+/// Backups in `folder`, newest first, ignoring incomplete backups. Returns `None` if the
+/// directory cannot be opened.
 fn try_list(folder: &Path) -> Option<Vec<BackupInfo>> {
     let entries = fs::read_dir(folder).ok()?;
     let mut found: Vec<BackupInfo> = entries
@@ -575,7 +585,7 @@ fn try_list(folder: &Path) -> Option<Vec<BackupInfo>> {
 
 /// What a folder holds, read from the folder names alone (no manifest is opened), or `None`
 /// when the folder can't be read at all. Cheap enough for [`BackupService::status`], which runs
-/// often and may point at a network share or a drive that is asleep. Unlike [`list`] it also
+/// often and may point at a network share or a drive that is asleep. Unlike [`try_list`] it also
 /// counts a folder whose manifest is unreadable. The move works from the same names, so such a
 /// backup is reported as failed (its copy can't be verified) and keeps the offer open.
 fn try_list_names(folder: &Path) -> Option<Vec<ParsedName>> {
@@ -942,34 +952,38 @@ impl BackupService {
         })?;
         let left_behind =
             pending_old_folder(db, &self.probe, &folder)?.map(|(_, notice, _)| notice);
-        // Bounded like the old folder: a hung or missing current folder shows as unavailable
-        // instead of freezing the page (and `change_folder` calls this under the backup lock).
-        // First a quick look, then the manifests with a longer deadline.
-        let listed = {
-            let path = folder.clone();
-            match self.probe.run(&folder, move || folder_state(&path)) {
-                Some(FolderState::Present) => {
-                    let path = folder.clone();
-                    // Under its own key: a slow (healthy) read of many manifests must not hold
-                    // the folder's slot, or the quick checks of a backup, restore or import
-                    // would give up waiting behind it.
-                    self.probe
-                        .run_for(&manifest_key(&folder), MANIFEST_READ_TIMEOUT, move || {
-                            list(&path)
-                        })
-                }
-                Some(FolderState::Missing) => Some(Vec::new()),
-                Some(FolderState::Unavailable) | None => None,
-            }
-        };
+        let listing = self.listing(&folder);
         Ok(BackupStatus {
-            folder_unavailable: listed.is_none(),
-            backups: listed.unwrap_or_default(),
             folder: folder.display().to_string(),
             is_default_folder,
             last_error: lock(&self.last_error).clone(),
             left_behind,
+            listing,
         })
+    }
+
+    fn listing(&self, folder: &Path) -> BackupListing {
+        let path = folder.to_path_buf();
+        match self.probe.run(folder, move || folder_state(&path)) {
+            Some(FolderState::Present) => {
+                let path = folder.to_path_buf();
+                // Use a separate slot so a slow manifest read cannot hold up the quick checks
+                // for backups, restores or imports.
+                match self
+                    .probe
+                    .run_for(&manifest_key(folder), MANIFEST_READ_TIMEOUT, move || {
+                        try_list(&path)
+                    }) {
+                    Some(Some(backups)) => BackupListing::Ready { backups },
+                    Some(None) => BackupListing::FolderUnavailable,
+                    None => BackupListing::Slow,
+                }
+            }
+            Some(FolderState::Missing) => BackupListing::Ready {
+                backups: Vec::new(),
+            },
+            Some(FolderState::Unavailable) | None => BackupListing::FolderUnavailable,
+        }
     }
 
     /// Forgets the offer to move backups from the old folder. Nothing is moved or deleted.
@@ -1676,7 +1690,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(status.folder, elsewhere.display().to_string());
-        assert!(status.backups.is_empty());
+        assert_eq!(
+            status.listing,
+            BackupListing::Ready {
+                backups: Vec::new()
+            }
+        );
         assert_eq!(
             status.left_behind,
             Some(LeftBehind {
@@ -3114,18 +3133,19 @@ mod tests {
         let f = fixture();
         let service = service_with_long_probe();
         let folder = default_folder(&f.paths);
-        backup(&f, "2026-11-19T10:00:00.000Z");
+        let made = backup(&f, "2026-11-19T10:00:00.000Z");
         let healthy = service.status(&f.db, &f.paths).unwrap();
         assert_eq!(
-            (healthy.backups.len(), healthy.folder_unavailable),
-            (1, false)
+            healthy.listing,
+            BackupListing::Ready {
+                backups: vec![made]
+            }
         );
 
         service.probe.mark_stuck(&folder);
 
         let status = service.status(&f.db, &f.paths).unwrap();
-        assert!(status.folder_unavailable);
-        assert!(status.backups.is_empty(), "unreadable, not empty");
+        assert_eq!(status.listing, BackupListing::FolderUnavailable);
         // Nothing that takes the backup lock waits on the folder: each is refused at once.
         let now = "2026-11-19T12:00:00.000Z";
         let errors = [
@@ -3165,7 +3185,12 @@ mod tests {
         let service = service_with_long_probe();
         // No backup was ever made: the default folder is missing, and that is fine.
         assert!(!default_folder(&f.paths).exists());
-        assert!(!service.status(&f.db, &f.paths).unwrap().folder_unavailable);
+        assert_eq!(
+            service.status(&f.db, &f.paths).unwrap().listing,
+            BackupListing::Ready {
+                backups: Vec::new()
+            }
+        );
         service
             .backup_now(&f.db, &f.paths, "2026-11-19T10:00:00.000Z")
             .unwrap();
@@ -3210,7 +3235,10 @@ mod tests {
         };
         // The parent (the volume) is gone: nothing to create the folder in.
         set(&f._dir.path().join("volume-gone").join("backups"));
-        assert!(service.status(&f.db, &f.paths).unwrap().folder_unavailable);
+        assert_eq!(
+            service.status(&f.db, &f.paths).unwrap().listing,
+            BackupListing::FolderUnavailable
+        );
         assert!(
             service
                 .backup_now(&f.db, &f.paths, "2026-11-19T10:00:00.000Z")
@@ -3219,7 +3247,12 @@ mod tests {
 
         // The parent exists and the folder is only missing: fine, created on first use.
         set(&f._dir.path().join("backups-novos"));
-        assert!(!service.status(&f.db, &f.paths).unwrap().folder_unavailable);
+        assert_eq!(
+            service.status(&f.db, &f.paths).unwrap().listing,
+            BackupListing::Ready {
+                backups: Vec::new()
+            }
+        );
     }
 
     #[test]
@@ -3238,22 +3271,31 @@ mod tests {
     }
 
     #[test]
-    fn status_reads_manifests_under_their_own_key_so_backups_are_not_held_up() {
+    fn stuck_manifests_report_a_slow_list_while_backups_keep_working() {
         let f = fixture();
         let service = service_with_long_probe();
         let folder = default_folder(&f.paths);
         fs::create_dir_all(&folder).unwrap();
-        // A manifest read that never ends: the status gives up on the list at once...
+        // An earlier manifest read has already reached its deadline.
         service.probe.mark_stuck(&manifest_key(&folder));
-        assert!(service.status(&f.db, &f.paths).unwrap().folder_unavailable);
-        // ...but the folder itself answers, so nothing that needs it is refused or waits.
-        service
+        assert_eq!(
+            service.status(&f.db, &f.paths).unwrap().listing,
+            BackupListing::Slow
+        );
+        let daily = service
             .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 10:00:00 UTC))
             .unwrap()
-            .expect("due, and not refused");
-        service
+            .expect("a daily backup was due");
+        let manual = service
             .backup_now(&f.db, &f.paths, "2026-11-19T11:00:00.000Z")
             .unwrap();
+        assert_eq!(
+            service.status(&f.db, &f.paths).unwrap().listing,
+            BackupListing::Slow
+        );
+        for info in [daily, manual] {
+            snapshot::verify(&folder.join(info.name)).unwrap();
+        }
     }
 
     #[test]
@@ -3423,7 +3465,12 @@ mod tests {
         assert_eq!(outcome.report.failed, 0);
         assert_eq!(list(&old).len(), 2, "copying never deletes");
         assert_eq!(list(&new).len(), 2);
-        assert_eq!(outcome.status.backups.len(), 2);
+        assert_eq!(
+            outcome.status.listing,
+            BackupListing::Ready {
+                backups: list(&new)
+            }
+        );
         assert_eq!(outcome.status.left_behind, None);
         // Verified copies, restorable from the new folder.
         for info in list(&new) {

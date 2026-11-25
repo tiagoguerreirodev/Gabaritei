@@ -22,7 +22,7 @@ use rusqlite::{Connection, Statement, params, params_from_iter};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::attempts::{HIT_SQL, MISS_SQL, RESPONSE_TIME_SQL};
+use crate::attempts::{ANSWERED_RESPONSE_SQL, HIT_SQL, MISS_SQL, RESPONSE_TIME_SQL};
 use crate::bank::TopicPath;
 use crate::error::AppResult;
 use crate::ids::{AttemptId, QuestionId};
@@ -78,6 +78,8 @@ pub enum DueState {
 #[ts(export)]
 pub struct ScheduledReview {
     pub at: String,
+    /// The rung of the ladder this review sits on, in days.
+    pub interval_days: u32,
     pub state: DueState,
 }
 
@@ -98,6 +100,8 @@ pub struct LearningItem {
     /// The attempt holding the question's latest result.
     pub last_attempt_id: AttemptId,
     pub last_answered_at: String,
+    /// Hits over answered responses in finished attempts (0 to 1); `None` when never answered.
+    pub accuracy: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
@@ -238,7 +242,14 @@ pub fn overview(conn: &Connection, now: &str, filter: ErrorFilter) -> AppResult<
     let practice_errors = error_candidates(&latest, &in_open_attempt, filter)
         .take(MAX_SESSION as usize)
         .count() as u32;
-    let items = overview_items(latest, &schedule.dates, question_topics(conn)?, now, filter);
+    let items = overview_items(
+        latest,
+        &schedule.dates,
+        question_topics(conn)?,
+        question_accuracies(conn)?,
+        now,
+        filter,
+    );
     Ok(LearningOverview {
         due: schedule.due,
         due_in_open_attempt: schedule.due_in_open_attempt,
@@ -464,7 +475,8 @@ fn review_schedule(
 ) -> AppResult<ReviewSchedule> {
     let mut stmt = conn.prepare(&format!(
         "SELECT question_id, due_at, {DUE_SQL},
-                date(due_at, 'localtime') = date(?1, 'localtime')
+                date(due_at, 'localtime') = date(?1, 'localtime'),
+                json_extract(state, '$.intervalDays')
          FROM review_state ORDER BY due_at, question_id"
     ))?;
     let rows = stmt.query_map([now], |r| {
@@ -479,6 +491,7 @@ fn review_schedule(
             r.get::<_, QuestionId>(0)?,
             ScheduledReview {
                 at: r.get(1)?,
+                interval_days: r.get(4)?,
                 state,
             },
             due,
@@ -538,10 +551,25 @@ fn question_topics(conn: &Connection) -> AppResult<HashMap<QuestionId, Vec<Topic
     Ok(topics)
 }
 
+/// Hits over answered responses per question, from finished attempts (annulled questions out).
+fn question_accuracies(conn: &Connection) -> AppResult<HashMap<QuestionId, f64>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT r.question_id, AVG({HIT_SQL})
+         {REVIEW_HISTORY_SOURCE_SQL}
+         WHERE {ANSWERED_RESPONSE_SQL}
+         GROUP BY r.question_id"
+    ))?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<HashMap<_, _>, _>>()?;
+    Ok(rows)
+}
+
 fn overview_items(
     latest: Vec<Latest>,
     dates: &HashMap<QuestionId, ScheduledReview>,
     mut topics: HashMap<QuestionId, Vec<TopicPath>>,
+    mut accuracies: HashMap<QuestionId, f64>,
     now: &str,
     filter: ErrorFilter,
 ) -> Vec<LearningItem> {
@@ -554,6 +582,7 @@ fn overview_items(
         }
         items.push(LearningItem {
             topics: topics.remove(&latest.question_id).unwrap_or_default(),
+            accuracy: accuracies.remove(&latest.question_id),
             question_id: latest.question_id,
             review,
             is_error,

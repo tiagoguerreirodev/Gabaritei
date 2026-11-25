@@ -23,9 +23,8 @@ use ts_rs::TS;
 use crate::bank::catalog::CollectionKind;
 use crate::bank::identity::sha256_hex;
 use crate::bank::question::is_valid_image_name;
-use crate::bank::{
-    Provenance, QuestionInput, QuestionOption, QuestionType, TopicPath, apply_import, plan_import,
-};
+use crate::bank::store::plan_import;
+use crate::bank::{Provenance, QuestionInput, QuestionOption, QuestionType, TopicPath};
 use crate::db::{Database, SettingKey, get_setting, set_setting};
 use crate::error::{AppError, AppResult};
 use crate::ids::{CollectionId, QuestionId};
@@ -311,7 +310,7 @@ fn prepare(tables: Tables) -> AppResult<Prepared> {
             images.push(image.clone());
         }
         inputs.push(QuestionInput {
-            local_id: row.id.as_str().to_owned(),
+            id: row.id.as_str().to_owned(),
             kind,
             stem: legacy.stem,
             options: legacy.options,
@@ -467,26 +466,23 @@ fn write_import(
             });
         }
         let plan = plan_import(tx, prepared.inputs)?;
-        if !plan.problems.is_empty() {
-            let shown: Vec<&str> = plan.problems.iter().take(10).map(String::as_str).collect();
+        if !plan.problems().is_empty() {
+            let shown: Vec<&str> = plan.problems().iter().take(10).map(String::as_str).collect();
             return Err(invalid(format!(
                 "O banco do Caderno Local tem {} problema(s), por exemplo:\n{}\n",
-                plan.problems.len(),
+                plan.problems().len(),
                 shown.join("\n")
             )));
         }
-        let changed_ids = plan
-            .questions
-            .iter()
-            .filter(|p| p.local_ids.iter().any(|local| local != p.question.id.as_str()))
-            .count();
+        let changed_ids = plan.changed_id_count();
         if changed_ids > 0 {
             return Err(invalid(format!(
                 "{changed_ids} questão(ões) não manteriam o identificador original do Caderno Local."
             )));
         }
 
-        let outcome = apply_import(tx, &plan, now)?;
+        let questions = plan.question_count() as u32;
+        let outcome = plan.apply(now)?;
 
         for collection in &prepared.collections {
             tx.execute(
@@ -509,7 +505,7 @@ fn write_import(
 
         let report = LegacyImportReport {
             imported_at: now.to_owned(),
-            questions: plan.questions.len() as u32,
+            questions,
             collections: prepared.collections.len() as u32,
             collection_items: prepared.items.len() as u32,
             topics: prepared.topics as u32,

@@ -959,8 +959,8 @@ mod tests {
                 crate::bank::question::tests::boolean("q2", "Segunda", false),
             ];
             for input in &mut inputs {
-                input.explanation = format!("SEGREDO-{}", input.local_id);
-                input.refs = vec![format!("REF-{}", input.local_id)];
+                input.explanation = format!("SEGREDO-{}", input.id);
+                input.refs = vec![format!("REF-{}", input.id)];
             }
             let ids = crate::bank::import_questions(tx, inputs, "2026-11-20T00:00:00.000Z")?
                 .ids_by_local_id;

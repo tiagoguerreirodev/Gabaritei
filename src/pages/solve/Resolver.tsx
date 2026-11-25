@@ -1,17 +1,9 @@
-import {
-  Match,
-  Show,
-  Switch,
-  createEffect,
-  createMemo,
-  createResource,
-  createSignal,
-  on,
-} from "solid-js";
+import { Show, createEffect, createMemo, createResource, createSignal, on } from "solid-js";
 import { api } from "../../api";
 import type { AttemptView } from "../../bindings/AttemptView";
-import { ErrorState, Loading } from "../../components/states";
+import { Loading, ResourceView } from "../../components/states";
 import { showError, showToast } from "../../components/toasts";
+import { modeLabel } from "../../labels";
 import Navigator from "./Navigator";
 import QuestionCard from "./QuestionCard";
 import ResolverDialogs, { type ResolverDialog } from "./ResolverDialogs";
@@ -19,8 +11,6 @@ import ScoreSummary from "./ScoreSummary";
 import ShortcutHelp from "./ShortcutHelp";
 import { mergeExplanation } from "./mergeExplanation";
 import useResolverShortcuts from "./useResolverShortcuts";
-
-const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
 
 /** The solve screen for one attempt (spec §3.3). */
 export default function Resolver(props: { attemptId: string; onLeave: () => void }) {
@@ -132,15 +122,17 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     enqueue((id) => api.flag(id, q.position, !q.flagged));
   };
 
-  const annul = (annulled: boolean) => {
+  const updateAnnulment = (change: typeof api.annul, message: string) => {
     const q = current();
     if (!q?.reveal) return;
     enqueue(async (id) => {
-      const next = await (annulled ? api.annul(id, q.position) : api.unannul(id, q.position));
-      showToast(annulled ? "Questão anulada." : "Anulação desfeita.");
+      const next = await change(id, q.position);
+      showToast(message);
       return next;
     });
   };
+  const annul = () => updateAnnulment(api.annul, "Questão anulada.");
+  const unannul = () => updateAnnulment(api.unannul, "Anulação desfeita.");
 
   const recheck = () => {
     const q = current();
@@ -227,113 +219,115 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
       <div class="sr-only" aria-live="polite" aria-atomic="true" data-testid="live-region">
         {announcement()}
       </div>
-      <Switch>
-        <Match when={loadError()}>
-          <h1>Resolver</h1>
-          <ErrorState error={loadError()} onRetry={() => refetch()} busy={attempt.loading} />
-        </Match>
-        <Match when={!view()}>
-          <h1>Resolver</h1>
-          <Loading label="Carregando tentativa…" />
-        </Match>
-        <Match when={view()}>
-          {(attempt) => (
-            <div class="resolver">
-              <header class="resolver-header">
-                <div>
-                  <h1>{attempt().title}</h1>
-                  <p class="muted">
-                    <span class="badge">{modeLabel[attempt().feedbackMode]}</span>{" "}
-                    <span data-testid="progress">
-                      {answered()} de {total()} respondidas
-                    </span>
-                    <Show when={finished()}> · finalizada</Show>
-                  </p>
+      <Show when={!view()}>
+        <h1 id="resolver-title">Resolver</h1>
+      </Show>
+      <ResourceView
+        value={view()}
+        error={loadError}
+        pending={!view()}
+        retrying={attempt.loading}
+        onRetry={() => refetch()}
+        describedBy="resolver-title"
+        placeholder={<Loading label="Carregando tentativa…" />}
+      >
+        {(attempt) => (
+          <div class="resolver">
+            <header class="resolver-header">
+              <div>
+                <h1>{attempt().title}</h1>
+                <p class="muted">
+                  <span class="badge">{modeLabel[attempt().feedbackMode]}</span>{" "}
+                  <span data-testid="progress">
+                    {answered()} de {total()} respondidas
+                  </span>
+                  <Show when={finished()}> · finalizada</Show>
+                </p>
+                <div
+                  class="progress-bar"
+                  role="progressbar"
+                  aria-label="Progresso da tentativa"
+                  aria-valuemin={0}
+                  aria-valuemax={total()}
+                  aria-valuenow={answered()}
+                  aria-valuetext={`${answered()} de ${total()} respondidas`}
+                >
                   <div
-                    class="progress-bar"
-                    role="progressbar"
-                    aria-label="Progresso da tentativa"
-                    aria-valuemin={0}
-                    aria-valuemax={total()}
-                    aria-valuenow={answered()}
-                    aria-valuetext={`${answered()} de ${total()} respondidas`}
-                  >
-                    <div
-                      class="progress-fill"
-                      style={{ width: `${total() === 0 ? 0 : (answered() / total()) * 100}%` }}
-                    />
-                  </div>
-                </div>
-                <div class="resolver-actions">
-                  <Show
-                    when={!finished()}
-                    fallback={
-                      <button type="button" onClick={() => props.onLeave()}>
-                        Voltar ao Banco
-                      </button>
-                    }
-                  >
-                    <button type="button" onClick={() => setDialog("abandon")}>
-                      Abandonar
-                    </button>
-                    <button type="button" class="primary" onClick={() => setDialog("finish")}>
-                      Finalizar
-                    </button>
-                  </Show>
-                </div>
-              </header>
-              <Show when={attempt().score}>{(score) => <ScoreSummary score={score()} />}</Show>
-              <Navigator questions={attempt().questions} current={index()} onSelect={select} />
-              <Show when={current()}>
-                {(q) => (
-                  <QuestionCard
-                    question={q()}
-                    number={index() + 1}
-                    total={total()}
-                    feedbackMode={attempt().feedbackMode}
-                    finishedAt={attempt().finishedAt}
-                    optionAction={shortcuts.optionAction()}
-                    pending={pending()}
-                    onAnswer={choose}
-                    onConfirm={confirm}
-                    onEliminate={eliminate}
-                    onFlag={flag}
-                    onAnnul={annul}
-                    onExplain={explain}
-                    onRecheck={recheck}
-                    onRecheckApply={applyRecheck}
-                    onRecheckDismiss={dismissRecheck}
-                    onAiCancel={() => void api.aiRequestCancel().catch(showError)}
+                    class="progress-fill"
+                    style={{ width: `${total() === 0 ? 0 : (answered() / total()) * 100}%` }}
                   />
-                )}
-              </Show>
-              <footer class="resolver-footer">
-                <button type="button" disabled={index() === 0} onClick={() => move(-1)}>
-                  ← Anterior
-                </button>
-                <ShortcutHelp
+                </div>
+              </div>
+              <div class="resolver-actions">
+                <Show
+                  when={!finished()}
+                  fallback={
+                    <button type="button" onClick={() => props.onLeave()}>
+                      Voltar ao Banco
+                    </button>
+                  }
+                >
+                  <button type="button" onClick={() => setDialog("abandon")}>
+                    Abandonar
+                  </button>
+                  <button type="button" class="primary" onClick={() => setDialog("finish")}>
+                    Finalizar
+                  </button>
+                </Show>
+              </div>
+            </header>
+            <Show when={attempt().score}>{(score) => <ScoreSummary score={score()} />}</Show>
+            <Navigator questions={attempt().questions} current={index()} onSelect={select} />
+            <Show when={current()}>
+              {(q) => (
+                <QuestionCard
+                  question={q()}
+                  number={index() + 1}
+                  total={total()}
                   feedbackMode={attempt().feedbackMode}
-                  open={shortcuts.helpOpen()}
-                  panelRef={shortcuts.panelRef}
-                  toggleRef={shortcuts.toggleRef}
-                  onToggle={shortcuts.toggleHelp}
+                  finishedAt={attempt().finishedAt}
+                  optionAction={shortcuts.optionAction()}
+                  pending={pending()}
+                  onAnswer={choose}
+                  onConfirm={confirm}
+                  onEliminate={eliminate}
+                  onFlag={flag}
+                  onAnnul={annul}
+                  onUnannul={unannul}
+                  onExplain={explain}
+                  onRecheck={recheck}
+                  onRecheckApply={applyRecheck}
+                  onRecheckDismiss={dismissRecheck}
+                  onAiCancel={() => void api.aiRequestCancel().catch(showError)}
                 />
-                <button type="button" disabled={index() >= total() - 1} onClick={() => move(1)}>
-                  Próxima →
-                </button>
-              </footer>
-              <ResolverDialogs
-                dialog={dialog()}
-                answered={answered()}
-                total={total()}
-                onClose={() => setDialog(null)}
-                onFinish={() => void finish()}
-                onAbandon={() => void abandon()}
+              )}
+            </Show>
+            <footer class="resolver-footer">
+              <button type="button" disabled={index() === 0} onClick={() => move(-1)}>
+                ← Anterior
+              </button>
+              <ShortcutHelp
+                feedbackMode={attempt().feedbackMode}
+                open={shortcuts.helpOpen()}
+                panelRef={shortcuts.panelRef}
+                toggleRef={shortcuts.toggleRef}
+                onToggle={shortcuts.toggleHelp}
               />
-            </div>
-          )}
-        </Match>
-      </Switch>
+              <button type="button" disabled={index() >= total() - 1} onClick={() => move(1)}>
+                Próxima →
+              </button>
+            </footer>
+            <ResolverDialogs
+              dialog={dialog()}
+              answered={answered()}
+              total={total()}
+              onClose={() => setDialog(null)}
+              onFinish={() => void finish()}
+              onAbandon={() => void abandon()}
+            />
+          </div>
+        )}
+      </ResourceView>
     </>
   );
 }

@@ -1,32 +1,23 @@
 import { A, useNavigate } from "@solidjs/router";
 import { Show, createSignal } from "solid-js";
+import { createAction } from "../../actions";
 import { api } from "../../api";
+import type { DraftSummary } from "../../bindings/DraftSummary";
 import type { ImportResult } from "../../bindings/ImportResult";
 import ConfirmModal from "../../components/ConfirmModal";
-import { showError, showToast } from "../../components/toasts";
+import { showToast } from "../../components/toasts";
 import { formatNumber } from "../../format";
 import { refreshWaitingDrafts } from "../../generation";
-import type { DraftSummary } from "../../bindings/DraftSummary";
 
 export default function ReviewActions(props: { summary: DraftSummary; onChanged: () => void }) {
   const navigate = useNavigate();
-  const [busy, setBusy] = createSignal(false);
+  const { active: busy, run } = createAction();
+  const [requestingCheck, setRequestingCheck] = createSignal(false);
   const [confirmingDiscard, setConfirmingDiscard] = createSignal(false);
   const s = () => props.summary;
   const waiting = () => s().status === "review";
   const checking = () => s().checking;
   const confirmed = () => s().confirmed;
-
-  const run = async (action: () => Promise<void>) => {
-    setBusy(true);
-    try {
-      await action();
-    } catch (error) {
-      showError(error);
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const imported = async (result: ImportResult) => {
     await refreshWaitingDrafts();
@@ -41,10 +32,8 @@ export default function ReviewActions(props: { summary: DraftSummary; onChanged:
     const { id, needsCheck } = s();
     const onChanged = props.onChanged;
     return run(async () => {
-      if (needsCheck) {
-        showToast("Conferindo as questões que faltavam. A importação segue sozinha.");
-      }
-      const outcome = await api.draftImportAll(id);
+      setRequestingCheck(needsCheck);
+      const outcome = await api.draftImportAll(id).finally(() => setRequestingCheck(false));
       if (outcome.kind === "pending") {
         onChanged();
         showToast(outcome.message);
@@ -87,6 +76,9 @@ export default function ReviewActions(props: { summary: DraftSummary; onChanged:
         </p>
       }
     >
+      <Show when={requestingCheck() && !checking()}>
+        <p role="status">Solicitando conferência e importação…</p>
+      </Show>
       <div class="review-actions">
         <button
           type="button"

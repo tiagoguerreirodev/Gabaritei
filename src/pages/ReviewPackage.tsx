@@ -1,14 +1,14 @@
-import QuestionLines from "./review/QuestionLines";
-import ReviewActions from "./review/ReviewActions";
-import VerdictCounts from "./review/VerdictCounts";
 import { A, useSearchParams } from "@solidjs/router";
-import { For, Show, createEffect, createResource, on } from "solid-js";
+import { For, Show, createMemo, createResource } from "solid-js";
 import { api } from "../api";
 import type { DraftSummary } from "../bindings/DraftSummary";
 import { InlineError, ResourceView } from "../components/states";
-import { generationStatus } from "../generation";
-import { agentLabels, effortLabels } from "../labels";
 import { formatDuration, formatNumber } from "../format";
+import { generationRunRevision } from "../generation";
+import { agentLabels, effortLabels } from "../labels";
+import QuestionLines from "./review/QuestionLines";
+import ReviewActions from "./review/ReviewActions";
+import VerdictCounts from "./review/VerdictCounts";
 
 /**
  * Revisar pacote. Shows counts, problems and one line per question ("Q3 · contestada"). Only a
@@ -28,7 +28,8 @@ export default function ReviewPackage() {
 }
 
 function WaitingList() {
-  const [drafts, { refetch }] = createResource(() => api.draftsWaiting());
+  const runRevision = createMemo(generationRunRevision);
+  const [drafts, { refetch }] = createResource(runRevision, () => api.draftsWaiting());
   return (
     <ResourceView
       value={drafts()?.length ? drafts() : undefined}
@@ -68,17 +69,10 @@ function WaitingList() {
 }
 
 function Package(props: { id: string }) {
+  const runRevision = createMemo(generationRunRevision);
   const [summary, { refetch }] = createResource(
-    () => props.id,
-    (id) => api.draftSummary(id),
-  );
-  // A check that was running ends (or a retry finishes): show the new verdicts.
-  createEffect(
-    on(
-      () => generationStatus()?.running,
-      () => void refetch(),
-      { defer: true },
-    ),
+    () => ({ id: props.id, runRevision: runRevision() }),
+    ({ id }) => api.draftSummary(id),
   );
   return (
     <ResourceView

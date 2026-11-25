@@ -4,7 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DraftSummary } from "../bindings/DraftSummary";
+import type { GenerationStatus } from "../bindings/GenerationStatus";
 import { Toaster } from "../components/toasts";
+import { applyGenerationStatus, resetGenerationWatch } from "../generation";
 import ReviewPackage from "./ReviewPackage";
 
 const summary: DraftSummary = {
@@ -108,9 +110,89 @@ function renderAt(path: string) {
 
 beforeEach(() => {
   window.location.hash = "";
+  resetGenerationWatch();
 });
 
 describe("Revisar pacote", () => {
+  describe("when a new check reports progress before the previous finish", () => {
+    const checking: GenerationStatus = {
+      revision: 2,
+      runRevision: 1,
+      running: true,
+      startedAt: summary.createdAt,
+      kind: "recheck",
+      stage: "checking",
+      stages: [],
+      canCancel: true,
+      cancelDiscardsDraft: false,
+      progress: null,
+      outcome: null,
+      outcomeKind: null,
+    };
+
+    function reportNextCheck() {
+      applyGenerationStatus({ ...checking, revision: 5, runRevision: 4 });
+      applyGenerationStatus({
+        ...checking,
+        revision: 3,
+        runRevision: 3,
+        running: false,
+        startedAt: null,
+        kind: null,
+        stage: "preparing",
+        canCancel: false,
+        outcome: { kind: "draft", draftId: summary.id },
+        outcomeKind: "recheck",
+      });
+    }
+
+    it("refreshes the open package with the completed check's verdicts", async () => {
+      let current: DraftSummary = {
+        ...summary,
+        checking: true,
+        lines: [{ position: 1, state: "unchecked", hasProblem: false, content: null }],
+      };
+      mockIPC((command) => {
+        if (command === "draft_summary") return current;
+        throw new Error(`Unexpected command: ${command}`);
+      });
+      applyGenerationStatus(checking);
+      renderAt("/revisar-pacote?id=d1");
+      expect(await screen.findByText(/ainda está em andamento/)).toBeVisible();
+
+      current = summary;
+      reportNextCheck();
+
+      expect(await screen.findByText("Q1 · conferida")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Importar tudo" })).toBeEnabled();
+    });
+
+    it("refreshes checking indicators for packages in the waiting list", async () => {
+      let isChecking = true;
+      mockIPC((command) => {
+        if (command !== "drafts_waiting") throw new Error(`Unexpected command: ${command}`);
+        return [
+          {
+            id: summary.id,
+            topic: summary.topic,
+            count: summary.count,
+            createdAt: summary.createdAt,
+            disputed: summary.disputed,
+            checking: isChecking,
+          },
+        ];
+      });
+      applyGenerationStatus(checking);
+      renderAt("/revisar-pacote");
+      expect(await screen.findByText(/conferindo…/)).toBeVisible();
+
+      isChecking = false;
+      reportNextCheck();
+
+      await waitFor(() => expect(screen.queryByText(/conferindo…/)).not.toBeInTheDocument());
+    });
+  });
+
   async function openSummary() {
     backend();
     renderAt("/revisar-pacote?id=d1");
@@ -439,6 +521,33 @@ describe("Revisar pacote", () => {
     expect(commands).not.toContain("blind_check_start");
     expect(commands).not.toContain("generation_status");
     expect(commands).not.toContain("draft_import");
+  });
+
+  it("shows a refused check request without promising automatic import", async () => {
+    let refuse: (error: Error) => void = () => undefined;
+    const response = new Promise<never>((_, reject) => (refuse = reject));
+    mockIPC((command) => {
+      switch (command) {
+        case "draft_summary":
+          return { ...summary, needsCheck: true };
+        case "draft_import_all":
+          return response;
+        default:
+          throw new Error(`Unexpected command: ${command}`);
+      }
+    });
+    const user = userEvent.setup();
+    renderAt("/revisar-pacote?id=d1");
+    await user.click(await screen.findByRole("button", { name: "Conferir e importar tudo" }));
+    expect(screen.getByText("Solicitando conferência e importação…")).toBeVisible();
+
+    const busy = "Já existe uma geração em andamento. Espere terminar ou cancele.";
+    refuse(new Error(busy));
+
+    expect(await screen.findByText(busy)).toBeVisible();
+    expect(screen.queryByText(/A importação segue sozinha/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Solicitando conferência e importação…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Conferir e importar tudo" })).toBeEnabled();
   });
 
   it("refreshes the package after the backend reports a failed check", async () => {

@@ -100,6 +100,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::drafts_waiting,
             commands::draft_summary,
             commands::draft_import,
+            commands::draft_import_all,
             commands::draft_discard,
             commands::pick_attachments,
             commands::recheck_ask,

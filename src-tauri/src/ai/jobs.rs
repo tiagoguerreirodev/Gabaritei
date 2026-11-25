@@ -50,6 +50,45 @@ pub enum GenerationKind {
     Recheck,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GenerationStep {
+    pub id: GenerationStage,
+    pub label: &'static str,
+}
+
+impl GenerationKind {
+    fn stages(self) -> Vec<GenerationStep> {
+        let generating = GenerationStep {
+            id: GenerationStage::Generating,
+            label: "Gerando as questões",
+        };
+        let checking = GenerationStep {
+            id: GenerationStage::Checking,
+            label: "Conferindo às cegas",
+        };
+        let resolving = GenerationStep {
+            id: GenerationStage::Resolving,
+            label: "Resolvendo as contestações",
+        };
+        match self {
+            Self::Generate => vec![generating, checking, resolving],
+            Self::Recheck => vec![checking, resolving],
+        }
+    }
+
+    fn cancel_discards_draft(self, stage: GenerationStage) -> bool {
+        match self {
+            Self::Generate => match stage {
+                GenerationStage::Preparing | GenerationStage::Generating => false,
+                GenerationStage::Checking | GenerationStage::Resolving => true,
+            },
+            Self::Recheck => false,
+        }
+    }
+}
+
 /// What the frontend shows about the generation, on any page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -61,6 +100,9 @@ pub struct GenerationStatus {
     pub kind: Option<GenerationKind>,
     /// The stage of the running job (`Preparing` when not running).
     pub stage: GenerationStage,
+    pub stages: Vec<GenerationStep>,
+    pub cancel_discards_draft: bool,
+    pub can_cancel: bool,
     /// The latest progress label while running.
     pub progress: Option<Progress>,
     /// How the last generation ended, until dismissed or replaced.
@@ -78,7 +120,7 @@ struct Inner {
 }
 
 struct Running {
-    cancel: CancelToken,
+    cancel: Option<CancelToken>,
     started_at: String,
     kind: GenerationKind,
     stage: GenerationStage,
@@ -106,44 +148,10 @@ impl GenerationManager {
         W: FnOnce(&CancelToken, &mut dyn FnMut(Progress)) -> AppResult<DraftId> + Send + 'static,
         E: Fn(&GenerationStatus) + Send + 'static,
     {
-        let cancel = CancelToken::new();
-        {
-            let mut inner = lock(&self.inner);
-            if inner.running.is_some() {
-                return Err(AppError::Invalid(
-                    "Já existe uma geração em andamento. Espere terminar ou cancele.".into(),
-                ));
-            }
-            inner.outcome = None;
-            inner.outcome_kind = None;
-            inner.running = Some(Running {
-                cancel: cancel.clone(),
-                started_at,
-                kind,
-                stage: GenerationStage::Preparing,
-                progress: None,
-            });
-        }
+        let cancel = self.reserve(kind, started_at)?;
         let manager = self.clone();
         std::thread::spawn(move || {
-            // A panic must not leave the slot held forever.
-            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                work(&cancel, &mut |progress| {
-                    if let Some(running) = lock(&manager.inner).running.as_mut() {
-                        if let Some(stage) = progress.stage {
-                            // Stages only move forward, whatever order events arrive in.
-                            running.stage = running.stage.max(stage);
-                        }
-                        running.progress = Some(progress);
-                    }
-                    on_event(&manager.status());
-                })
-            }))
-            .unwrap_or_else(|_| {
-                Err(AppError::Invalid(
-                    "A geração parou por um erro inesperado. Tente de novo.".into(),
-                ))
-            });
+            let result = manager.perform(&on_event, |progress| work(&cancel, progress));
             // A draft that was saved wins over a cancel that arrived afterwards.
             let outcome = match result {
                 Ok(draft_id) => GenerationOutcome::Draft { draft_id },
@@ -152,15 +160,83 @@ impl GenerationManager {
                     message: error.to_string(),
                 },
             };
-            {
-                let mut inner = lock(&manager.inner);
-                inner.outcome_kind = inner.running.as_ref().map(|r| r.kind);
-                inner.running = None;
-                inner.outcome = Some(outcome);
-            }
-            let _ = std::panic::catch_unwind(AssertUnwindSafe(|| on_event(&manager.status())));
+            manager.finish(Some(outcome), on_event);
         });
         Ok(())
+    }
+
+    /// Holds the same slot as a generation until both the check and its import finish.
+    /// The caller receives the result directly, so there is no background outcome to dismiss.
+    pub(crate) fn run_check_then_import<T>(
+        &self,
+        started_at: String,
+        work: impl FnOnce(&ImportCheck<'_>, &mut dyn FnMut(Progress)) -> AppResult<T>,
+        on_event: impl Fn(&GenerationStatus),
+    ) -> AppResult<T> {
+        let cancel = self.reserve(GenerationKind::Recheck, started_at)?;
+        let run = ImportCheck {
+            manager: self,
+            cancel,
+        };
+        let result = self.perform(&on_event, |progress| work(&run, progress));
+        self.finish(None, on_event);
+        result
+    }
+
+    fn reserve(&self, kind: GenerationKind, started_at: String) -> AppResult<CancelToken> {
+        let mut inner = lock(&self.inner);
+        if inner.running.is_some() {
+            return Err(AppError::Invalid(
+                "Já existe uma geração em andamento. Espere terminar ou cancele.".into(),
+            ));
+        }
+        let cancel = CancelToken::new();
+        inner.outcome = None;
+        inner.outcome_kind = None;
+        inner.running = Some(Running {
+            cancel: Some(cancel.clone()),
+            started_at,
+            kind,
+            stage: GenerationStage::Preparing,
+            progress: None,
+        });
+        Ok(cancel)
+    }
+
+    fn perform<T>(
+        &self,
+        on_event: &impl Fn(&GenerationStatus),
+        work: impl FnOnce(&mut dyn FnMut(Progress)) -> AppResult<T>,
+    ) -> AppResult<T> {
+        // A panic must not leave the slot held forever.
+        std::panic::catch_unwind(AssertUnwindSafe(|| {
+            work(&mut |progress| {
+                if let Some(running) = lock(&self.inner).running.as_mut() {
+                    if let Some(stage) = progress.stage {
+                        // Stages only move forward, whatever order events arrive in.
+                        running.stage = running.stage.max(stage);
+                    }
+                    running.progress = Some(progress);
+                }
+                on_event(&self.status());
+            })
+        }))
+        .unwrap_or_else(|_| {
+            Err(AppError::Invalid(
+                "A geração parou por um erro inesperado. Tente de novo.".into(),
+            ))
+        })
+    }
+
+    fn finish(&self, outcome: Option<GenerationOutcome>, on_event: impl Fn(&GenerationStatus)) {
+        let status = {
+            let mut inner = lock(&self.inner);
+            let kind = inner.running.take().map(|running| running.kind);
+            inner.outcome_kind = outcome.as_ref().and(kind);
+            inner.outcome = outcome;
+            inner.status()
+        };
+        let _ = std::panic::catch_unwind(AssertUnwindSafe(|| on_event(&status)));
     }
 
     fn is_running(&self) -> bool {
@@ -172,24 +248,13 @@ impl GenerationManager {
         lock(&self.inner)
             .running
             .as_ref()
-            .map(|running| running.cancel.cancel())
+            .and_then(|running| running.cancel.as_ref())
+            .map(CancelToken::cancel)
             .is_some()
     }
 
     pub fn status(&self) -> GenerationStatus {
-        let inner = lock(&self.inner);
-        GenerationStatus {
-            running: inner.running.is_some(),
-            started_at: inner.running.as_ref().map(|r| r.started_at.clone()),
-            kind: inner.running.as_ref().map(|r| r.kind),
-            stage: inner
-                .running
-                .as_ref()
-                .map_or_else(Default::default, |r| r.stage),
-            progress: inner.running.as_ref().and_then(|r| r.progress.clone()),
-            outcome: inner.outcome.clone(),
-            outcome_kind: inner.outcome_kind,
-        }
+        lock(&self.inner).status()
     }
 
     /// Forgets the last outcome (the user has seen it).
@@ -197,6 +262,52 @@ impl GenerationManager {
         let mut inner = lock(&self.inner);
         inner.outcome = None;
         inner.outcome_kind = None;
+    }
+}
+
+impl Inner {
+    fn status(&self) -> GenerationStatus {
+        let running = self.running.as_ref();
+        let kind = running.map(|r| r.kind);
+        let stage = running.map_or_else(Default::default, |r| r.stage);
+        let can_cancel = running.is_some_and(|run| run.cancel.is_some());
+        GenerationStatus {
+            running: running.is_some(),
+            started_at: running.map(|r| r.started_at.clone()),
+            kind,
+            stage,
+            stages: kind.map_or_else(Vec::new, GenerationKind::stages),
+            cancel_discards_draft: can_cancel
+                && kind.is_some_and(|kind| kind.cancel_discards_draft(stage)),
+            can_cancel,
+            progress: running.and_then(|r| r.progress.clone()),
+            outcome: self.outcome.clone(),
+            outcome_kind: self.outcome_kind,
+        }
+    }
+}
+
+/// The cancellation boundary between checking a draft and committing its import.
+pub(crate) struct ImportCheck<'a> {
+    manager: &'a GenerationManager,
+    cancel: CancelToken,
+}
+
+impl ImportCheck<'_> {
+    pub(crate) fn cancel_token(&self) -> &CancelToken {
+        &self.cancel
+    }
+
+    /// Returns whether the check reached the commit phase before a cancellation request.
+    pub(crate) fn begin_import(&self) -> bool {
+        let mut inner = lock(&self.manager.inner);
+        if self.cancel.is_cancelled() {
+            return false;
+        }
+        if let Some(running) = inner.running.as_mut() {
+            running.cancel = None;
+        }
+        true
     }
 }
 
@@ -249,6 +360,82 @@ mod tests {
     use std::time::Duration;
 
     const STARTED_AT: &str = "2026-11-20T12:00:00.000Z";
+
+    #[test]
+    fn generation_status_reports_an_empty_stage_list_when_idle() {
+        let status = GenerationManager::default().status();
+        assert_eq!(status.stages, []);
+        assert!(!status.can_cancel);
+        assert!(!status.cancel_discards_draft);
+    }
+
+    #[test]
+    fn generation_status_reports_ordered_stages_and_explains_the_cancel_effect() {
+        let manager = GenerationManager::default();
+        manager
+            .reserve(GenerationKind::Generate, "now".into())
+            .unwrap();
+
+        let prepared = manager.status();
+        assert_eq!(
+            prepared
+                .stages
+                .iter()
+                .map(|step| step.id)
+                .collect::<Vec<_>>(),
+            [
+                GenerationStage::Generating,
+                GenerationStage::Checking,
+                GenerationStage::Resolving
+            ]
+        );
+        assert!(!prepared.cancel_discards_draft);
+        assert!(prepared.can_cancel);
+        manager
+            .perform(
+                &|status| assert!(status.cancel_discards_draft),
+                |progress| {
+                    progress(Progress::starting(
+                        GenerationStage::Checking,
+                        ProgressKind::Started,
+                        "x",
+                    ));
+                    Ok(())
+                },
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn a_recheck_reports_only_checking_and_resolving_stages() {
+        let manager = GenerationManager::default();
+        manager
+            .reserve(GenerationKind::Recheck, "now".into())
+            .unwrap();
+
+        assert_eq!(
+            manager
+                .status()
+                .stages
+                .iter()
+                .map(|step| step.id)
+                .collect::<Vec<_>>(),
+            [GenerationStage::Checking, GenerationStage::Resolving]
+        );
+        manager
+            .perform(
+                &|status| assert!(!status.cancel_discards_draft),
+                |progress| {
+                    progress(Progress::starting(
+                        GenerationStage::Checking,
+                        ProgressKind::Started,
+                        "x",
+                    ));
+                    Ok(())
+                },
+            )
+            .unwrap();
+    }
 
     fn wait_until_done(manager: &GenerationManager) -> GenerationStatus {
         for _ in 0..200 {

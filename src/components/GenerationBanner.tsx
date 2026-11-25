@@ -73,7 +73,9 @@ function RunStatus() {
                   <Show when={location.pathname !== "/gerar"}>
                     <A href="/gerar">Acompanhar</A>
                   </Show>
-                  <CancelGeneration />
+                  <Show when={status().canCancel}>
+                    <CancelGeneration />
+                  </Show>
                 </span>
               </p>
             </Show>

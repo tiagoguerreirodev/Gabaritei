@@ -20,7 +20,9 @@ use crate::ai::jobs::{self, DataReplacement, GenerationKind, GenerationManager, 
 use crate::ai::ondemand::OnDemand;
 use crate::ai::recheck::{self, RecheckView};
 use crate::ai::remnote_probe::{self, RemNoteTest};
-use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportResult};
+use crate::ai::review::{
+    self, DraftListItem, DraftSummary, ImportAllOutcome, ImportMode, ImportResult,
+};
 use crate::ai::roles::{self, Role};
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, ResolvedClis};
@@ -652,6 +654,39 @@ pub fn draft_import(
         mode,
         &crate::clock::now(),
     )
+}
+
+/// Imports every question, running the blind check first when needed.
+#[tauri::command]
+pub async fn draft_import_all<R: Runtime>(
+    app: AppHandle<R>,
+    id: DraftId,
+) -> AppResult<ImportAllOutcome> {
+    run_blocking(app, move |app| {
+        let db = app.state::<Database>();
+        let files_dir = app.state::<AppPaths>().draft_files_dir();
+        review::import_all(
+            &db,
+            &files_dir,
+            &id,
+            &app.state::<GenerationManager>(),
+            crate::clock::now,
+            |cancel, progress| {
+                app.state::<BackupService>().ensure_idle()?;
+                roles::validate_saved_role(&db, &app.state::<CatalogCache>(), Role::BlindCheck)?;
+                let secrets = app.state::<Secrets>();
+                let clis = resolve_job_clis(&db)?;
+                with_generation_runtime(&clis, |runtime| {
+                    blind_check::recheck_draft(
+                        &db, &secrets, runtime, &files_dir, &id, cancel, progress,
+                    )
+                })?;
+                Ok(())
+            },
+            |status| emit_generation_status(&app, status),
+        )
+    })
+    .await
 }
 
 /// Discards a draft that is waiting for review.
@@ -1419,6 +1454,7 @@ mod tests {
         ]});
         std::fs::write(dir.path().join("answer-1.json"), package.to_string()).unwrap();
         std::fs::write(dir.path().join("answer-2.json"), verdicts.to_string()).unwrap();
+        std::fs::write(dir.path().join("answer-3.json"), verdicts.to_string()).unwrap();
         let cli = crate::ai::runner::tests::write_script(
             dir.path(),
             "codex",
@@ -1542,6 +1578,36 @@ mod tests {
                 .is_err()
         );
         assert_eq!(app.call("drafts_waiting", json!({})).unwrap(), json!([]));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn draft_import_all_checks_an_unfinished_draft_and_imports_it_in_one_call() {
+        let CheckedDraft { app, cli, id, .. } = generate_checked_draft();
+        app._app
+            .state::<Database>()
+            .with(|conn| {
+                conn.execute("UPDATE drafts SET blind_check = NULL WHERE id = ?1", [&id])?;
+                Ok(())
+            })
+            .unwrap();
+        let summary = app.call("draft_summary", json!({ "id": id })).unwrap();
+        assert_eq!(summary["needsCheck"], json!(true));
+
+        let outcome = app.call("draft_import_all", json!({ "id": id })).unwrap();
+
+        assert_eq!(outcome["kind"], json!("imported"));
+        assert_eq!(outcome["result"]["imported"], json!(1));
+        assert_eq!(
+            std::fs::read_to_string(cli.path().join("counter"))
+                .unwrap()
+                .trim(),
+            "3"
+        );
+        assert_eq!(app.call("drafts_waiting", json!({})).unwrap(), json!([]));
+        let status = app.call("generation_status", json!({})).unwrap();
+        assert_eq!(status["running"], json!(false));
+        assert_eq!(status["outcome"], Value::Null);
     }
 
     #[cfg(unix)]

@@ -2,13 +2,13 @@ import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import { For, Show, createEffect, createResource, createSignal, on } from "solid-js";
 import { api } from "../api";
 import type { DraftSummary } from "../bindings/DraftSummary";
-import type { ImportMode } from "../bindings/ImportMode";
+import type { ImportResult } from "../bindings/ImportResult";
 import type { LineState } from "../bindings/LineState";
 import Modal from "../components/Modal";
 import RichText from "../components/RichText";
 import { ErrorState, Loading } from "../components/states";
 import { showError, showToast } from "../components/toasts";
-import { dismissGeneration, generationStatus, refreshWaitingDrafts } from "../generation";
+import { generationStatus, refreshWaitingDrafts } from "../generation";
 import { agentLabels, effortLabels } from "./settings/labels";
 import { optionLetters } from "./solve/format";
 
@@ -108,7 +108,7 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
   const s = () => props.summary;
   const waiting = () => s().status === "review";
   const checking = () => s().checking;
-  const confirmed = () => s().agreed + s().fixed;
+  const confirmed = () => s().confirmed;
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -121,46 +121,31 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
     }
   };
 
-  /** Waits until the background job (the blind check) is done. */
-  const waitForJob = async () => {
-    for (;;) {
-      const status = await api.generationStatus();
-      if (!status.running) return;
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
+  const imported = async (result: ImportResult) => {
+    await refreshWaitingDrafts();
+    showToast(
+      `${number(result.imported)} questões importadas para “${result.title}”` +
+        (result.skipped > 0 ? `; ${number(result.skipped)} ficaram de fora.` : "."),
+    );
+    navigate("/banco");
   };
 
-  const importAs = (mode: ImportMode) => {
-    const id = s().id;
-    const onChanged = props.onChanged;
-    const needsCheck = mode === "all" && (s().unchecked > 0 || s().checkFailed !== null);
-    return run(async () => {
-      if (needsCheck) {
-        // "Importar tudo" imports checked questions only: check the unchecked ones first.
-        await api.blindCheckStart(id);
+  const importAll = () =>
+    run(async () => {
+      if (s().needsCheck) {
         showToast("Conferindo as questões que faltavam. A importação segue sozinha.");
-        await waitForJob();
-        await dismissGeneration();
-        const after = await api.draftSummary(id);
-        if (after.unchecked > 0 || after.checkFailed !== null || after.problems.length > 0) {
-          onChanged();
-          showToast(
-            after.checkFailed !== null
-              ? `A conferência não terminou: ${after.checkFailed} Nada foi importado.`
-              : "O pacote ainda tem pendências. Nada foi importado.",
-          );
-          return;
-        }
       }
-      const result = await api.draftImport(id, mode);
-      await refreshWaitingDrafts();
-      showToast(
-        `${number(result.imported)} questões importadas para “${result.title}”` +
-          (result.skipped > 0 ? `; ${number(result.skipped)} ficaram de fora.` : "."),
-      );
-      navigate("/banco");
+      const outcome = await api.draftImportAll(s().id);
+      if (outcome.kind === "pending") {
+        props.onChanged();
+        showToast(outcome.message);
+      } else {
+        await imported(outcome.result);
+      }
     });
-  };
+
+  const importConfirmed = () =>
+    run(async () => imported(await api.draftImport(s().id, "confirmed")));
 
   const discard = () => {
     const id = s().id;
@@ -383,20 +368,18 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
             type="button"
             class="primary"
             disabled={busy() || checking() || s().problems.length > 0}
-            onClick={() => void importAs("all")}
+            onClick={() => void importAll()}
           >
-            {s().unchecked > 0 || s().checkFailed !== null
-              ? "Conferir e importar tudo"
-              : "Importar tudo"}
+            {s().needsCheck ? "Conferir e importar tudo" : "Importar tudo"}
           </button>
           <button
             type="button"
             disabled={busy() || checking() || confirmed() === 0}
-            onClick={() => void importAs("confirmed")}
+            onClick={() => void importConfirmed()}
           >
             Importar só as confirmadas
           </button>
-          <Show when={!checking() && (s().checkFailed !== null || s().unchecked > 0)}>
+          <Show when={!checking() && s().needsCheck}>
             <button type="button" disabled={busy()} onClick={() => void rerunCheck()}>
               Conferir de novo
             </button>

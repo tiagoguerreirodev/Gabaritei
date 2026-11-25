@@ -25,11 +25,20 @@ const settings: AiSettings = {
   remnote: { mode: "server", url: "https://r.example/mcp", tools: ["search"] },
   hasRemnoteToken: true,
 };
+const steps: GenerationStatus["stages"] = [
+  { id: "generating", label: "Gerando as questões" },
+  { id: "checking", label: "Conferindo às cegas" },
+  { id: "resolving", label: "Resolvendo as contestações" },
+];
+const checkSteps = steps.slice(1);
 const idle: GenerationStatus = {
   running: false,
   startedAt: null,
   kind: null,
   stage: "preparing",
+  stages: [],
+  canCancel: false,
+  cancelDiscardsDraft: false,
   progress: null,
   outcome: null,
   outcomeKind: null,
@@ -288,6 +297,9 @@ describe("Gerar", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "preparing",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "reading", label: "Lendo as fontes…" },
       outcome: null,
       outcomeKind: null,
@@ -307,6 +319,9 @@ describe("Gerar", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "resolving",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: true,
       progress: { kind: "thinking", label: "Resolvendo as contestações…" },
       outcome: null,
       outcomeKind: null,
@@ -366,6 +381,9 @@ describe("Gerar", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "generating",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
       outcomeKind: null,
@@ -440,11 +458,7 @@ describe("Gerar", () => {
 
   it("links to the finished package and lets the user dismiss the result", async () => {
     const calls = backend({
-      running: false,
-      startedAt: null,
-      kind: null,
-      stage: "preparing",
-      progress: null,
+      ...idle,
       outcome: { kind: "draft", draftId: "d7" },
       outcomeKind: null,
     });
@@ -456,11 +470,7 @@ describe("Gerar", () => {
 
   it("shows why a generation failed", async () => {
     backend({
-      running: false,
-      startedAt: null,
-      kind: null,
-      stage: "preparing",
-      progress: null,
+      ...idle,
       outcome: { kind: "failed", message: "A IA devolveu 2 questões, mas você pediu 3." },
       outcomeKind: null,
     });
@@ -479,6 +489,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "checking",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: true,
       progress: { kind: "thinking", label: "Conferindo às cegas…" },
       outcome: null,
       outcomeKind: null,
@@ -493,12 +506,29 @@ describe("Aviso de geração", () => {
     expect(screen.getByRole("button", { name: "Cancelar" })).toBeVisible();
   });
 
+  it("renders stage labels and cancellation availability from the backend", async () => {
+    backend({
+      ...idle,
+      running: true,
+      kind: "recheck",
+      stage: "checking",
+      stages: [{ id: "checking", label: "Conferindo este pacote" }],
+    });
+    renderPage("/outra");
+
+    expect(await screen.findByText(/Etapa 1 de 1: Conferindo este pacote/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Cancelar" })).not.toBeInTheDocument();
+  });
+
   it("keeps the announced text to the stage, not the per-tool label", async () => {
     backend({
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "generating",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
       outcomeKind: null,
@@ -510,6 +540,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "generating",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "reading", label: "Lendo a fonte 3…" },
       outcome: null,
       outcomeKind: null,
@@ -526,6 +559,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "generating",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
       outcomeKind: null,
@@ -537,26 +573,20 @@ describe("Aviso de geração", () => {
   });
 
   it("keeps Cancelar in the banner while the Gerar page is loading or failed", async () => {
-    backend({
+    const running: GenerationStatus = {
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "generating",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
       outcomeKind: null,
-    });
+    };
     mockIPC((command) => {
-      if (command === "generation_status")
-        return {
-          running: true,
-          startedAt: "2026-11-20T10:00:00.000Z",
-          kind: "generate",
-          stage: "generating",
-          progress: { kind: "started", label: "Gerando as questões…" },
-          outcome: null,
-          outcomeKind: null,
-        };
+      if (command === "generation_status") return running;
       if (command === "draft_waiting" || command === "drafts_waiting") return [];
       throw new Error("sem acesso");
     });
@@ -571,6 +601,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "generating",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
       outcomeKind: null,
@@ -588,6 +621,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "generating",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Gerando as questões…" },
       outcome: null,
       outcomeKind: null,
@@ -600,6 +636,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
       stage: "checking",
+      stages: steps,
+      canCancel: true,
+      cancelDiscardsDraft: true,
       progress: { kind: "thinking", label: "Conferindo às cegas…" },
       outcome: null,
       outcomeKind: null,
@@ -622,6 +661,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "recheck",
       stage: "checking",
+      stages: checkSteps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Conferindo às cegas…" },
       outcome: null,
       outcomeKind: null,
@@ -644,6 +686,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "recheck",
       stage: "checking",
+      stages: checkSteps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: null,
       outcome: null,
       outcomeKind: null,
@@ -659,6 +704,9 @@ describe("Aviso de geração", () => {
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "recheck",
       stage: "checking",
+      stages: checkSteps,
+      canCancel: true,
+      cancelDiscardsDraft: false,
       progress: { kind: "started", label: "Conferindo às cegas…" },
       outcome: null,
       outcomeKind: null,

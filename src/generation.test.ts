@@ -16,6 +16,12 @@ import {
   watchGeneration,
 } from "./generation";
 
+const stages = [
+  { id: "generating", label: "Gerando as questões" },
+  { id: "checking", label: "Conferindo às cegas" },
+  { id: "resolving", label: "Resolvendo as contestações" },
+] as const;
+
 const running = (
   kind: GenerationKind,
   stage: GenerationStage,
@@ -25,6 +31,9 @@ const running = (
   startedAt: "2026-11-20T10:00:00.000Z",
   kind,
   stage,
+  stages: kind === "generate" ? [...stages] : stages.slice(1),
+  canCancel: true,
+  cancelDiscardsDraft: kind === "generate" && (stage === "checking" || stage === "resolving"),
   progress: label === null ? null : { kind: "thinking", label },
   outcome: null,
   outcomeKind: null,
@@ -34,6 +43,9 @@ const idle: GenerationStatus = {
   startedAt: null,
   kind: null,
   stage: "preparing",
+  stages: [],
+  canCancel: false,
+  cancelDiscardsDraft: false,
   progress: null,
   outcome: null,
   outcomeKind: null,

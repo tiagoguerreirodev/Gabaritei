@@ -2,6 +2,7 @@
 import type { GenerationKind } from "./GenerationKind";
 import type { GenerationOutcome } from "./GenerationOutcome";
 import type { GenerationStage } from "./GenerationStage";
+import type { GenerationStep } from "./GenerationStep";
 import type { Progress } from "./Progress";
 
 /**
@@ -15,7 +16,7 @@ kind: GenerationKind | null,
 /**
  * The stage of the running job (`Preparing` when not running).
  */
-stage: GenerationStage, 
+stage: GenerationStage, stages: Array<GenerationStep>, cancelDiscardsDraft: boolean, canCancel: boolean, 
 /**
  * The latest progress label while running.
  */

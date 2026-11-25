@@ -12,19 +12,8 @@ const [status, setStatusRaw] = createSignal<GenerationStatus | null>(null);
 const [waiting, setWaiting] = createSignal<DraftListItem[]>([]);
 let watching = false;
 
-/**
- * The stages of a run, in order. The backend reports the current one as `status.stage`; saving
- * is not reported, so it is not listed.
- */
-export const GENERATION_STAGES = [
-  { id: "generating", label: "Gerando as questões" },
-  { id: "checking", label: "Conferindo às cegas" },
-  { id: "resolving", label: "Resolvendo as contestações" },
-] as const;
-
-/** The stages that apply to the running job: two for a re-check, three for a generation. */
-export const generationStages = () =>
-  status()?.kind === "recheck" ? GENERATION_STAGES.slice(1) : GENERATION_STAGES;
+/** The ordered stages the backend reports for the current run. */
+export const generationStages = () => status()?.stages ?? [];
 
 /**
  * Index into `generationStages()` of the stage the running job is in, or `null` when none has
@@ -44,15 +33,8 @@ export function generationStageSentence(): string {
   return `Etapa ${index + 1} de ${generationStages().length}: ${generationStages()[index]?.label}`;
 }
 
-/** Whether cancelling now throws the draft away: only a fresh run past the generating stage. */
-export const cancelDiscardsDraft = () => {
-  const current = status();
-  return (
-    !!current?.running &&
-    current.kind === "generate" &&
-    (current.stage === "checking" || current.stage === "resolving")
-  );
-};
+/** Whether cancelling now would discard the draft. */
+export const cancelDiscardsDraft = () => status()?.cancelDiscardsDraft ?? false;
 
 /** Whether the run on screen (or, once it ended, its outcome) is a re-check of a saved draft. */
 export const isRecheckRun = () => {

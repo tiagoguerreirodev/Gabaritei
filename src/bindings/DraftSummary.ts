@@ -11,7 +11,7 @@ export type DraftSummary = { id: DraftId, status: DraftStatus, createdAt: string
 /**
  * Questions already in the bank (they merge instead of duplicating).
  */
-duplicates: number, agreed: number, fixed: number, disputed: number, unchecked: number, 
+duplicates: number, agreed: number, fixed: number, disputed: number, unchecked: number, confirmed: number, needsCheck: boolean, 
 /**
  * Why the blind check could not complete, if it failed.
  */

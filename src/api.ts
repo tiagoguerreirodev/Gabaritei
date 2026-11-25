@@ -27,6 +27,7 @@ import type { DraftListItem } from "./bindings/DraftListItem";
 import type { DraftSummary } from "./bindings/DraftSummary";
 import type { LearningOverview } from "./bindings/LearningOverview";
 import type { HomeSummary } from "./bindings/HomeSummary";
+import type { ImportAllOutcome } from "./bindings/ImportAllOutcome";
 import type { ImportMode } from "./bindings/ImportMode";
 import type { ImportResult } from "./bindings/ImportResult";
 import type { LegacyImportOutcome } from "./bindings/LegacyImportOutcome";
@@ -172,6 +173,8 @@ export const api = {
   draftSummary: (id: string) => call<DraftSummary>("draft_summary", { id }),
   /** Imports a draft as a new generated collection: every question, or only the confirmed ones. */
   draftImport: (id: string, mode: ImportMode) => call<ImportResult>("draft_import", { id, mode }),
+  /** Imports a whole draft, checking it first when needed. */
+  draftImportAll: (id: string) => call<ImportAllOutcome>("draft_import_all", { id }),
   /** Discards a draft that is waiting for review. */
   draftDiscard: (id: string) => call<null>("draft_discard", { id }),
   /** Asks which PDF, Markdown or text files to attach. Empty if the user cancels. */

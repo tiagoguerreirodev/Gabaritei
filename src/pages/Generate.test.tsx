@@ -6,6 +6,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { Catalog } from "../bindings/Catalog";
 import type { GenerateRequest } from "../bindings/GenerateRequest";
+import type { RoleChange } from "../bindings/RoleChange";
+import type { RoleConfig } from "../bindings/RoleConfig";
+import type { RoleOptions } from "../bindings/RoleOptions";
 import type { GenerationStatus } from "../bindings/GenerationStatus";
 import GenerationBanner from "../components/GenerationBanner";
 import { Toaster } from "../components/toasts";
@@ -111,6 +114,24 @@ function backend(
         return catalog;
       case "ai_settings":
         return aiSettings;
+      case "ai_role_options": {
+        const config = args.config as RoleConfig;
+        const options: RoleOptions = {
+          efforts: ["high", "xhigh"],
+          showFast: true,
+          problem:
+            config.model === "antigo"
+              ? "O modelo “antigo” não está mais disponível. Escolha outro."
+              : null,
+        };
+        return options;
+      }
+      case "ai_change_role": {
+        const change = args.change as RoleChange;
+        return change.kind === "agent" && change.agent === "claude"
+          ? { ...role, agent: "claude", model: "" }
+          : role;
+      }
       case "generation_status":
         return status;
       case "generation_start":
@@ -732,7 +753,7 @@ describe("Aviso de geração", () => {
 
     // Claude offers no list: free text, and the Codex model name is not carried over.
     await user.selectOptions(generator.getByLabelText("Agente: Gerador"), "claude");
-    expect(generator.getByRole("textbox", { name: "Modelo: Gerador" })).toHaveValue("");
+    expect(await generator.findByRole("textbox", { name: "Modelo: Gerador" })).toHaveValue("");
 
     await user.selectOptions(generator.getByLabelText("Agente: Gerador"), "codex");
     expect(await generator.findByRole("combobox", { name: "Modelo: Gerador" })).toHaveValue(

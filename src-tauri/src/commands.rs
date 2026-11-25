@@ -23,7 +23,7 @@ use crate::ai::remnote_probe::{self, RemNoteTest};
 use crate::ai::review::{
     self, DraftListItem, DraftSummary, ImportAllOutcome, ImportMode, ImportResult,
 };
-use crate::ai::roles::{self, Role};
+use crate::ai::roles::{self, Role, RoleConfig};
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, ResolvedClis};
 use crate::appearance::{self, Appearance};
@@ -493,6 +493,29 @@ pub fn ai_catalog(
 ) -> AppResult<model_catalog::Catalog> {
     let cli_paths = db.with(|conn| settings::load_cli_paths(conn))?;
     Ok(model_catalog::catalog(&cache, &cli_paths, refresh))
+}
+
+/// Catalog choices and validation for the role being edited, without loading the CLI.
+#[tauri::command]
+pub fn ai_role_options(
+    db: State<'_, Database>,
+    cache: State<'_, CatalogCache>,
+    config: RoleConfig,
+) -> AppResult<model_catalog::RoleOptions> {
+    let cli_paths = db.with(|conn| settings::load_cli_paths(conn))?;
+    Ok(cache.role_options(&cli_paths, &config))
+}
+
+/// Changes the agent or model and reconciles its effort and Fast Mode.
+#[tauri::command]
+pub fn ai_change_role(
+    db: State<'_, Database>,
+    cache: State<'_, CatalogCache>,
+    config: RoleConfig,
+    change: model_catalog::RoleChange,
+) -> AppResult<RoleConfig> {
+    let cli_paths = db.with(|conn| settings::load_cli_paths(conn))?;
+    Ok(cache.change_role(&cli_paths, &config, &change))
 }
 
 /// Validates and saves the AI settings, and returns them as saved.
@@ -1667,7 +1690,7 @@ mod tests {
     }
 
     #[test]
-    fn saving_the_settings_makes_the_next_catalog_read_load_again() {
+    fn changing_a_cli_path_makes_the_next_catalog_read_load_again() {
         use std::sync::atomic::Ordering;
         let loads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let cache = crate::ai::catalog::CatalogCache::new(vec![Box::new(OneModel(loads.clone()))]);
@@ -1679,13 +1702,89 @@ mod tests {
 
         let settings = app.call("ai_settings", json!({})).unwrap();
         let input = json!({
-            "cliPaths": settings["cliPaths"], "roles": settings["roles"], "remnote": settings["remnote"],
+            "cliPaths": { "codex": "/opt/new-codex", "claude": null },
+            "roles": settings["roles"], "remnote": settings["remnote"],
         });
         app.call("save_ai_settings", json!({ "input": input }))
             .unwrap();
 
         app.call("ai_catalog", json!({ "refresh": false })).unwrap();
         assert_eq!(loads.load(Ordering::SeqCst), before + 2);
+    }
+
+    #[test]
+    fn a_changed_cli_path_accepts_a_model_absent_from_the_previous_list() {
+        let cache = CatalogCache::new(vec![Box::new(OneModel::default())]);
+        cache.get(&settings::CliPaths::default());
+        let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
+        let mut input = app.call("ai_settings", json!({})).unwrap();
+        input["cliPaths"]["codex"] = json!("/opt/new-codex");
+        input["roles"]["generate"]["model"] = json!("new-model");
+        assert_eq!(
+            app.call("save_ai_settings", json!({ "input": input.clone() }))
+                .unwrap(),
+            input,
+        );
+    }
+
+    #[test]
+    fn saving_a_new_unlisted_model_leaves_the_roles_unchanged() {
+        let cache = CatalogCache::new(vec![Box::new(OneModel::default())]);
+        cache.get(&settings::CliPaths::default());
+        let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
+        let saved = app.call("ai_settings", json!({})).unwrap();
+        let mut edited = saved.clone();
+        edited["roles"]["generate"]["model"] = json!("obsolete");
+
+        let problem = app
+            .call("save_ai_settings", json!({ "input": edited }))
+            .unwrap_err();
+        assert!(problem["message"].as_str().unwrap().contains("obsolete"));
+        assert_eq!(app.call("ai_settings", json!({})).unwrap(), saved);
+    }
+
+    #[test]
+    fn an_unchanged_stale_role_allows_an_unrelated_settings_save() {
+        let cache = CatalogCache::new(vec![Box::new(OneModel::default())]);
+        cache.get(&settings::CliPaths::default());
+        let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
+        let mut input = app.call("ai_settings", json!({})).unwrap();
+        input["remnote"] = json!({ "mode": "server", "url": "https://r.example/mcp", "tools": [] });
+        assert_eq!(
+            app.call("save_ai_settings", json!({ "input": input.clone() }))
+                .unwrap(),
+            input,
+        );
+    }
+
+    #[test]
+    fn editing_a_role_gets_the_catalogs_options_and_problem() {
+        let cache = CatalogCache::new(vec![Box::new(OneModel::default())]);
+        cache.get(&settings::CliPaths::default());
+        let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
+        let config = json!({ "agent": "codex", "model": "m1", "effort": "high", "fast": false });
+        assert_eq!(
+            app.call("ai_role_options", json!({ "config": config }))
+                .unwrap(),
+            json!({
+                "efforts": ["low"], "showFast": false,
+                "problem": "O esforço “high” não existe para o modelo “m1”. Escolha outro."
+            })
+        );
+    }
+
+    #[test]
+    fn switching_agents_uses_the_backend_role_transition() {
+        let cache = CatalogCache::new(vec![Box::new(OneModel::default())]);
+        cache.get(&settings::CliPaths::default());
+        let app = MockApp::with_catalog(Database::open_in_memory().unwrap(), cache);
+        assert_eq!(
+            app.call("ai_change_role", json!({
+                "config": { "agent": "claude", "model": "sonnet", "effort": "high", "fast": true },
+                "change": { "kind": "agent", "agent": "codex" }
+            })).unwrap(),
+            json!({ "agent": "codex", "model": "m1", "effort": "low", "fast": false }),
+        );
     }
 
     #[test]

@@ -1,32 +1,48 @@
 import { For, Show, onMount } from "solid-js";
 import type { Agent } from "../bindings/Agent";
 import type { Effort } from "../bindings/Effort";
-import type { RoleConfig } from "../bindings/RoleConfig";
 import {
   catalogState,
-  effortOptions,
-  fastSupport,
   loadCatalog,
   readyList,
-  roleForModel,
   unavailableReason,
+  type RoleEditor,
 } from "../catalog";
-import { effortLabels } from "../pages/settings/labels";
+import { agentLabels, agents, effortLabels } from "../pages/settings/labels";
 
 interface FieldProps {
   /** Names the field for assistive technology, e.g. the role's name. */
   label: string;
-  value: RoleConfig;
-  onChange: (config: RoleConfig) => void;
+  editor: RoleEditor;
 }
 
-/**
- * Model of a role: a list from the agent's CLI, or free text when the agent offers no list.
- * A saved model that the list no longer has stays selected, marked as unavailable.
- */
+export function AgentField(props: FieldProps) {
+  return (
+    <select
+      aria-label={`Agente: ${props.label}`}
+      disabled={props.editor.changing()}
+      onChange={(event) => {
+        const agent = event.currentTarget.value as Agent;
+        event.currentTarget.value = props.editor.value().agent;
+        void props.editor.change({ kind: "agent", agent });
+      }}
+    >
+      <For each={agents}>
+        {(agent) => (
+          <option value={agent} selected={agent === props.editor.value().agent}>
+            {agentLabels[agent]}
+          </option>
+        )}
+      </For>
+    </select>
+  );
+}
+
+/** Model of a role: a list from the agent's CLI, or free text when the agent offers no list. */
 export function ModelField(props: FieldProps) {
   onMount(() => void loadCatalog());
-  const list = () => readyList(catalogState(), props.value.agent);
+  const value = () => props.editor.value();
+  const list = () => readyList(catalogState(), value().agent);
   return (
     <Show
       when={list()}
@@ -35,26 +51,32 @@ export function ModelField(props: FieldProps) {
           type="text"
           aria-label={`Modelo: ${props.label}`}
           placeholder="Digite o modelo"
-          value={props.value.model}
-          onInput={(event) => props.onChange({ ...props.value, model: event.currentTarget.value })}
+          value={value().model}
+          disabled={props.editor.changing()}
+          onInput={(event) =>
+            props.editor.onChange({ ...value(), model: event.currentTarget.value })
+          }
         />
       }
     >
       {(agent) => (
         <select
           aria-label={`Modelo: ${props.label}`}
-          onChange={(event) =>
-            props.onChange(roleForModel(catalogState(), props.value, event.currentTarget.value))
-          }
+          disabled={props.editor.changing()}
+          onChange={(event) => {
+            const model = event.currentTarget.value;
+            event.currentTarget.value = value().model;
+            void props.editor.change({ kind: "model", model });
+          }}
         >
-          <Show when={!agent().models.some((model) => model.id === props.value.model)}>
-            <option value={props.value.model} selected>
-              {props.value.model ? `${props.value.model} (não disponível)` : "Escolha um modelo"}
+          <Show when={!agent().models.some((model) => model.id === value().model)}>
+            <option value={value().model} selected>
+              {value().model ? `${value().model} (não disponível)` : "Escolha um modelo"}
             </option>
           </Show>
           <For each={agent().models}>
             {(model) => (
-              <option value={model.id} selected={model.id === props.value.model}>
+              <option value={model.id} selected={model.id === value().model}>
                 {model.label}
               </option>
             )}
@@ -65,24 +87,25 @@ export function ModelField(props: FieldProps) {
   );
 }
 
-/** Effort of a role: the efforts the selected model supports. */
 export function EffortField(props: FieldProps) {
-  const options = () => effortOptions(catalogState(), props.value);
+  const value = () => props.editor.value();
+  const options = () => props.editor.options()?.efforts ?? [value().effort];
   return (
     <select
       aria-label={`Esforço: ${props.label}`}
+      disabled={props.editor.changing()}
       onChange={(event) =>
-        props.onChange({ ...props.value, effort: event.currentTarget.value as Effort })
+        props.editor.onChange({ ...value(), effort: event.currentTarget.value as Effort })
       }
     >
-      <Show when={!options().includes(props.value.effort)}>
-        <option value={props.value.effort} selected>
-          {effortLabels[props.value.effort]} (não disponível)
+      <Show when={!options().includes(value().effort)}>
+        <option value={value().effort} selected>
+          {effortLabels[value().effort]} (não disponível)
         </option>
       </Show>
       <For each={options()}>
         {(effort) => (
-          <option value={effort} selected={effort === props.value.effort}>
+          <option value={effort} selected={effort === value().effort}>
             {effortLabels[effort]}
           </option>
         )}
@@ -91,22 +114,23 @@ export function EffortField(props: FieldProps) {
   );
 }
 
-/** Fast Mode of a role: shown unless the selected model is known to lack it. */
 export function FastField(props: FieldProps) {
+  const value = () => props.editor.value();
   return (
-    <Show when={fastSupport(catalogState(), props.value) !== "no"}>
+    <Show when={props.editor.options()?.showFast !== false}>
       <label class="check">
         <input
           type="checkbox"
           aria-label={`Modo rápido: ${props.label}`}
-          checked={props.value.fast}
+          checked={value().fast}
+          disabled={props.editor.changing()}
           onChange={(event) =>
-            props.onChange({ ...props.value, fast: event.currentTarget.checked })
+            props.editor.onChange({ ...value(), fast: event.currentTarget.checked })
           }
         />
         Modo rápido
       </label>
-      <Show when={props.value.agent === "claude"}>
+      <Show when={value().agent === "claude"}>
         <p class="muted" role="note">
           Exige uso extra ativado na conta Claude; sem isso, roda no modo normal.
         </p>

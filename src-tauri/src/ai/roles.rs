@@ -144,15 +144,13 @@ fn validate_roles(
     cache: &CatalogCache,
     choices: &[(Role, Option<&RoleConfig>)],
 ) -> AppResult<()> {
-    if cache.cached().is_none() {
-        return Ok(());
-    }
-    let saved = db.with(|conn| settings::load_roles(conn))?;
+    let (cli_paths, saved) =
+        db.with(|conn| Ok((settings::load_cli_paths(conn)?, settings::load_roles(conn)?)))?;
     let configs: Vec<_> = choices
         .iter()
         .map(|&(role, choice)| (saved.resolve(role, choice), role.label()))
         .collect();
-    catalog::ensure_cached_listed(cache, &configs)
+    catalog::ensure_cached_listed(cache, &cli_paths, &configs)
 }
 
 #[cfg(test)]

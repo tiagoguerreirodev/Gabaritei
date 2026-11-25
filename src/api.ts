@@ -37,6 +37,9 @@ import type { Performance } from "./bindings/Performance";
 import type { PerformanceQuery } from "./bindings/PerformanceQuery";
 import type { RemNoteTest } from "./bindings/RemNoteTest";
 import type { RecheckView } from "./bindings/RecheckView";
+import type { RoleChange } from "./bindings/RoleChange";
+import type { RoleConfig } from "./bindings/RoleConfig";
+import type { RoleOptions } from "./bindings/RoleOptions";
 import type { SessionStart } from "./bindings/SessionStart";
 import type { TopicPath } from "./bindings/TopicPath";
 import type { CountLimits } from "./bindings/CountLimits";
@@ -157,6 +160,11 @@ export const api = {
   aiSettings: () => call<AiSettings>("ai_settings"),
   /** Models and efforts each agent offers, from the CLIs. Cached; `refresh` reads them again. */
   aiCatalog: (refresh = false) => call<Catalog>("ai_catalog", { refresh }),
+  /** The efforts, Fast Mode visibility and validation message for a role. */
+  aiRoleOptions: (config: RoleConfig) => call<RoleOptions>("ai_role_options", { config }),
+  /** Applies an agent or model switch using the cached catalog. */
+  aiChangeRole: (config: RoleConfig, change: RoleChange) =>
+    call<RoleConfig>("ai_change_role", { config, change }),
   /** Validates and saves the AI settings; returns them as saved. */
   saveAiSettings: (input: AiSettingsInput) => call<AiSettings>("save_ai_settings", { input }),
   /** Saves the RemNote token in the OS keychain (`null` or blank removes it). */

@@ -11,7 +11,7 @@ import {
 } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { api } from "../api";
-import { catalogState, roleProblem } from "../catalog";
+import { createRoleEditor } from "../catalog";
 import { CatalogNotice } from "../components/ModelOptions";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { GenerateRequest } from "../bindings/GenerateRequest";
@@ -198,10 +198,13 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
   const remnoteOn = () => props.settings.remnote.mode !== "off";
   const generator = () => form.generator ?? props.settings.roles.generate;
   const checker = () => form.checker ?? props.settings.roles.blindCheck;
+  const generatorEditor = createRoleEditor(generator, (config) => setForm("generator", config));
+  const checkerEditor = createRoleEditor(checker, (config) => setForm("checker", config));
+  const changingRole = () => generatorEditor.changing() || checkerEditor.changing();
   const problems = () =>
     [
-      ["Gerador", roleProblem(catalogState(), generator())],
-      ["Conferente", roleProblem(catalogState(), checker())],
+      ["Gerador", generatorEditor.options()?.problem],
+      ["Conferente", checkerEditor.options()?.problem],
     ].flatMap(([label, problem]) => (problem ? [`${label}: ${problem}`] : []));
   // The role pickers that fix a problem live in the advanced options: show them.
   createEffect(() => {
@@ -238,6 +241,7 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
 
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
+    if (changingRole() || problems().length > 0) return;
     validateTopic();
     validateCount();
     if (topicError() || countError()) {
@@ -428,17 +432,9 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
           </div>
 
           <span class="label">Gerador</span>
-          <RolePicker
-            label="Gerador"
-            value={form.generator ?? props.settings.roles.generate}
-            onChange={(config) => setForm("generator", config)}
-          />
+          <RolePicker label="Gerador" editor={generatorEditor} />
           <span class="label">Conferente</span>
-          <RolePicker
-            label="Conferente"
-            value={form.checker ?? props.settings.roles.blindCheck}
-            onChange={(config) => setForm("checker", config)}
-          />
+          <RolePicker label="Conferente" editor={checkerEditor} />
         </div>
       </details>
       <CatalogNotice agents={[generator().agent, checker().agent]} />
@@ -454,7 +450,11 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
           Falta preencher {shownErrors().length === 1 ? "um campo" : "dois campos"} para gerar.
         </p>
       </Show>
-      <button type="submit" class="primary" disabled={submitting() || problems().length > 0}>
+      <button
+        type="submit"
+        class="primary"
+        disabled={submitting() || changingRole() || problems().length > 0}
+      >
         {submitting() ? "Iniciando…" : "Gerar"}
       </button>
     </form>

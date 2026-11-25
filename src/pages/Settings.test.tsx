@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { AiSettingsInput } from "../bindings/AiSettingsInput";
 import type { Catalog } from "../bindings/Catalog";
+import type { RoleConfig } from "../bindings/RoleConfig";
+import type { RoleOptions } from "../bindings/RoleOptions";
 import { resetCatalog } from "../catalog";
 import { Toaster, dismissToast } from "../components/toasts";
 import Settings from "./Settings";
@@ -59,6 +61,20 @@ function backend(
         return catalog;
       case "ai_settings":
         return stored;
+      case "ai_role_options": {
+        const { config } = args as { config: RoleConfig };
+        const options: RoleOptions = {
+          efforts: ["low", "xhigh", "ultra"],
+          showFast: true,
+          problem:
+            config.model === "antigo"
+              ? "O modelo “antigo” não está mais disponível. Escolha outro."
+              : null,
+        };
+        return options;
+      }
+      case "ai_change_role":
+        return { ...role, agent: "claude", model: "" };
       case "save_ai_settings": {
         const { input } = args as { input: AiSettingsInput };
         stored = { ...input, hasRemnoteToken: stored.hasRemnoteToken };
@@ -161,6 +177,9 @@ describe("Configurações", () => {
       "claude",
     );
     // Switching the agent clears the model, so the old agent's name is never kept.
+    await waitFor(() =>
+      expect(screen.getByLabelText("Modelo: Explicação sob demanda")).toHaveValue(""),
+    );
     await user.type(screen.getByLabelText("Modelo: Explicação sob demanda"), "claude-sonnet-5-5");
     await user.click(screen.getByRole("button", { name: "Salvar configurações" }));
 
@@ -294,11 +313,13 @@ describe("Configurações", () => {
     const model = await screen.findByRole("combobox", { name: "Modelo: Gerar questões" });
     expect(within(model).getByRole("option", { name: "GPT-6.2-Sol" })).toBeTruthy();
     const effort = screen.getByRole("combobox", { name: "Esforço: Gerar questões" });
-    expect(
-      within(effort)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["Baixo", "Extra alto", "Ultra"]);
+    await waitFor(() => {
+      expect(
+        within(effort)
+          .getAllByRole("option")
+          .map((o) => o.textContent),
+      ).toEqual(["Baixo", "Extra alto", "Ultra"]);
+    });
 
     await user.click(screen.getByRole("button", { name: "Atualizar listas" }));
     await waitFor(() => {

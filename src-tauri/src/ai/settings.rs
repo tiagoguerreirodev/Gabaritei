@@ -9,8 +9,8 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::agent::{Agent, Effort};
-use super::catalog::CatalogCache;
+use super::agent::Agent;
+use super::catalog::{CatalogCache, ensure_listed};
 use super::discovery::{self, CliStatus};
 use super::roles::{Role, RoleConfig, RoleSettings};
 use super::runner::{JobSpec, RemNoteAccess, is_valid_tool_name, is_write_like};
@@ -145,12 +145,13 @@ pub(crate) fn save_and_reload(
     catalog: &CatalogCache,
     input: AiSettingsInput,
 ) -> AppResult<AiSettings> {
-    let saved = db.transaction(|tx| {
-        save(tx, input)?;
-        load(tx, secrets)
+    let (saved, paths_changed) = db.transaction(|tx| {
+        let paths_changed = save_input(tx, input, Some(catalog))?;
+        Ok((load(tx, secrets)?, paths_changed))
     })?;
-    // The CLI paths may have changed, so the model lists are read again on next use.
-    catalog.clear();
+    if paths_changed {
+        catalog.clear();
+    }
     Ok(saved)
 }
 
@@ -210,7 +211,7 @@ pub fn validate_role_config(config: &mut RoleConfig, label: &str) -> AppResult<(
             "O nome do modelo de “{label}” é inválido."
         )));
     }
-    if config.agent == Agent::Claude && config.effort == Effort::Ultra {
+    if !config.agent.supports_effort(config.effort) {
         return Err(AppError::Invalid(format!(
             "O esforço Ultra só existe no Codex. Escolha outro esforço para “{label}”."
         )));
@@ -218,18 +219,44 @@ pub fn validate_role_config(config: &mut RoleConfig, label: &str) -> AppResult<(
     Ok(())
 }
 
-/// Checks and saves the settings. Nothing is written if anything is invalid.
+#[cfg(test)]
 pub fn save(conn: &Connection, input: AiSettingsInput) -> AppResult<()> {
+    save_input(conn, input, None).map(|_| ())
+}
+
+/// Nothing is written unless the settings are valid, including any available model lists.
+fn save_input(
+    conn: &Connection,
+    input: AiSettingsInput,
+    cache: Option<&CatalogCache>,
+) -> AppResult<bool> {
     let roles = validated_roles(input.roles)?;
     let cli_paths = CliPaths {
         claude: clean_path(&input.cli_paths.claude, "Claude Code")?,
         codex: clean_path(&input.cli_paths.codex, "Codex")?,
     };
     let remnote = validated_remnote(input.remnote)?;
+    let previous = load_cli_paths(conn)?;
+    if let Some(cache) = cache {
+        let saved_roles = load_roles(conn)?;
+        cache
+            .with_cached(&previous, |catalog| {
+                roles
+                    .all_roles()
+                    .filter(|(role, config)| {
+                        // A saved role can go stale without preventing unrelated settings edits.
+                        // An edited executable path has no matching list until it is loaded.
+                        *config != saved_roles.get(*role)
+                            && previous.get(config.agent) == cli_paths.get(config.agent)
+                    })
+                    .try_for_each(|(role, config)| ensure_listed(catalog, config, role.label()))
+            })
+            .unwrap_or(Ok(()))?;
+    }
     set_setting(conn, SettingKey::AiRoles, &roles)?;
     set_setting(conn, SettingKey::CliPaths, &cli_paths)?;
     set_setting(conn, SettingKey::RemNote, &remnote)?;
-    Ok(())
+    Ok(cli_paths != previous)
 }
 
 fn validated_roles(mut roles: RoleSettings) -> AppResult<RoleSettings> {

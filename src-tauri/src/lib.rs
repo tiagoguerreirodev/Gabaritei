@@ -91,6 +91,8 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::unannul,
             commands::ai_settings,
             commands::ai_catalog,
+            commands::ai_role_options,
+            commands::ai_change_role,
             commands::save_ai_settings,
             commands::set_remnote_token,
             commands::cli_test,

@@ -1,4 +1,4 @@
-import { Show } from "solid-js";
+import FieldError from "./FieldError";
 import type { CountLimits } from "../../bindings/CountLimits";
 
 export default function CountField(props: {
@@ -28,14 +28,7 @@ export default function CountField(props: {
         Obrigatório. De {props.counts.min} a {props.counts.max}. Cada questão passa pela conferência
         às cegas.
       </p>
-      <Show when={props.error}>
-        {(message) => (
-          <p class="field-error" id="gen-count-error">
-            <span aria-hidden="true">✕ </span>
-            {message()}
-          </p>
-        )}
-      </Show>
+      <FieldError id="gen-count-error">{props.error}</FieldError>
     </>
   );
 }

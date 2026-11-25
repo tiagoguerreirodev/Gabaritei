@@ -1,3 +1,4 @@
+import FieldError from "./generate/FieldError";
 import SourcesFields from "./generate/SourcesFields";
 import CountField from "./generate/CountField";
 import { A } from "@solidjs/router";
@@ -234,14 +235,12 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
     validateTopic();
     validateCount();
     if (topicError() || countError()) {
-      const { area, matter } = form.topic;
-      const target = topicError()
-        ? !area.trim()
-          ? "gen-topic-area"
-          : !matter.trim()
-            ? "gen-topic-matter"
-            : "gen-topic-topic"
-        : "gen-count";
+      const fields = [
+        [form.topic.area, "gen-topic-area"],
+        [form.topic.matter, "gen-topic-matter"],
+        [form.topic.topic, "gen-topic-topic"],
+      ] as const;
+      const target = fields.find(([value]) => !value.trim())?.[1] ?? "gen-count";
       document.getElementById(target)?.focus();
       return;
     }
@@ -281,14 +280,7 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
             if (shownTopicError() || area.trim() || matter.trim() || topic.trim()) validateTopic();
           }}
         />
-        <Show when={shownTopicError()}>
-          {(message) => (
-            <p class="field-error" id="gen-topic-error">
-              <span aria-hidden="true">✕ </span>
-              {message()}
-            </p>
-          )}
-        </Show>
+        <FieldError id="gen-topic-error">{shownTopicError()}</FieldError>
 
         <CountField
           value={form.count}
@@ -367,12 +359,10 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
           <p>Corrija em “Opções avançadas”, no Gerador e no Conferente, para poder gerar.</p>
         </div>
       </Show>
-      <Show when={shownErrors().length > 0}>
-        <p class="field-error" role="alert">
-          <span aria-hidden="true">✕ </span>
-          Falta preencher {shownErrors().length === 1 ? "um campo" : "dois campos"} para gerar.
-        </p>
-      </Show>
+      <FieldError role="alert">
+        {shownErrors().length > 0 &&
+          `Falta preencher ${shownErrors().length === 1 ? "um campo" : "dois campos"} para gerar.`}
+      </FieldError>
       <button
         type="submit"
         class="primary"

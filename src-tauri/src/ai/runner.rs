@@ -25,6 +25,8 @@ pub use process::run_job;
 pub(super) use process::{Parser, Plan};
 pub(super) use workspace::Workdir;
 
+const MAX_TOOL_NAME_LENGTH: usize = 100;
+
 /// How a RemNote MCP server is made available to a run.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RemNoteAccess {
@@ -90,6 +92,32 @@ impl JobSpec {
             timeout: Self::DEFAULT_TIMEOUT,
             grace: Self::DEFAULT_GRACE,
         }
+    }
+
+    pub fn with_input(self, instructions: String, prompt: String) -> Self {
+        Self {
+            instructions,
+            prompt,
+            ..self
+        }
+    }
+
+    pub fn with_sources(
+        self,
+        attachments: Vec<PathBuf>,
+        web: bool,
+        remnote: Option<RemNoteAccess>,
+    ) -> Self {
+        Self {
+            attachments,
+            web,
+            remnote,
+            ..self
+        }
+    }
+
+    pub fn with_fast(self, fast: bool) -> Self {
+        Self { fast, ..self }
     }
 }
 
@@ -161,6 +189,21 @@ impl Progress {
             stage: Some(stage),
             ..Self::new(kind, label)
         }
+    }
+
+    pub(super) fn from_kind(kind: ProgressKind) -> Self {
+        let label = match kind {
+            ProgressKind::Started => "Iniciando…",
+            ProgressKind::Thinking => "Raciocinando…",
+            ProgressKind::Reading => "Lendo as fontes…",
+            ProgressKind::Searching => "Pesquisando na web…",
+            ProgressKind::Writing => "Redigindo a resposta…",
+        };
+        Self::new(kind, label)
+    }
+
+    pub(super) fn consulting_remnote() -> Self {
+        Self::new(ProgressKind::Searching, "Consultando o RemNote…")
     }
 }
 
@@ -248,7 +291,7 @@ pub fn is_write_like(tool: &str) -> bool {
 /// Whether a tool name is plain: letters, digits, `_` and `-`, 1 to 100 characters. Anything
 /// else (a comma, parenthesis, `*` or `:`) could change what an allowlist entry means to a CLI.
 pub fn is_valid_tool_name(tool: &str) -> bool {
-    (1..=100).contains(&tool.chars().count())
+    (1..=MAX_TOOL_NAME_LENGTH).contains(&tool.chars().count())
         && tool
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')

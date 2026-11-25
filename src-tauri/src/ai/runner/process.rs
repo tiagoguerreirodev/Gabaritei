@@ -4,7 +4,8 @@ use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -23,6 +24,9 @@ const SCRUBBED_ENV: &[&str] = &[
 
 /// How much of the CLI's stderr we keep for error messages.
 const STDERR_KEEP: usize = 8 * 1024;
+const STDERR_BUFFER: usize = 4096;
+#[cfg(unix)]
+const TERMINATION_POLL: Duration = Duration::from_millis(10);
 const POLL: Duration = Duration::from_millis(50);
 
 /// Arguments and environment for one spawn.
@@ -51,108 +55,146 @@ pub fn run_job(
     let started = Instant::now();
     let work = Workdir::prepare(spec)?;
     let (mut child, mut parser) = spawn(spec, &work)?;
-
-    // The prompt goes on stdin: it stays out of the process list and has no length limit.
-    let mut stdin = child.stdin.take().expect("stdin is piped");
-    let prompt = if spec.agent == Agent::Codex {
-        // Codex has no system-prompt flag, so the instructions lead the prompt.
-        format!("{}\n\n{}", spec.instructions, spec.prompt)
-    } else {
-        spec.prompt.clone()
+    let io = ChildIo::start(&mut child, spec);
+    let control = RunControl {
+        cancel,
+        deadline: started + spec.timeout,
+        grace: spec.grace,
     };
-    let writer = std::thread::spawn(move || {
-        let _ = stdin.write_all(prompt.as_bytes());
-    });
-
-    let stdout = child.stdout.take().expect("stdout is piped");
-    let stderr = child.stderr.take().expect("stderr is piped");
-    let (tx, rx) = mpsc::channel::<String>();
-    let reader = std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if tx.send(line).is_err() {
-                break;
-            }
-        }
-    });
-    let stderr_reader = std::thread::spawn(move || read_stderr(stderr));
-
-    let deadline = started + spec.timeout;
-    let mut last_progress: Option<Progress> = None;
-    let interrupted = |child: &mut Child| -> Option<RunError> {
-        if cancel.is_cancelled() {
-            terminate(child, spec.grace);
-            Some(RunError::Cancelled)
-        } else if Instant::now() >= deadline {
-            terminate(child, spec.grace);
-            Some(RunError::TimedOut)
-        } else {
-            None
-        }
-    };
-
-    let mut stopped = None;
-    loop {
-        if let Some(error) = interrupted(&mut child) {
-            stopped = Some(error);
-            break;
-        }
-        match rx.recv_timeout(POLL) {
-            Ok(line) => {
-                if let Some(progress) = parser.feed(&line)
-                    && last_progress.as_ref() != Some(&progress)
-                {
-                    on_progress(progress.clone());
-                    last_progress = Some(progress);
-                }
-            }
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
-        }
-    }
-    let status: Option<ExitStatus> = if stopped.is_none() {
-        loop {
-            if let Some(error) = interrupted(&mut child) {
-                stopped = Some(error);
-                break None;
-            }
-            match child.try_wait() {
-                Ok(Some(status)) => break Some(status),
-                Ok(None) => std::thread::sleep(POLL),
-                Err(_) => break None,
-            }
-        }
-    } else {
-        None
-    };
-    let _ = writer.join();
-    let _ = reader.join();
-    let stderr_text = stderr_reader.join().unwrap_or_default();
-    if let Some(error) = stopped {
-        return Err(error);
-    }
-
-    let status = status.ok_or_else(|| RunError::Failed {
-        code: "?".into(),
-        detail: String::new(),
-    })?;
-    if !status.success() {
-        let reported = parser.error_text().unwrap_or_default();
-        if looks_like_login_problem(&reported) || looks_like_login_problem(&stderr_text) {
-            return Err(RunError::NotLoggedIn);
-        }
-        let detail = known_failure(&format!("{reported}\n{stderr_text}"));
-        return Err(RunError::Failed {
-            code: status
-                .code()
-                .map_or_else(|| "sinal".to_owned(), |code| code.to_string()),
-            detail,
-        });
-    }
+    let status = stream_progress(&mut child, &control, &io.lines, &mut *parser, on_progress)
+        .and_then(|()| wait_for_exit(&mut child, &control));
+    let stderr = io.join();
+    check_exit(status?, &*parser, &stderr)?;
     let (value, cost_usd) = parser.finish(&work)?;
     Ok(JobOutput {
         value,
         cost_usd,
         duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+    })
+}
+
+struct ChildIo {
+    writer: JoinHandle<()>,
+    reader: JoinHandle<()>,
+    stderr_reader: JoinHandle<String>,
+    lines: Receiver<String>,
+}
+
+impl ChildIo {
+    fn start(child: &mut Child, spec: &JobSpec) -> Self {
+        // The prompt goes on stdin to keep it out of the process list.
+        let mut stdin = child.stdin.take().expect("stdin is piped");
+        let prompt = if spec.agent == Agent::Codex {
+            // Codex has no system-prompt flag, so the instructions lead the prompt.
+            format!("{}\n\n{}", spec.instructions, spec.prompt)
+        } else {
+            spec.prompt.clone()
+        };
+        let writer = std::thread::spawn(move || {
+            let _ = stdin.write_all(prompt.as_bytes());
+        });
+
+        let stdout = child.stdout.take().expect("stdout is piped");
+        let stderr = child.stderr.take().expect("stderr is piped");
+        let (tx, lines) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let stderr_reader = std::thread::spawn(move || read_stderr(stderr));
+        Self {
+            writer,
+            reader,
+            stderr_reader,
+            lines,
+        }
+    }
+
+    fn join(self) -> String {
+        let _ = self.writer.join();
+        let _ = self.reader.join();
+        self.stderr_reader.join().unwrap_or_default()
+    }
+}
+
+struct RunControl<'a> {
+    cancel: &'a CancelToken,
+    deadline: Instant,
+    grace: Duration,
+}
+
+impl RunControl<'_> {
+    fn check(&self, child: &mut Child) -> Result<(), RunError> {
+        let error = if self.cancel.is_cancelled() {
+            RunError::Cancelled
+        } else if Instant::now() >= self.deadline {
+            RunError::TimedOut
+        } else {
+            return Ok(());
+        };
+        terminate(child, self.grace);
+        Err(error)
+    }
+}
+
+fn stream_progress(
+    child: &mut Child,
+    control: &RunControl<'_>,
+    lines: &Receiver<String>,
+    parser: &mut dyn Parser,
+    on_progress: &mut dyn FnMut(Progress),
+) -> Result<(), RunError> {
+    let mut last = None;
+    loop {
+        control.check(child)?;
+        match lines.recv_timeout(POLL) {
+            Ok(line) => {
+                if let Some(progress) = parser.feed(&line)
+                    && last.as_ref() != Some(&progress)
+                {
+                    on_progress(progress.clone());
+                    last = Some(progress);
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return Ok(()),
+        }
+    }
+}
+
+fn wait_for_exit(child: &mut Child, control: &RunControl<'_>) -> Result<ExitStatus, RunError> {
+    loop {
+        control.check(child)?;
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => std::thread::sleep(POLL),
+            Err(_) => {
+                return Err(RunError::Failed {
+                    code: "?".into(),
+                    detail: String::new(),
+                });
+            }
+        }
+    }
+}
+
+fn check_exit(status: ExitStatus, parser: &dyn Parser, stderr: &str) -> Result<(), RunError> {
+    if status.success() {
+        return Ok(());
+    }
+    let reported = parser.error_text().unwrap_or_default();
+    if looks_like_login_problem(&reported) || looks_like_login_problem(stderr) {
+        return Err(RunError::NotLoggedIn);
+    }
+    let detail = known_failure(&format!("{reported}\n{stderr}"));
+    Err(RunError::Failed {
+        code: status
+            .code()
+            .map_or_else(|| "sinal".to_owned(), |code| code.to_string()),
+        detail,
     })
 }
 
@@ -215,8 +257,7 @@ fn isolate(command: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
+        command.creation_flags(discovery::CREATE_NO_WINDOW);
     }
 }
 
@@ -230,7 +271,7 @@ fn terminate(child: &mut Child, grace: Duration) {
         unsafe { libc::kill(group, libc::SIGINT) };
         let deadline = Instant::now() + grace;
         while Instant::now() < deadline && matches!(child.try_wait(), Ok(None)) {
-            std::thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(TERMINATION_POLL);
         }
         unsafe { libc::kill(group, libc::SIGKILL) };
     }
@@ -251,7 +292,7 @@ fn terminate(child: &mut Child, grace: Duration) {
 
 fn read_stderr(mut stderr: impl Read) -> String {
     let mut text = String::new();
-    let mut buffer = [0u8; 4096];
+    let mut buffer = [0u8; STDERR_BUFFER];
     while let Ok(read) = stderr.read(&mut buffer) {
         if read == 0 {
             break;

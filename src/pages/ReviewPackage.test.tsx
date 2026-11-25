@@ -394,7 +394,7 @@ describe("Revisar pacote", () => {
   });
 
   it("shows a refused check request without promising automatic import", async () => {
-    let refuse = (_error: Error) => {};
+    let refuse: (error: Error) => void = () => undefined;
     const response = new Promise<never>((_, reject) => (refuse = reject));
     mockIPC((command) => {
       switch (command) {

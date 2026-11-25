@@ -211,3 +211,21 @@ questions only. Both CLIs used their existing logins.
 The initial schema failure appeared as a generic CLI exit code in the preview. The preview
 also used plural labels for counts of one. This live pass covers Linux. RemNote verification
 is tracked separately in #54.
+
+### Live RemNote check on Windows 11 (#54)
+
+On 2026-11-25, Gabaritei 0.3.0 connected to a real local server named `remnote` at
+`http://127.0.0.1:7788/mcp`. An unauthenticated MCP initialize request returned HTTP 401.
+After the owner saved the token in Settings, **Testar conexão** succeeded and the app displayed
+the result of `tools/list`. The app sends its bearer token with each request.
+
+The list contained `find_edited_docs`, `find_quotes`, `get_user_info`, `list_commands`,
+`load_skill`, `read_daily_docs`, `read_docs`, `read_docs_raw`, `read_folders_raw`,
+`read_open_documents`, `search_docs`, `see_context` and `see_text_around_rem`.
+We selected `search_docs` in Settings and enabled RemNote on a one-question generation. The
+prompt requested one search for a synthetic marker. With Codex CLI 0.172.0 as generator, the
+app displayed **Consultando o RemNote…** and then **O pacote ficou pronto.** The package remained
+a draft.
+
+The Claude Code run remains pending. Gabaritei reported that its Windows CLI was missing when
+we selected Claude Code for the same test.

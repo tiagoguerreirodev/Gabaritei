@@ -5,6 +5,7 @@ use crate::ai::settings::AiSettingsInput;
 use crate::attempts::{FeedbackMode, SessionSource, SessionStart, answer as answer_question};
 use crate::bank::import_questions;
 use crate::bank::question::tests::multiple;
+use rand::SeedableRng;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
@@ -93,6 +94,7 @@ fn world(
                     feedback_mode: mode,
                 },
                 T0,
+                &mut rand::rngs::StdRng::seed_from_u64(1),
             )
         })
         .unwrap()

@@ -1,6 +1,11 @@
-use super::*;
+use rusqlite::{Connection, params};
+use serde::Serialize;
+use ts_rs::TS;
 
-use super::view::title;
+use super::{ANSWERED_RESPONSE_SQL, FeedbackMode, SourceKind, SourceRef, load_header, view::title};
+use crate::error::{AppError, AppResult};
+use crate::ids::AttemptId;
+
 /// An unfinished attempt, for the "resume" list on the home page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -16,17 +21,6 @@ pub struct ActiveAttempt {
     pub total: u32,
 }
 
-/// Columns of the unfinished-attempts query.
-type ActiveRow = (
-    AttemptId,
-    SourceKind,
-    Option<String>,
-    FeedbackMode,
-    String,
-    u32,
-    u32,
-);
-
 /// Every unfinished attempt, newest first. Carries counts only, never questions or keys.
 pub fn active(conn: &Connection) -> AppResult<Vec<ActiveAttempt>> {
     let sql = format!(
@@ -38,33 +32,21 @@ pub fn active(conn: &Connection) -> AppResult<Vec<ActiveAttempt>> {
     );
     let rows: Vec<ActiveRow> = conn
         .prepare(&sql)?
-        .query_map([], |r| {
-            Ok((
-                r.get(0)?,
-                r.get(1)?,
-                r.get(2)?,
-                r.get(3)?,
-                r.get(4)?,
-                r.get(5)?,
-                r.get(6)?,
-            ))
-        })?
+        .query_map([], ActiveRow::from_row)?
         .collect::<Result<_, _>>()?;
     rows.into_iter()
-        .map(
-            |(id, source_kind, source_ref, feedback_mode, started_at, answered, total)| {
-                let source_ref = SourceRef::from_storage(source_kind, source_ref);
-                Ok(ActiveAttempt {
-                    title: title(conn, source_kind, source_ref.as_ref())?,
-                    id,
-                    source_kind,
-                    feedback_mode,
-                    started_at,
-                    answered,
-                    total,
-                })
-            },
-        )
+        .map(|row| {
+            let source_ref = SourceRef::from_storage(row.source_kind, row.stored_ref);
+            Ok(ActiveAttempt {
+                title: title(conn, row.source_kind, source_ref.as_ref())?,
+                id: row.id,
+                source_kind: row.source_kind,
+                feedback_mode: row.mode,
+                started_at: row.started_at,
+                answered: row.answered,
+                total: row.total,
+            })
+        })
         .collect()
 }
 
@@ -78,4 +60,28 @@ pub fn abandon(conn: &Connection, id: &AttemptId) -> AppResult<()> {
     }
     conn.execute("DELETE FROM attempts WHERE id = ?1", params![id])?;
     Ok(())
+}
+
+struct ActiveRow {
+    id: AttemptId,
+    source_kind: SourceKind,
+    stored_ref: Option<String>,
+    mode: FeedbackMode,
+    started_at: String,
+    answered: u32,
+    total: u32,
+}
+
+impl ActiveRow {
+    fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            source_kind: row.get(1)?,
+            stored_ref: row.get(2)?,
+            mode: row.get(3)?,
+            started_at: row.get(4)?,
+            answered: row.get(5)?,
+            total: row.get(6)?,
+        })
+    }
 }

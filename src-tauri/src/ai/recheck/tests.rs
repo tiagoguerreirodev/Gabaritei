@@ -8,6 +8,7 @@ use crate::attempts::{
 use crate::bank::import_questions;
 use crate::bank::question::tests::multiple;
 use crate::ids::QuestionId;
+use rand::SeedableRng;
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -22,6 +23,7 @@ struct World {
     question_id: QuestionId,
     old_key: String,
     other_option: String,
+    rng: std::cell::RefCell<rand::rngs::StdRng>,
 }
 
 /// A fake `codex exec` that records its prompt and answers with `answer.json`.
@@ -108,6 +110,7 @@ fn world(answer: impl FnOnce(&str, &str) -> Value) -> World {
         question_id,
         old_key,
         other_option,
+        rng: rand::rngs::StdRng::seed_from_u64(1).into(),
     }
 }
 
@@ -124,6 +127,7 @@ fn start(world: &World, mode: FeedbackMode) -> AttemptId {
                     feedback_mode: mode,
                 },
                 T0,
+                &mut *world.rng.borrow_mut(),
             )
         })
         .unwrap()

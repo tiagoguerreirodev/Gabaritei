@@ -279,7 +279,7 @@ fn strength(conn: &Connection, query: &PerformanceQuery) -> AppResult<Strength> 
         let choice: Option<String> = r.get(8)?;
         let row = Row {
             annulled,
-            outcome: has_response.then(|| outcome(choice.as_deref(), &answer_id, annulled)),
+            outcome: has_response.then(|| outcome(choice.as_deref(), &answer_id, annulled.into())),
         };
         overall.add(&question_id, &row);
         for len in 1..=path.len() {
@@ -385,7 +385,7 @@ fn trend(conn: &Connection, query: &PerformanceQuery) -> AppResult<Vec<WeekPoint
         let answer_id: String = r.get(2)?;
         let annulled: bool = r.get(3)?;
         let Some(week) = week else { continue };
-        match outcome(Some(&choice), &answer_id, annulled) {
+        match outcome(Some(&choice), &answer_id, annulled.into()) {
             Outcome::Correct => {
                 let entry = weeks.entry(week).or_default();
                 entry.0 += 1;

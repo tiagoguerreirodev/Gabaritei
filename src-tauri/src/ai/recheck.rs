@@ -168,7 +168,7 @@ pub fn apply(
     attempt_id: &AttemptId,
     position: u32,
     now: &str,
-) -> AppResult<()> {
+) -> AppResult<attempts::AttemptView> {
     let question_id = attempts::revealed_question(conn, attempt_id, position)?;
     let proposal = jobs
         .take(&question_id)
@@ -206,7 +206,7 @@ pub fn apply(
     )?;
     // Reviews are derived from the current key, so they follow the change.
     learning::refresh_question(conn, &question_id)?;
-    Ok(())
+    attempts::load(conn, attempt_id)
 }
 
 /// Drops the proposal for a question without applying it.

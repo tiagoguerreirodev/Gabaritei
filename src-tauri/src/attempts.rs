@@ -11,7 +11,6 @@
 //! shuffled options) and the choice. Key, explanation and annulment are always read from the
 //! current question, so corrections and annulments re-score past attempts. No score is stored.
 
-use rand::seq::SliceRandom;
 use rusqlite::types::ToSqlOutput;
 use rusqlite::{Connection, OptionalExtension, ToSql, params};
 use serde::{Deserialize, Serialize, Serializer};
@@ -19,7 +18,7 @@ use ts_rs::TS;
 
 use crate::bank::{QuestionOption, QuestionType};
 use crate::error::{AppError, AppResult};
-use crate::ids::{self, AttemptId, CollectionId, QuestionId, TopicId};
+use crate::ids::{AttemptId, CollectionId, QuestionId, TopicId};
 
 mod active;
 mod response;
@@ -28,9 +27,9 @@ mod session;
 mod view;
 
 pub use active::{ActiveAttempt, abandon, active};
-pub use response::{answer, eliminate, finish, flag, revealed_question, set_annulled};
-pub(crate) use scoring::ANSWERED_RESPONSE_SQL;
-pub use scoring::{Outcome, RESPONSE_TIME_SQL, Score, outcome};
+pub use response::{annul, answer, eliminate, finish, flag, restore, revealed_question};
+pub(crate) use scoring::{ANSWERED_RESPONSE_SQL, HIT_SQL, MISS_SQL};
+pub use scoring::{Outcome, QuestionStatus, RESPONSE_TIME_SQL, Score, outcome};
 pub use session::start;
 pub use view::load;
 

@@ -2,6 +2,7 @@ use super::*;
 use crate::bank::question::tests::{boolean, multiple};
 use crate::bank::{TopicPath, import_questions};
 use crate::db::Database;
+use rand::SeedableRng;
 
 const T0: &str = "2026-11-20T10:00:00.000Z";
 const T1: &str = "2026-11-20T10:05:00.000Z";
@@ -46,6 +47,10 @@ fn bank() -> (Database, Vec<QuestionId>) {
 }
 
 fn start_collection(db: &Database, mode: FeedbackMode) -> AttemptView {
+    start_collection_with_seed(db, mode, 0)
+}
+
+fn start_collection_with_seed(db: &Database, mode: FeedbackMode, seed: u64) -> AttemptView {
     db.transaction(|tx| {
         start(
             tx,
@@ -56,6 +61,7 @@ fn start_collection(db: &Database, mode: FeedbackMode) -> AttemptView {
                 feedback_mode: mode,
             },
             T0,
+            &mut rand::rngs::StdRng::seed_from_u64(seed),
         )
     })
     .unwrap()
@@ -95,11 +101,23 @@ fn assert_no_spoiler(view: &ResponseView) {
 
 #[test]
 fn scoring_rules() {
-    assert_eq!(outcome(Some("a"), "a", false), Outcome::Correct);
-    assert_eq!(outcome(Some("b"), "a", false), Outcome::Wrong);
-    assert_eq!(outcome(None, "a", false), Outcome::Blank);
-    assert_eq!(outcome(Some("a"), "a", true), Outcome::Annulled);
-    assert_eq!(outcome(None, "a", true), Outcome::Annulled);
+    assert_eq!(
+        outcome(Some("a"), "a", QuestionStatus::Valid),
+        Outcome::Correct
+    );
+    assert_eq!(
+        outcome(Some("b"), "a", QuestionStatus::Valid),
+        Outcome::Wrong
+    );
+    assert_eq!(outcome(None, "a", QuestionStatus::Valid), Outcome::Blank);
+    assert_eq!(
+        outcome(Some("a"), "a", QuestionStatus::Annulled),
+        Outcome::Annulled
+    );
+    assert_eq!(
+        outcome(None, "a", QuestionStatus::Annulled),
+        Outcome::Annulled
+    );
 
     let score = Score::of([
         Outcome::Correct,
@@ -435,21 +453,22 @@ fn one_active_attempt_per_collection() {
                 feedback_mode: FeedbackMode::Study,
             },
             T1,
+            &mut rand::rngs::StdRng::seed_from_u64(2),
         )
     });
     assert!(again.unwrap_err().to_string().contains("em andamento"));
 
     db.transaction(|tx| finish(tx, &first.id, first.revision, T1))
         .unwrap();
-    let second = start_collection(&db, FeedbackMode::Study);
+    let second = start_collection_with_seed(&db, FeedbackMode::Study, 1);
     assert_ne!(second.id, first.id);
     assert_eq!(second.title, "Caderno de teste");
 }
 
 fn sample_collection_sessions(db: &Database) -> Vec<AttemptView> {
     (0..30)
-        .map(|_| {
-            let view = start_collection(db, FeedbackMode::Exam);
+        .map(|seed| {
+            let view = start_collection_with_seed(db, FeedbackMode::Exam, seed);
             db.transaction(|tx| abandon(tx, &view.id)).unwrap();
             view
         })
@@ -533,6 +552,7 @@ fn topic_sessions_prefer_unseen_then_least_recent() {
                     feedback_mode: FeedbackMode::Study,
                 },
                 T1,
+                &mut rand::rngs::StdRng::seed_from_u64(count.into()),
             )?;
             let mut chosen: Vec<QuestionId> = view
                 .questions
@@ -572,6 +592,7 @@ fn topic_sessions_use_the_full_topic_path_as_title() {
                     feedback_mode: FeedbackMode::Study,
                 },
                 T1,
+                &mut rand::rngs::StdRng::seed_from_u64(3),
             )
         })
         .unwrap();
@@ -597,6 +618,7 @@ fn topic_sessions_reject_zero_questions() {
                 feedback_mode: FeedbackMode::Study,
             },
             T1,
+            &mut rand::rngs::StdRng::seed_from_u64(4),
         )
     });
     assert!(bad.is_err());
@@ -619,6 +641,7 @@ fn empty_sources_are_a_pt_br_error() {
                     feedback_mode: FeedbackMode::Exam,
                 },
                 T1,
+                &mut rand::rngs::StdRng::seed_from_u64(5),
             )
         });
         assert_eq!(
@@ -636,6 +659,7 @@ fn empty_sources_are_a_pt_br_error() {
                 feedback_mode: FeedbackMode::Exam,
             },
             T1,
+            &mut rand::rngs::StdRng::seed_from_u64(6),
         )
     });
     assert_eq!(missing.unwrap_err().to_string(), "Caderno não encontrado.");
@@ -653,7 +677,7 @@ fn finish_exam_with_one_wrong_choice(db: &Database) -> AttemptView {
 
 fn annul_wrong_answer_in_study(db: &Database, first: &AttemptView) -> (AttemptView, u32) {
     let target = first.questions[0].question_id.clone();
-    let second = start_collection(db, FeedbackMode::Study);
+    let second = start_collection_with_seed(db, FeedbackMode::Study, 1);
     let position = second
         .questions
         .iter()
@@ -663,7 +687,7 @@ fn annul_wrong_answer_in_study(db: &Database, first: &AttemptView) -> (AttemptVi
     db.transaction(|tx| answer(tx, &second.id, position, Some(&key), T2))
         .unwrap();
     let second = db
-        .transaction(|tx| set_annulled(tx, &second.id, position, true, T2))
+        .transaction(|tx| annul(tx, &second.id, position, T2))
         .unwrap();
     (second, position)
 }
@@ -672,7 +696,7 @@ fn annul_wrong_answer_in_study(db: &Database, first: &AttemptView) -> (AttemptVi
 fn an_unrevealed_study_question_cannot_be_annulled() {
     let (db, _) = bank();
     let view = start_collection(&db, FeedbackMode::Study);
-    let early = db.transaction(|tx| set_annulled(tx, &view.id, 0, true, T2));
+    let early = db.transaction(|tx| annul(tx, &view.id, 0, T2));
     assert!(
         early
             .unwrap_err()
@@ -734,6 +758,7 @@ fn topic_sessions_skip_annulled_questions() {
                     feedback_mode: FeedbackMode::Exam,
                 },
                 T2,
+                &mut rand::rngs::StdRng::seed_from_u64(7),
             )
         })
         .unwrap();
@@ -749,7 +774,7 @@ fn unannulling_restores_the_original_score() {
     let (db, _) = bank();
     let first = finish_exam_with_one_wrong_choice(&db);
     let (second, position) = annul_wrong_answer_in_study(&db, &first);
-    db.transaction(|tx| set_annulled(tx, &second.id, position, false, T2))
+    db.transaction(|tx| restore(tx, &second.id, position, T2))
         .unwrap();
     let restored = db.with(|c| load(c, &first.id)).unwrap();
     assert_eq!(restored.score.unwrap(), first.score.unwrap());
@@ -763,9 +788,9 @@ fn an_answered_exam_question_cannot_be_annulled_before_finish() {
     db.transaction(|tx| answer(tx, &view.id, 0, Some(&choice), T1))
         .unwrap();
 
-    for annulled in [true, false] {
+    for update in [annul, restore] {
         let error = db
-            .transaction(|tx| set_annulled(tx, &view.id, 0, annulled, T1))
+            .transaction(|tx| update(tx, &view.id, 0, T1))
             .unwrap_err()
             .to_string();
         assert!(error.contains("depois de ver o gabarito"), "{error}");
@@ -787,9 +812,7 @@ fn an_answered_exam_question_cannot_be_annulled_before_finish() {
     let done = db
         .transaction(|tx| finish(tx, &view.id, loaded.revision, T2))
         .unwrap();
-    let done = db
-        .transaction(|tx| set_annulled(tx, &done.id, 0, true, T2))
-        .unwrap();
+    let done = db.transaction(|tx| annul(tx, &done.id, 0, T2)).unwrap();
     assert_eq!(
         done.questions[0].reveal.as_ref().unwrap().outcome,
         Outcome::Annulled
@@ -815,6 +838,7 @@ fn active_lists_unfinished_attempts_newest_first_with_counts_only() {
                     feedback_mode: FeedbackMode::Study,
                 },
                 T2,
+                &mut rand::rngs::StdRng::seed_from_u64(8),
             )
         })
         .unwrap();

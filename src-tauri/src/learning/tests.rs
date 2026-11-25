@@ -4,6 +4,7 @@ use crate::bank::catalog::CollectionKind;
 use crate::bank::import_questions;
 use crate::bank::question::tests::multiple;
 use crate::db::Database;
+use rand::SeedableRng;
 use rusqlite::params;
 
 /// A question as an attempt stores it; reviews never read it.
@@ -19,6 +20,7 @@ const D25: &str = "2026-11-26T10:00:00.000Z";
 struct Bank {
     db: Database,
     next_attempt: std::cell::Cell<u32>,
+    rng: std::cell::RefCell<rand::rngs::StdRng>,
 }
 
 fn bank(locals: &[&str]) -> Bank {
@@ -32,6 +34,7 @@ fn bank(locals: &[&str]) -> Bank {
     Bank {
         db,
         next_attempt: 0.into(),
+        rng: rand::rngs::StdRng::seed_from_u64(0).into(),
     }
 }
 
@@ -335,7 +338,7 @@ fn annulling_through_an_attempt_refreshes_the_review() {
     let b = bank(&["q1"]);
     let id = b.finished_attempt(D0, &[("q1", "o1")]);
     b.db.transaction(|tx| refresh_attempt(tx, &id)).unwrap();
-    b.db.transaction(|tx| attempts::set_annulled(tx, &id, 0, true, D1).map(|_| ()))
+    b.db.transaction(|tx| attempts::annul(tx, &id, 0, D1).map(|_| ()))
         .unwrap();
     assert_eq!(b.due("q1"), None);
 }
@@ -515,6 +518,7 @@ fn sessions_are_capped_at_one_hundred_questions() {
                     feedback_mode: FeedbackMode::Study,
                 },
                 D1,
+                &mut rand::rngs::StdRng::seed_from_u64(1),
             )
         })
         .unwrap();
@@ -546,6 +550,7 @@ fn finishing_an_attempt_schedules_reviews() {
                     feedback_mode: FeedbackMode::Exam,
                 },
                 D0,
+                &mut rand::rngs::StdRng::seed_from_u64(2),
             )
         })
         .unwrap();
@@ -682,7 +687,11 @@ fn scoring_in_sql_agrees_with_attempts_outcome() {
     let wrong = b.option("q1", "o1");
     for choice in [key.as_deref(), wrong.as_deref(), None] {
         let hit = choice == key.as_deref();
-        let expected = attempts::outcome(choice, key.as_deref().unwrap(), false);
+        let expected = attempts::outcome(
+            choice,
+            key.as_deref().unwrap(),
+            attempts::QuestionStatus::Valid,
+        );
         assert_eq!(hit, expected == attempts::Outcome::Correct);
     }
     // The replay agrees on a hit, a miss and a blank.
@@ -747,6 +756,7 @@ impl Bank {
                         feedback_mode: FeedbackMode::Study,
                     },
                     at,
+                    &mut *self.rng.borrow_mut(),
                 )
             })
             .unwrap()
@@ -761,6 +771,7 @@ impl Bank {
                     feedback_mode: FeedbackMode::Study,
                 },
                 at,
+                &mut *self.rng.borrow_mut(),
             )
         })?;
         Ok(view

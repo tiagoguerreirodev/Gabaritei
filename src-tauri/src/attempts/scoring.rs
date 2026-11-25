@@ -1,4 +1,5 @@
-use super::*;
+use serde::Serialize;
+use ts_rs::TS;
 
 /// Result of one question under the current key and annulment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
@@ -19,13 +20,33 @@ pub(crate) const ANSWERED_RESPONSE_SQL: &str = "r.choice IS NOT NULL";
 /// notebook both rank a question's responses by it, so they pick the same latest one.
 pub const RESPONSE_TIME_SQL: &str = "COALESCE(r.answered_at, a.finished_at)";
 
+/// SQL predicates for a non-annulled question q and its response r.
+pub(crate) const HIT_SQL: &str = "r.choice IS NOT NULL AND r.choice = q.answer_id";
+pub(crate) const MISS_SQL: &str = "r.choice IS NOT NULL AND r.choice <> q.answer_id";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuestionStatus {
+    Valid,
+    Annulled,
+}
+
+impl From<bool> for QuestionStatus {
+    fn from(annulled: bool) -> Self {
+        if annulled {
+            Self::Annulled
+        } else {
+            Self::Valid
+        }
+    }
+}
+
 /// The one scoring rule. Annulment wins over everything; otherwise blank, correct or wrong.
-pub fn outcome(choice: Option<&str>, answer_id: &str, annulled: bool) -> Outcome {
-    match choice {
-        _ if annulled => Outcome::Annulled,
-        None => Outcome::Blank,
-        Some(choice) if choice == answer_id => Outcome::Correct,
-        Some(_) => Outcome::Wrong,
+pub fn outcome(choice: Option<&str>, answer_id: &str, status: QuestionStatus) -> Outcome {
+    match (status, choice) {
+        (QuestionStatus::Annulled, _) => Outcome::Annulled,
+        (QuestionStatus::Valid, None) => Outcome::Blank,
+        (QuestionStatus::Valid, Some(choice)) if choice == answer_id => Outcome::Correct,
+        (QuestionStatus::Valid, Some(_)) => Outcome::Wrong,
     }
 }
 

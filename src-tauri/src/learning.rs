@@ -22,7 +22,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::attempts::RESPONSE_TIME_SQL;
+use crate::attempts::{HIT_SQL, MISS_SQL, RESPONSE_TIME_SQL};
 use crate::bank::TopicPath;
 use crate::error::AppResult;
 use crate::ids::{AttemptId, QuestionId};
@@ -53,7 +53,7 @@ struct ReviewState {
 fn history(conn: &Connection, question_id: &QuestionId) -> AppResult<Vec<(String, bool)>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {RESPONSE_TIME_SQL} AS at,
-                r.choice IS NOT NULL AND r.choice = q.answer_id
+                {HIT_SQL}
          FROM responses r
          JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NOT NULL
          JOIN questions q ON q.id = r.question_id
@@ -155,7 +155,7 @@ struct Latest {
 fn latest_results(conn: &Connection) -> AppResult<Vec<Latest>> {
     let mut stmt = conn.prepare(&format!(
         "WITH base AS (
-           SELECT r.question_id, a.id AS attempt_id, r.choice, q.answer_id, r.position,
+           SELECT r.question_id, a.id AS attempt_id, r.choice, ({MISS_SQL}) AS wrong, r.position,
                   {RESPONSE_TIME_SQL} AS at
            FROM responses r
            JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NOT NULL
@@ -168,7 +168,7 @@ fn latest_results(conn: &Connection) -> AppResult<Vec<Latest>> {
            FROM base
          ),
          answered AS (
-           SELECT question_id, attempt_id, at, choice <> answer_id AS wrong, ROW_NUMBER() OVER (
+           SELECT question_id, attempt_id, at, wrong, ROW_NUMBER() OVER (
                     PARTITION BY question_id ORDER BY at DESC, attempt_id DESC, position DESC
                   ) AS rank
            FROM base WHERE choice IS NOT NULL

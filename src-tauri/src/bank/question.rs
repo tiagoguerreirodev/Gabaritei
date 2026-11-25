@@ -66,6 +66,12 @@ pub struct TopicPath {
     pub topic: String,
 }
 
+impl std::fmt::Display for TopicPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} › {} › {}", self.area, self.matter, self.topic)
+    }
+}
+
 impl TopicPath {
     pub fn new(area: &str, matter: &str, topic: &str) -> Self {
         Self {

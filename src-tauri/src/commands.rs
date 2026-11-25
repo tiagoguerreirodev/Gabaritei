@@ -404,7 +404,7 @@ pub async fn export_performance_csv<R: Runtime>(
 /// Starts a session from a collection, a topic, errors or due reviews.
 #[tauri::command]
 pub fn session_start(db: State<'_, Database>, request: SessionStart) -> AppResult<AttemptView> {
-    db.transaction(|tx| attempts::start(tx, &request, &crate::clock::now()))
+    db.transaction(|tx| attempts::start(tx, &request, &crate::clock::now(), &mut rand::rng()))
 }
 
 /// An attempt with every question as the frontend may see it (no unrevealed keys).
@@ -471,9 +471,7 @@ pub fn annul(
     attempt_id: AttemptId,
     position: u32,
 ) -> AppResult<AttemptView> {
-    db.transaction(|tx| {
-        attempts::set_annulled(tx, &attempt_id, position, true, &crate::clock::now())
-    })
+    db.transaction(|tx| attempts::annul(tx, &attempt_id, position, &crate::clock::now()))
 }
 
 /// Restores an annulled question to every score.
@@ -483,9 +481,7 @@ pub fn unannul(
     attempt_id: AttemptId,
     position: u32,
 ) -> AppResult<AttemptView> {
-    db.transaction(|tx| {
-        attempts::set_annulled(tx, &attempt_id, position, false, &crate::clock::now())
-    })
+    db.transaction(|tx| attempts::restore(tx, &attempt_id, position, &crate::clock::now()))
 }
 
 /// Deletes an unfinished attempt.
@@ -753,10 +749,7 @@ pub fn recheck_apply(
     attempt_id: AttemptId,
     position: u32,
 ) -> AppResult<AttemptView> {
-    db.transaction(|tx| {
-        recheck::apply(tx, &jobs, &attempt_id, position, &crate::clock::now())?;
-        attempts::load(tx, &attempt_id)
-    })
+    db.transaction(|tx| recheck::apply(tx, &jobs, &attempt_id, position, &crate::clock::now()))
 }
 
 /// Drops the AI's proposal and keeps the current key.

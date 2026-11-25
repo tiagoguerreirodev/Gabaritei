@@ -6,7 +6,7 @@ import StartSessionModal from "../solve/StartSessionModal";
 import { openAttempt } from "../../navigation";
 import { formatDate, questionCount } from "../../format";
 
-const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
+import { modeLabel } from "../../labels";
 
 /** A collection's details and its attempts, with buttons to start or continue a session. */
 export default function CollectionDetailModal(props: {

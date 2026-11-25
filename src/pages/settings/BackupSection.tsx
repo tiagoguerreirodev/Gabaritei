@@ -1,19 +1,14 @@
+import { formatDateTime, formatMegabytes } from "../../format";
 import { For, Show, createResource, createSignal } from "solid-js";
 import { api } from "../../api";
 import type { BackupInfo } from "../../bindings/BackupInfo";
 import type { BackupStatus } from "../../bindings/BackupStatus";
 import type { LeftBehind } from "../../bindings/LeftBehind";
-import Modal from "../../components/Modal";
+import ConfirmModal from "../../components/ConfirmModal";
 import { ErrorState, Loading } from "../../components/states";
 import { showError, showToast } from "../../components/toasts";
 import type { Busy } from "./busy";
 import { openFolder } from "./openFolder";
-
-const dateTime = (iso: string) =>
-  new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
-
-const megabytes = (bytes: number) =>
-  `${(bytes / (1024 * 1024)).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} MB`;
 
 /** Backups of the study data: the folder, a backup now, and restore. */
 function availableOffer(offer: LeftBehind) {
@@ -230,31 +225,17 @@ export default function BackupSection(props: {
         </Show>
       </Show>
       <Show when={confirmingMove()}>
-        <Modal
+        <ConfirmModal
           title="Mover os backups para a pasta nova?"
-          onClose={() => !busy.active() && setConfirmingMove(false)}
-          footer={
-            <>
-              <button
-                type="button"
-                disabled={busy.active()}
-                onClick={() => setConfirmingMove(false)}
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                class="primary danger"
-                disabled={busy.active()}
-                onClick={() => {
-                  setConfirmingMove(false);
-                  void relocate(true);
-                }}
-              >
-                Mover
-              </button>
-            </>
-          }
+          confirmLabel="Mover"
+          danger
+          busy={busy.active()}
+          dismissBlocked={busy.active()}
+          onClose={() => setConfirmingMove(false)}
+          onConfirm={() => {
+            setConfirmingMove(false);
+            void relocate(true);
+          }}
         >
           <p>
             Cada backup é copiado para a pasta nova e conferido; só então o original é apagado da
@@ -264,37 +245,29 @@ export default function BackupSection(props: {
           <p class="muted">
             Se preferir manter os backups nas duas pastas, use <strong>Copiar</strong>.
           </p>
-        </Modal>
+        </ConfirmModal>
       </Show>
       <Show when={restoring()}>
         {(backup) => (
-          <Modal
+          <ConfirmModal
             title="Restaurar este backup?"
-            onClose={() => !busy.active() && setRestoring(null)}
-            footer={
-              <>
-                <button type="button" disabled={busy.active()} onClick={() => setRestoring(null)}>
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  class="primary danger"
-                  disabled={busy.active()}
-                  onClick={() => void restore(backup())}
-                >
-                  {busy.active() ? "Restaurando…" : "Restaurar"}
-                </button>
-              </>
-            }
+            confirmLabel="Restaurar"
+            busyLabel="Restaurando…"
+            danger
+            busy={busy.active()}
+            dismissBlocked={busy.active()}
+            onClose={() => setRestoring(null)}
+            onConfirm={() => void restore(backup())}
           >
             <p>
-              Os dados atuais serão substituídos pelos do backup de {dateTime(backup().createdAt)}.
+              Os dados atuais serão substituídos pelos do backup de{" "}
+              {formatDateTime(backup().createdAt)}.
             </p>
             <p class="muted">
               Antes disso, o Gabaritei guarda uma cópia dos dados atuais na mesma pasta, e ela
               também aparece na lista para você voltar atrás.
             </p>
-          </Modal>
+          </ConfirmModal>
         )}
       </Show>
     </section>
@@ -385,7 +358,7 @@ function Content(props: {
             {(backup) => (
               <li>
                 <span>
-                  {dateTime(backup.createdAt)} · {megabytes(backup.sizeBytes)}
+                  {formatDateTime(backup.createdAt)} · {formatMegabytes(backup.sizeBytes)}
                   <Show when={backup.otherComputer}>
                     {" "}
                     <span class="badge">outro computador ({backup.computer})</span>
@@ -400,7 +373,7 @@ function Content(props: {
                 <button
                   type="button"
                   disabled={props.busy}
-                  aria-label={`Restaurar o backup de ${dateTime(backup.createdAt)}`}
+                  aria-label={`Restaurar o backup de ${formatDateTime(backup.createdAt)}`}
                   onClick={() => props.onRestore(backup)}
                 >
                   Restaurar

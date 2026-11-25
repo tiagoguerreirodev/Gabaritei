@@ -1,3 +1,4 @@
+import { formatNumber } from "../../format";
 import { For, Show } from "solid-js";
 import type { TopicPath } from "../../bindings/TopicPath";
 import type { TopicTree } from "../../bindings/TopicTree";
@@ -85,8 +86,8 @@ export default function TopicPicker(props: {
       <Show when={existing()}>
         {(found) => (
           <p class="muted" role="note">
-            Já existem {found().questions.toLocaleString("pt-BR")} questões neste assunto; a IA vai
-            evitar repeti-las.
+            Já existem {formatNumber(found().questions)} questões neste assunto; a IA vai evitar
+            repeti-las.
           </p>
         )}
       </Show>

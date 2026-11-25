@@ -4,13 +4,13 @@ import { api } from "../api";
 import type { DraftSummary } from "../bindings/DraftSummary";
 import type { ImportMode } from "../bindings/ImportMode";
 import type { LineState } from "../bindings/LineState";
-import Modal from "../components/Modal";
+import ConfirmModal from "../components/ConfirmModal";
 import RichText from "../components/RichText";
 import { ErrorState, Loading } from "../components/states";
 import { showError, showToast } from "../components/toasts";
 import { dismissGeneration, generationStatus, refreshWaitingDrafts } from "../generation";
 import { agentLabels, effortLabels } from "../labels";
-import { optionLetters } from "../format";
+import { formatDuration, formatNumber, optionLetters } from "../format";
 
 const lineText: Record<LineState, string> = {
   agreed: "conferida",
@@ -18,9 +18,6 @@ const lineText: Record<LineState, string> = {
   disputed: "contestada",
   unchecked: "sem conferência",
 };
-
-const number = (n: number) => n.toLocaleString("pt-BR");
-const duration = (ms: number) => `${Math.max(1, Math.round(ms / 1000)).toLocaleString("pt-BR")} s`;
 
 /**
  * Revisar pacote. Shows counts, problems and one line per question ("Q3 · contestada"). Only a
@@ -62,8 +59,8 @@ function WaitingList() {
                       {draft.topic.area} › {draft.topic.matter} › {draft.topic.topic}
                     </A>{" "}
                     <span class="muted">
-                      ({number(draft.count)} questões
-                      {draft.disputed > 0 ? `, ${number(draft.disputed)} contestadas` : ""}
+                      ({formatNumber(draft.count)} questões
+                      {draft.disputed > 0 ? `, ${formatNumber(draft.disputed)} contestadas` : ""}
                       {draft.checking ? ", conferindo…" : ""})
                     </span>
                   </li>
@@ -155,8 +152,8 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
       const result = await api.draftImport(id, mode);
       await refreshWaitingDrafts();
       showToast(
-        `${number(result.imported)} questões importadas para “${result.title}”` +
-          (result.skipped > 0 ? `; ${number(result.skipped)} ficaram de fora.` : "."),
+        `${formatNumber(result.imported)} questões importadas para “${result.title}”` +
+          (result.skipped > 0 ? `; ${formatNumber(result.skipped)} ficaram de fora.` : "."),
       );
       navigate("/banco");
     });
@@ -207,34 +204,34 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
             <dt>
               <span aria-hidden="true">✓ </span>Conferidas
             </dt>
-            <dd>{checking() ? "…" : number(s().agreed)}</dd>
+            <dd>{checking() ? "…" : formatNumber(s().agreed)}</dd>
           </div>
           <Show when={checking() || s().fixed > 0}>
             <div class="verdict-ok">
               <dt>
                 <span aria-hidden="true">✓ </span>Corrigidas e conferidas
               </dt>
-              <dd>{checking() ? "…" : number(s().fixed)}</dd>
+              <dd>{checking() ? "…" : formatNumber(s().fixed)}</dd>
             </div>
           </Show>
           <div class="verdict-disputed">
             <dt>
               <span aria-hidden="true">▲ </span>Contestadas
             </dt>
-            <dd>{checking() ? "…" : number(s().disputed)}</dd>
+            <dd>{checking() ? "…" : formatNumber(s().disputed)}</dd>
           </div>
           <div class="verdict-problems">
             <dt>
               <span aria-hidden="true">✕ </span>Problemas
             </dt>
-            <dd>{number(s().problems.length)}</dd>
+            <dd>{formatNumber(s().problems.length)}</dd>
           </div>
           <Show when={s().unchecked > 0}>
             <div>
               <dt>
                 <span aria-hidden="true">○ </span>Sem conferência
               </dt>
-              <dd>{number(s().unchecked)}</dd>
+              <dd>{formatNumber(s().unchecked)}</dd>
             </div>
           </Show>
         </dl>
@@ -245,14 +242,14 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
           {s().topic.area} › {s().topic.matter} › {s().topic.topic}
         </h2>
         <p>
-          {number(s().count)} questões
-          {s().multiple > 0 ? `, ${number(s().multiple)} de múltipla escolha` : ""}
-          {s().boolean > 0 ? `, ${number(s().boolean)} Certo/Errado` : ""}.
+          {formatNumber(s().count)} questões
+          {s().multiple > 0 ? `, ${formatNumber(s().multiple)} de múltipla escolha` : ""}
+          {s().boolean > 0 ? `, ${formatNumber(s().boolean)} Certo/Errado` : ""}.
           <Show when={s().board}>{(board) => <> Estilo: {board()}.</>}</Show>
         </p>
         <p class="muted">
           Gerado por {agentLabels[s().generator.agent]} ({s().generator.model},{" "}
-          {effortLabels[s().generator.effort].toLowerCase()}) em {duration(s().durationMs)}.
+          {effortLabels[s().generator.effort].toLowerCase()}) em {formatDuration(s().durationMs)}.
           Conferido por {agentLabels[s().checker.agent]} ({s().checker.model},{" "}
           {effortLabels[s().checker.effort].toLowerCase()}).
         </p>
@@ -271,7 +268,7 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
         </Show>
         <Show when={s().duplicates > 0}>
           <p class="muted">
-            {number(s().duplicates)} já existem no banco e serão aproveitadas, sem duplicar.
+            {formatNumber(s().duplicates)} já existem no banco e serão aproveitadas, sem duplicar.
           </p>
         </Show>
       </section>
@@ -283,10 +280,10 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
           fallback={<p>Conferência em andamento. Os resultados aparecem quando ela terminar.</p>}
         >
           <p>
-            {number(s().agreed)} conferidas
-            {s().fixed > 0 ? `, ${number(s().fixed)} corrigidas e conferidas` : ""}
-            {s().disputed > 0 ? `, ${number(s().disputed)} contestadas` : ""}
-            {s().unchecked > 0 ? `, ${number(s().unchecked)} sem conferência` : ""}.
+            {formatNumber(s().agreed)} conferidas
+            {s().fixed > 0 ? `, ${formatNumber(s().fixed)} corrigidas e conferidas` : ""}
+            {s().disputed > 0 ? `, ${formatNumber(s().disputed)} contestadas` : ""}
+            {s().unchecked > 0 ? `, ${formatNumber(s().unchecked)} sem conferência` : ""}.
           </p>
         </Show>
         <Show when={flagged().length > 0}>
@@ -297,7 +294,7 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
                 checked={onlyFlagged()}
                 onChange={(event) => setOnlyFlagged(event.currentTarget.checked)}
               />{" "}
-              Mostrar só as sinaladas ({number(flagged().length)})
+              Mostrar só as sinaladas ({formatNumber(flagged().length)})
             </label>
             <button type="button" onClick={() => setAll(!allExpanded())}>
               {allExpanded() ? "Recolher todas" : "Expandir todas"}
@@ -410,36 +407,27 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
           </button>
         </div>
         <Show when={confirmingDiscard()}>
-          <Modal
+          <ConfirmModal
             title="Descartar o pacote?"
+            confirmLabel="Descartar pacote"
+            cancelLabel="Voltar"
+            danger
+            busy={busy()}
             onClose={() => setConfirmingDiscard(false)}
-            footer={
-              <>
-                <button type="button" onClick={() => setConfirmingDiscard(false)}>
-                  Voltar
-                </button>
-                <button
-                  type="button"
-                  class="primary danger"
-                  disabled={busy()}
-                  onClick={() => {
-                    setConfirmingDiscard(false);
-                    void discard();
-                  }}
-                >
-                  Descartar pacote
-                </button>
-              </>
-            }
+            onConfirm={() => {
+              setConfirmingDiscard(false);
+              void discard();
+            }}
           >
             <p>
-              As {number(s().count)} questões deste pacote serão apagadas e nada entra no banco.
+              As {formatNumber(s().count)} questões deste pacote serão apagadas e nada entra no
+              banco.
               <Show when={confirmed() > 0}>
                 {" "}
                 Para aproveitar parte delas, use “Importar só as confirmadas”.
               </Show>
             </p>
-          </Modal>
+          </ConfirmModal>
         </Show>
         <Show when={s().problems.length > 0}>
           <p class="muted">

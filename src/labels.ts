@@ -1,5 +1,6 @@
 import type { Agent } from "./bindings/Agent";
 import type { Effort } from "./bindings/Effort";
+import type { FeedbackMode } from "./bindings/FeedbackMode";
 import type { Outcome } from "./bindings/Outcome";
 import type { Role } from "./bindings/Role";
 
@@ -35,6 +36,28 @@ export const roleOrder: { role: Role; key: "generate" | "blindCheck" | "recheck"
   { role: "recheck", key: "recheck" },
   { role: "explain", key: "explain" },
 ];
+
+export const feedbackModes: FeedbackMode[] = ["study", "exam"];
+
+export const modeLabel: Record<FeedbackMode, string> = {
+  study: "Estudo",
+  exam: "Simulado",
+};
+
+export const modeHint: Record<FeedbackMode, string> = {
+  study: "Mostra o gabarito e a explicação logo após cada resposta.",
+  exam: "Mostra o gabarito e as explicações só ao finalizar.",
+};
+
+const outcomeLabels: Record<Outcome, { singular: string; plural: string }> = {
+  correct: { singular: "certa", plural: "certas" },
+  wrong: { singular: "errada", plural: "erradas" },
+  blank: { singular: "em branco", plural: "em branco" },
+  annulled: { singular: "anulada", plural: "anuladas" },
+};
+
+export const outcomeLabel = (outcome: Outcome, count: number) =>
+  count === 1 ? outcomeLabels[outcome].singular : outcomeLabels[outcome].plural;
 
 /** What the reveal says about the user's answer; also what the live region announces. */
 export const outcomeText: Record<Outcome, string> = {

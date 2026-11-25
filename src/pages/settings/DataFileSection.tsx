@@ -1,6 +1,6 @@
 import { Show, createSignal } from "solid-js";
 import { api } from "../../api";
-import Modal from "../../components/Modal";
+import ConfirmModal from "../../components/ConfirmModal";
 import { showError, showToast } from "../../components/toasts";
 import type { Busy } from "./busy";
 
@@ -63,24 +63,15 @@ export default function DataFileSection(props: {
         </button>
       </p>
       <Show when={confirming()}>
-        <Modal
+        <ConfirmModal
           title="Importar dados?"
-          onClose={() => !busy.active() && setConfirming(false)}
-          footer={
-            <>
-              <button type="button" disabled={busy.active()} onClick={() => setConfirming(false)}>
-                Cancelar
-              </button>
-              <button
-                type="button"
-                class="primary danger"
-                disabled={busy.active()}
-                onClick={() => void importData()}
-              >
-                {busy.active() ? "Importando…" : "Escolher arquivo e importar"}
-              </button>
-            </>
-          }
+          confirmLabel="Escolher arquivo e importar"
+          busyLabel="Importando…"
+          danger
+          busy={busy.active()}
+          dismissBlocked={busy.active()}
+          onClose={() => setConfirming(false)}
+          onConfirm={() => void importData()}
         >
           <p>
             Todos os dados deste computador serão substituídos pelos do arquivo. Não há mistura dos
@@ -90,7 +81,7 @@ export default function DataFileSection(props: {
             Antes de substituir, o Gabaritei guarda uma cópia dos dados atuais na pasta de backups,
             e ela aparece na lista para você voltar atrás. Um arquivo inválido não altera nada.
           </p>
-        </Modal>
+        </ConfirmModal>
       </Show>
     </section>
   );

@@ -6,6 +6,7 @@ import type { Agent } from "../bindings/Agent";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { RoleConfig } from "../bindings/RoleConfig";
 import type { RoleSettings } from "../bindings/RoleSettings";
+import { cloneJson } from "../json";
 import LegacyImport from "../components/LegacyImport";
 import { ErrorState, Loading } from "../components/states";
 import { showError, showToast } from "../components/toasts";
@@ -18,11 +19,6 @@ import AgentsSection from "./settings/AgentsSection";
 import RemNoteSection from "./settings/RemNoteSection";
 import RolesSection from "./settings/RolesSection";
 import ShortcutsSection from "./settings/ShortcutsSection";
-
-/** A deep copy where no two places share an object (unlike `structuredClone`). */
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
 
 /** Configurações: CLIs, roles, RemNote and data. */
 export default function Settings() {
@@ -63,14 +59,14 @@ export default function Settings() {
 }
 
 function Form(props: { initial: AiSettings; onReload: () => void }) {
-  const [draft, setDraft] = createStore<AiSettings>(clone(props.initial));
+  const [draft, setDraft] = createStore<AiSettings>(cloneJson(props.initial));
   const [saving, setSaving] = createSignal(false);
   let savedPaths = JSON.stringify(props.initial.cliPaths);
 
   const save = async (quiet: boolean): Promise<boolean> => {
     setSaving(true);
     try {
-      const { cliPaths, roles, remnote } = clone(unwrap(draft));
+      const { cliPaths, roles, remnote } = cloneJson(unwrap(draft));
       const saved = await api.saveAiSettings({ cliPaths, roles, remnote });
       setDraft(reconcile(saved));
       // The model lists come from the CLIs, so a different CLI path means different lists.

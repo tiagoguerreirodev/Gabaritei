@@ -1,16 +1,14 @@
+import { formatDate, formatNumber } from "../format";
 import { Match, Show, Switch, createSignal } from "solid-js";
 import { api } from "../api";
 import type { LegacyImportReport } from "../bindings/LegacyImportReport";
 import type { Busy } from "../pages/settings/busy";
 import { showToast } from "./toasts";
 
-const number = (n: number) => n.toLocaleString("pt-BR");
-const date = (iso: string) => new Date(iso).toLocaleDateString("pt-BR");
-
 export function reportSummary(report: LegacyImportReport) {
   return (
-    `${number(report.questions)} questões, ${number(report.collections)} cadernos, ` +
-    `${number(report.topics)} assuntos e ${number(report.images)} imagens`
+    `${formatNumber(report.questions)} questões, ${formatNumber(report.collections)} cadernos, ` +
+    `${formatNumber(report.topics)} assuntos e ${formatNumber(report.images)} imagens`
   );
 }
 
@@ -63,7 +61,7 @@ export default function LegacyImport(props: {
         <Match when={report()}>
           {(done) => (
             <p data-testid="legacy-import-summary">
-              Importado em {date(done().importedAt)}: {reportSummary(done())}.
+              Importado em {formatDate(done().importedAt)}: {reportSummary(done())}.
             </p>
           )}
         </Match>

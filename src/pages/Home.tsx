@@ -8,7 +8,7 @@ import { formatDate, formatNumber, questionCount } from "../format";
 import StatCards from "./performance/StatCards";
 import { openAttempt } from "../navigation";
 
-const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
+import { modeLabel } from "../labels";
 
 /** Início: summary cards, attempts to resume, due reviews and drafts waiting for review. */
 export default function Home() {

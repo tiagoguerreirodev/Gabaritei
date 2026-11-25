@@ -13,7 +13,8 @@ pub(super) fn restore(
     paths: &AppPaths,
     folder: &Path,
     name: &str,
-    now: &str,
+    computer: &Computer,
+    now: OffsetDateTime,
     cleanup: RestoreCleanup,
 ) -> AppResult<()> {
     if parse_name(name).is_none() {
@@ -23,7 +24,7 @@ pub(super) fn restore(
     if !source.is_dir() {
         return Err(AppError::Invalid("Backup não encontrado.".into()));
     }
-    replace_data(db, paths, folder, &source, now, cleanup)
+    replace_data(db, paths, folder, &source, computer, now, cleanup)
 }
 
 /// Replaces the data with the snapshot in `source`: checks and stages it (a bad snapshot stops
@@ -34,7 +35,8 @@ pub(super) fn replace_data(
     paths: &AppPaths,
     folder: &Path,
     source: &Path,
-    now: &str,
+    computer: &Computer,
+    now: OffsetDateTime,
     cleanup: RestoreCleanup,
 ) -> AppResult<()> {
     let staged = snapshot::stage(source)?;
@@ -46,20 +48,26 @@ pub(super) fn replace_data(
     // The safety backup's own images are copied before the lock too (they are append-only), so
     // a large image folder never freezes the other commands. Only the database copy, the images
     // added since, and the replacement run under the lock.
-    let pending = begin(folder, BackupKind::Safety, now)?;
+    let pending = begin(folder, BackupKind::Safety, computer, now)?;
+    let created_at = crate::clock::format(now);
     let ahead = snapshot::copy_images_ahead(&paths.images_dir(), &pending.building)
         .inspect_err(|_| pending.abandon())?;
     // One lock around the safety backup and the replacement: a write in between would be in
     // neither.
     db.with(|conn| {
-        let manifest =
-            snapshot::write_locked(conn, &paths.images_dir(), &pending.building, now, ahead)
-                .inspect_err(|_| pending.abandon())?;
+        let manifest = snapshot::write_locked(
+            conn,
+            &paths.images_dir(),
+            &pending.building,
+            &created_at,
+            ahead,
+        )
+        .inspect_err(|_| pending.abandon())?;
         // Pruned only afterwards, so a safety backup being restored is never deleted by this one.
-        pending.finish(folder, BackupKind::Safety, manifest, false)?;
+        pending.finish(manifest)?;
         snapshot::commit(conn, &staged, LOCAL_SETTINGS, cleanup)
     })?;
-    prune(folder, BackupKind::Safety);
+    prune(folder, BackupKind::Safety, computer, now.into());
     Ok(())
 }
 

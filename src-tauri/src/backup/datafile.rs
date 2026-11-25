@@ -227,7 +227,13 @@ mod tests {
     }
 
     fn import_into(target: &Profile, file: &Path) -> AppResult<()> {
-        BackupService::default().import(&target.db, &target.paths, file, NOW, || Ok(()))
+        BackupService::default().import(
+            &target.db,
+            &target.paths,
+            file,
+            super::super::fixtures::instant(NOW),
+            || Ok(()),
+        )
     }
 
     #[test]
@@ -256,7 +262,13 @@ mod tests {
         let target = profile();
 
         service
-            .import(&target.db, &target.paths, &file, NOW, || Ok(()))
+            .import(
+                &target.db,
+                &target.paths,
+                &file,
+                super::super::fixtures::instant(NOW),
+                || Ok(()),
+            )
             .unwrap();
 
         let explanation: String = target

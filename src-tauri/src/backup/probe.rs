@@ -94,14 +94,9 @@ impl FolderProbe {
             path: path.to_path_buf(),
             id,
         };
-        // Tests fake the computer tag per thread; the worker must see the same one.
-        #[cfg(test)]
-        let overrides = super::fixtures::overrides();
         let spawned = std::thread::Builder::new().spawn(move || {
             // Held for the whole run, so a panic in `work` still frees the entry.
             let free = free;
-            #[cfg(test)]
-            super::fixtures::apply(overrides);
             let value = work();
             // Free the folder before the caller can see the result: otherwise a caller that
             // answers at once may still find the entry occupied (and a test of that flaked).

@@ -10,7 +10,7 @@ export type BackupInfo = {
  */
 name: string, kind: BackupKind, 
 /**
- * The computer tag in the name (see [`computer_tag`]); none for backups made before tags.
+ * The computer tag in the name (see [`Computer`]); none for backups made before tags.
  */
 computer: string | null, 
 /**

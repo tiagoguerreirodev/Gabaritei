@@ -1,4 +1,5 @@
 use super::*;
+use std::time::SystemTime;
 
 /// Daily backups kept.
 pub(super) const KEEP_BACKUPS: usize = 7;
@@ -17,81 +18,69 @@ pub(super) const INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// A backup another computer made into a shared folder doesn't count. Read from the folder
 /// names alone (the stamp has the time of the backup), so it stays cheap on a cloud-synced
 /// folder whose manifests would have to be downloaded.
-pub(super) fn is_due(folder: &Path, now: OffsetDateTime) -> bool {
-    let cutoff = crate::clock::format(now - INTERVAL);
-    let present = crate::clock::format(now);
+pub(super) fn is_due(folder: &Path, computer: &Computer, now: OffsetDateTime) -> bool {
+    let cutoff = Stamp::at(now - INTERVAL);
+    let present = Stamp::at(now);
     try_list_names(folder)
         .unwrap_or_default()
-        .iter()
-        .filter(|backup| {
-            backup.kind == BackupKind::Backup
-                && !is_other_computer(backup.tag.as_deref(), &backup.stamp)
-        })
-        .map(|backup| stamp_to_iso(&backup.stamp))
+        .into_iter()
+        .filter(|backup| backup.kind == BackupKind::Backup && !computer.is_other(backup))
+        .map(|backup| backup.stamp)
         // A backup dated in the future (the clock was wrong once) must not stop new ones.
         .filter(|created| *created <= present)
         .max()
         .is_none_or(|newest| newest < cutoff)
 }
 
-/// Writes one backup into `folder`: into a hidden temporary folder first, then renamed.
+/// Writes one backup into a temporary folder, publishes it, then prunes its kind.
 pub(super) fn create(
     db: &Database,
     paths: &AppPaths,
     folder: &Path,
     kind: BackupKind,
-    now: &str,
-    prune: bool,
+    computer: &Computer,
+    now: OffsetDateTime,
 ) -> AppResult<BackupInfo> {
-    create_with(
-        |building| snapshot::write(db, &paths.images_dir(), building, now),
-        folder,
-        kind,
-        now,
-        prune,
+    let pending = begin(folder, kind, computer, now)?;
+    let manifest = snapshot::write(
+        db,
+        &paths.images_dir(),
+        &pending.building,
+        &crate::clock::format(now),
     )
-}
-
-/// [`create`] with the snapshot written by `write_snapshot` into the folder it is given.
-pub(super) fn create_with(
-    write_snapshot: impl FnOnce(&Path) -> AppResult<snapshot::Manifest>,
-    folder: &Path,
-    kind: BackupKind,
-    now: &str,
-    prune: bool,
-) -> AppResult<BackupInfo> {
-    let pending = begin(folder, kind, now)?;
-    let manifest = write_snapshot(&pending.building).inspect_err(|_| pending.abandon())?;
-    pending.finish(folder, kind, manifest, prune)
+    .inspect_err(|_| pending.abandon())?;
+    let info = pending.finish(manifest)?;
+    prune(folder, kind, computer, now.into());
+    Ok(info)
 }
 
 /// A backup being built in a hidden temporary folder, not yet visible in the list.
 pub(super) struct Pending {
-    pub(super) name: String,
-    pub(super) computer: Option<String>,
+    name: BackupName,
     pub(super) building: PathBuf,
-    pub(super) finished: PathBuf,
+    finished: PathBuf,
 }
 
 /// Creates the empty temporary folder for a backup of `kind` made at `now`.
-pub(super) fn begin(folder: &Path, kind: BackupKind, now: &str) -> AppResult<Pending> {
+pub(super) fn begin(
+    folder: &Path,
+    kind: BackupKind,
+    computer: &Computer,
+    now: OffsetDateTime,
+) -> AppResult<Pending> {
     fs::create_dir_all(folder)?;
-    let name = match computer_tag() {
-        Some(tag) => format!("{}-{}-{tag}", kind.prefix(), stamp(now)),
-        None => format!("{}-{}", kind.prefix(), stamp(now)),
-    };
-    let finished = folder.join(&name);
+    let name = BackupName::new(kind, Stamp::at(now), computer);
+    let finished = folder.join(&name.name);
     if finished.exists() {
         return Err(AppError::Invalid(
             "Já existe um backup deste instante. Tente de novo.".into(),
         ));
     }
-    let building = folder.join(format!(".tmp-{name}"));
+    let building = folder.join(format!("{TEMP_PREFIX}{}", name.name));
     remove_dir_logged(&building);
     fs::create_dir(&building)?;
     Ok(Pending {
         name,
-        computer: computer_tag(),
         building,
         finished,
     })
@@ -103,23 +92,13 @@ impl Pending {
         remove_dir_logged(&self.building);
     }
 
-    /// Renames the temporary folder to its final name (the backup now exists) and, if asked,
-    /// prunes the old backups of its kind.
-    pub(super) fn finish(
-        self,
-        folder: &Path,
-        kind: BackupKind,
-        manifest: snapshot::Manifest,
-        prune: bool,
-    ) -> AppResult<BackupInfo> {
+    /// Publishes the finished backup.
+    pub(super) fn finish(self, manifest: snapshot::Manifest) -> AppResult<BackupInfo> {
         fs::rename(&self.building, &self.finished).inspect_err(|_| self.abandon())?;
-        if prune {
-            self::prune(folder, kind);
-        }
         Ok(BackupInfo {
-            name: self.name,
-            kind,
-            computer: self.computer,
+            name: self.name.name,
+            kind: self.name.kind,
+            computer: self.name.tag,
             other_computer: false,
             size_bytes: manifest.size(),
             created_at: manifest.created_at,
@@ -128,11 +107,11 @@ impl Pending {
 }
 
 /// Whether a temporary folder was last changed more than a day ago: no build takes that long.
-pub(super) fn is_stale(path: &Path) -> bool {
+fn is_stale(path: &Path, now: SystemTime) -> bool {
     fs::metadata(path)
         .and_then(|meta| meta.modified())
         .ok()
-        .and_then(|modified| modified.elapsed().ok())
+        .and_then(|modified| now.duration_since(modified).ok())
         .is_some_and(|age| age > INTERVAL)
 }
 
@@ -152,7 +131,7 @@ pub(crate) fn remove_dir_logged(path: &Path) {
 /// folder are never touched, and neither are untagged ones from before tags existed (they
 /// can't be told apart). A failure to delete is not worth failing the backup that just
 /// succeeded.
-pub(super) fn prune(folder: &Path, kind: BackupKind) {
+pub(super) fn prune(folder: &Path, kind: BackupKind, computer: &Computer, now: SystemTime) {
     let Ok(entries) = fs::read_dir(folder) else {
         return;
     };
@@ -161,21 +140,21 @@ pub(super) fn prune(folder: &Path, kind: BackupKind) {
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
-        if let Some(building) = name.strip_prefix(".tmp-") {
+        if let Some(building) = name.strip_prefix(TEMP_PREFIX) {
             // Another computer's in-progress build is left alone. This computer's own are
             // removed at once (it is the one running); untagged or unreadable ones, left by a
             // crash before tags existed, once they are too old to be in progress.
-            let parsed = parse(building);
+            let parsed = BackupName::parse(building);
             let theirs = parsed
                 .as_ref()
-                .is_some_and(|parsed| is_other_computer(parsed.tag.as_deref(), &parsed.stamp));
-            let mine = parsed.is_some_and(|parsed| owns_tag(parsed.tag.as_deref(), &parsed.stamp));
-            if mine || (!theirs && is_stale(&entry.path())) {
+                .is_some_and(|backup| computer.is_other(backup));
+            let mine = parsed.as_ref().is_some_and(|backup| computer.owns(backup));
+            if mine || (!theirs && is_stale(&entry.path(), now)) {
                 remove_dir_logged(&entry.path());
             }
-        } else if parse(&name).is_some_and(|parsed| {
-            parsed.kind == kind && owns_tag(parsed.tag.as_deref(), &parsed.stamp)
-        }) {
+        } else if BackupName::parse(&name)
+            .is_some_and(|backup| backup.kind == kind && computer.owns(&backup))
+        {
             names.push(name);
         }
     }

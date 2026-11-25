@@ -6,6 +6,7 @@ pub type RestoreCleanup = fn(&Connection) -> AppResult<()>;
 /// Runs backup, restore and import one at a time, and remembers why the last backup failed.
 /// Managed as Tauri state.
 pub struct BackupService {
+    pub(super) computer: Computer,
     pub(super) busy: Mutex<()>,
     pub(super) last_error: Mutex<Option<String>>,
     /// A copy or move of the old folder's backups is running. Its turns share the `busy` lock
@@ -39,12 +40,14 @@ impl Drop for Relocating<'_> {
 }
 
 impl BackupService {
-    pub(crate) fn with_timeouts(
+    pub(crate) fn new(
+        computer: Computer,
         folder_timeout: Duration,
         manifest_timeout: Duration,
         cleanup: RestoreCleanup,
     ) -> Self {
         Self {
+            computer,
             busy: Mutex::default(),
             last_error: Mutex::default(),
             relocating: AtomicBool::default(),
@@ -88,8 +91,8 @@ impl BackupService {
             let chosen = get_setting::<String>(conn, SettingKey::BackupFolder)?;
             Ok((folder(conn, paths)?, chosen.is_none()))
         })?;
-        let left_behind =
-            pending_old_folder(db, &self.probe, &folder)?.map(|(_, notice, _)| notice);
+        let left_behind = pending_old_folder(db, &self.probe, &folder, &self.computer)?
+            .map(|(_, notice, _)| notice);
         let listing = self.listing(&folder);
         Ok(BackupStatus {
             folder: folder.display().to_string(),
@@ -105,12 +108,13 @@ impl BackupService {
         match self.probe.run(folder, move || folder_state(&path)) {
             Some(FolderState::Present) => {
                 let path = folder.to_path_buf();
+                let computer = self.computer.clone();
                 // Use a separate slot so a slow manifest read cannot hold up the quick checks
                 // for backups, restores or imports.
                 match self
                     .probe
                     .run_for(&manifest_key(folder), self.manifest_timeout, move || {
-                        try_list(&path)
+                        try_list(&path, &computer)
                     }) {
                     Some(Some(backups)) => BackupListing::Ready { backups },
                     Some(None) => BackupListing::FolderUnavailable,
@@ -168,7 +172,7 @@ impl BackupService {
         let new = checked.map_or_else(|| default_folder(paths), PathBuf::from);
         let old = db.with(|conn| folder(conn, paths))?;
         let has_backups = match self.probe.inspect(&old, &new) {
-            Some(OldFolder::Listed(found)) => found.iter().any(|b| !leave_alone(b)),
+            Some(OldFolder::Listed(found)) => self.computer.has_owned(&found),
             Some(OldFolder::Current | OldFolder::Unreadable) => false,
             // No answer in time (an offline share): remember it, offered as unavailable.
             None => true,
@@ -208,7 +212,7 @@ impl BackupService {
         // Read from the stored setting, so it works after a restart too, and never from a
         // path the frontend sent. It is cleared when the old folder has nothing of ours left.
         let (old, notice, found) =
-            pending_old_folder(db, &self.probe, &new)?.ok_or_else(nothing)?;
+            pending_old_folder(db, &self.probe, &new, &self.computer)?.ok_or_else(nothing)?;
         if matches!(notice, LeftBehind::Unavailable { .. }) {
             return Err(AppError::Invalid(
                 "A pasta anterior não está acessível agora. Conecte-a de novo ou dispense o aviso."
@@ -238,7 +242,9 @@ impl BackupService {
         fs::create_dir_all(&new)?;
         // Another computer's backups, and untagged ones on a tagged computer, stay where they are:
         // they may belong to a computer that still uses that folder.
-        let (others, mine): (Vec<_>, Vec<_>) = found.into_iter().partition(leave_alone);
+        let (others, mine): (Vec<_>, Vec<_>) = found
+            .into_iter()
+            .partition(|backup| !self.computer.owns(backup));
         let names: Vec<String> = mine.into_iter().map(|backup| backup.name).collect();
         Ok(RelocationPlan {
             old,
@@ -280,7 +286,7 @@ impl BackupService {
                 // keep the offer, shown as unavailable, rather than forgetting it.
                 let remaining = (mode == Relocation::Move || report.failed > 0)
                     && match self.probe.inspect(&plan.old, &plan.new) {
-                        Some(OldFolder::Listed(found)) => found.iter().any(|b| !leave_alone(b)),
+                        Some(OldFolder::Listed(found)) => self.computer.has_owned(&found),
                         Some(OldFolder::Current) => false,
                         Some(OldFolder::Unreadable) | None => true,
                     };
@@ -292,11 +298,16 @@ impl BackupService {
     }
 
     /// Makes a backup now.
-    pub fn backup_now(&self, db: &Database, paths: &AppPaths, now: &str) -> AppResult<BackupInfo> {
+    pub fn backup_now(
+        &self,
+        db: &Database,
+        paths: &AppPaths,
+        now: OffsetDateTime,
+    ) -> AppResult<BackupInfo> {
         self.exclusive(|| {
             let result = db.with(|conn| folder(conn, paths)).and_then(|folder| {
                 self.ensure_reachable(&folder)?;
-                create(db, paths, &folder, BackupKind::Manual, now, true)
+                create(db, paths, &folder, BackupKind::Manual, &self.computer, now)
             });
             self.remember(&result);
             result
@@ -317,25 +328,20 @@ impl BackupService {
                 // (a drive spinning up); a gone drive is refused like everywhere else.
                 let due = {
                     let path = folder.clone();
+                    let computer = self.computer.clone();
                     self.probe.run_for(&folder, self.manifest_timeout, move || {
                         match folder_state(&path) {
                             FolderState::Unavailable => None,
-                            FolderState::Present | FolderState::Missing => Some(is_due(&path, now)),
+                            FolderState::Present | FolderState::Missing => {
+                                Some(is_due(&path, &computer, now))
+                            }
                         }
                     })
                 }
                 .flatten()
                 .ok_or_else(folder_unavailable)?;
                 if due {
-                    create(
-                        db,
-                        paths,
-                        &folder,
-                        BackupKind::Backup,
-                        &crate::clock::format(now),
-                        true,
-                    )
-                    .map(Some)
+                    create(db, paths, &folder, BackupKind::Backup, &self.computer, now).map(Some)
                 } else {
                     Ok(None)
                 }
@@ -356,7 +362,7 @@ impl BackupService {
         db: &Database,
         paths: &AppPaths,
         file: &Path,
-        now: &str,
+        now: OffsetDateTime,
         ready: impl FnOnce() -> AppResult<()>,
     ) -> AppResult<()> {
         self.exclusive(|| {
@@ -365,7 +371,15 @@ impl BackupService {
             self.ensure_reachable(&folder)?;
             let staging = tempfile::tempdir()?;
             datafile::unpack(file, staging.path())?;
-            restore::replace_data(db, paths, &folder, staging.path(), now, self.cleanup)
+            restore::replace_data(
+                db,
+                paths,
+                &folder,
+                staging.path(),
+                &self.computer,
+                now,
+                self.cleanup,
+            )
         })
     }
 
@@ -377,14 +391,14 @@ impl BackupService {
         db: &Database,
         paths: &AppPaths,
         name: &str,
-        now: &str,
+        now: OffsetDateTime,
         ready: impl FnOnce() -> AppResult<()>,
     ) -> AppResult<()> {
         self.exclusive(|| {
             ready()?;
             let folder = db.with(|conn| folder(conn, paths))?;
             self.ensure_reachable(&folder)?;
-            restore::restore(db, paths, &folder, name, now, self.cleanup)
+            restore::restore(db, paths, &folder, name, &self.computer, now, self.cleanup)
         })
     }
 }

@@ -97,9 +97,9 @@ pub(super) fn check_chosen_folder(chosen: &Path, images_dir: &Path) -> AppResult
     // Inside a backup (or its hidden build folder) rotation could later delete the chosen folder.
     let inside_a_backup = |path: &Path| {
         path.components().any(|part| {
-            part.as_os_str()
-                .to_str()
-                .is_some_and(|name| name.starts_with(".tmp-") || parse(name).is_some())
+            part.as_os_str().to_str().is_some_and(|name| {
+                name.starts_with(TEMP_PREFIX) || BackupName::parse(name).is_some()
+            })
         })
     };
     let refuse =
@@ -137,23 +137,28 @@ pub(super) fn check_chosen_folder(chosen: &Path, images_dir: &Path) -> AppResult
 /// Backups in `folder`, newest first. Folders that aren't complete backups are ignored.
 #[cfg(test)]
 pub fn list(folder: &Path) -> Vec<BackupInfo> {
-    try_list(folder).unwrap_or_default()
+    list_for(folder, &Computer::default())
+}
+
+#[cfg(test)]
+pub(super) fn list_for(folder: &Path, computer: &Computer) -> Vec<BackupInfo> {
+    try_list(folder, computer).unwrap_or_default()
 }
 
 /// Backups in `folder`, newest first, ignoring incomplete backups. Returns `None` if the
 /// directory cannot be opened.
-pub(super) fn try_list(folder: &Path) -> Option<Vec<BackupInfo>> {
+pub(super) fn try_list(folder: &Path, computer: &Computer) -> Option<Vec<BackupInfo>> {
     let entries = fs::read_dir(folder).ok()?;
     let mut found: Vec<BackupInfo> = entries
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let name = entry.file_name().into_string().ok()?;
-            let parsed = parse(&name)?;
+            let parsed = BackupName::parse(&name)?;
             let manifest = snapshot::read_manifest(&entry.path()).ok()?;
             Some(BackupInfo {
                 name,
                 kind: parsed.kind,
-                other_computer: is_other_computer(parsed.tag.as_deref(), &parsed.stamp),
+                other_computer: computer.is_other(&parsed),
                 computer: parsed.tag,
                 created_at: manifest.created_at.clone(),
                 size_bytes: manifest.size(),
@@ -169,14 +174,14 @@ pub(super) fn try_list(folder: &Path) -> Option<Vec<BackupInfo>> {
 /// often and may point at a network share or a drive that is asleep. Unlike [`try_list`] it also
 /// counts a folder whose manifest is unreadable. The move works from the same names, so such a
 /// backup is reported as failed (its copy can't be verified) and keeps the offer open.
-pub(super) fn try_list_names(folder: &Path) -> Option<Vec<ParsedName>> {
+pub(super) fn try_list_names(folder: &Path) -> Option<Vec<BackupName>> {
     let entries = fs::read_dir(folder).ok()?;
     Some(
         entries
             .filter_map(Result::ok)
             // `file_type` does not follow links: a link named like a backup is not one.
             .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-            .filter_map(|entry| parse(&entry.file_name().into_string().ok()?))
+            .filter_map(|entry| BackupName::parse(&entry.file_name().into_string().ok()?))
             .collect(),
     )
 }

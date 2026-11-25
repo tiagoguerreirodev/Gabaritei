@@ -1,7 +1,7 @@
 //! Daily automatic backups and restore (spec §3.6); the export/import data file (#24) builds on
 //! the same snapshots.
 //!
-//! A backup is a folder `backup-<UTC time>-<computer tag>` (see [`computer_tag`]; the tag is
+//! A backup is a folder `backup-<UTC time>-<computer tag>` (see [`Computer`]; the tag is
 //! missing in names made before tags existed, or when the host name gives none) in the backup
 //! folder, holding a consistent copy of the database, the images and a manifest of sha256
 //! hashes (see [`snapshot`]). It is written to a hidden temporary folder and renamed, so a crash never leaves a half-written backup
@@ -39,7 +39,8 @@ mod rotation;
 mod service;
 mod snapshot;
 
-pub use computer::*;
+pub use computer::Computer;
+use computer::MAX_TAG;
 pub(crate) use datafile::{EXTENSION as DATA_FILE_EXTENSION, file_name as data_file_name};
 pub use folder::*;
 use left_behind::*;
@@ -101,7 +102,7 @@ pub struct BackupInfo {
     /// Folder name; identifies the backup in `backup_restore`.
     pub name: String,
     pub kind: BackupKind,
-    /// The computer tag in the name (see [`computer_tag`]); none for backups made before tags.
+    /// The computer tag in the name (see [`Computer`]); none for backups made before tags.
     pub computer: Option<String>,
     /// Whether the backup was made by another computer (a tagged one with another tag). Such
     /// backups can be restored but are never deleted by this computer's rotation.

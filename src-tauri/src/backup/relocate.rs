@@ -16,6 +16,7 @@ use std::path::Path;
 use serde::Serialize;
 use ts_rs::TS;
 
+use super::name::TEMP_PREFIX;
 use super::snapshot::{self, Manifest};
 use crate::error::{AppError, AppResult};
 
@@ -131,7 +132,7 @@ fn relocate_one(old: &Path, new: &Path, name: &str, mode: Relocation) -> AppResu
         }
         false
     } else {
-        let building = new.join(format!(".tmp-{name}"));
+        let building = new.join(format!("{TEMP_PREFIX}{name}"));
         super::remove_dir_logged(&building);
         let made = copy_snapshot(&source, &original, &building)
             .and_then(|()| snapshot::verify(&building))
@@ -166,7 +167,7 @@ fn relocate_one(old: &Path, new: &Path, name: &str, mode: Relocation) -> AppResu
 /// a half-deleted backup in the list. The leftover is removed when this runs again for the same
 /// name, or by the backup cleanup if that folder becomes the backup folder again.
 fn remove_original(old: &Path, name: &str, source: &Path) -> AppResult<()> {
-    let aside = old.join(format!(".tmp-{name}"));
+    let aside = old.join(format!("{TEMP_PREFIX}{name}"));
     super::remove_dir_logged(&aside);
     fs::rename(source, &aside)?;
     super::remove_dir_logged(&aside);

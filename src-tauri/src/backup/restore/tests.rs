@@ -2,7 +2,7 @@ use super::*;
 use crate::backup::fixtures::*;
 
 fn restore_fixture(f: &Fixture, name: &str, now: &str) -> AppResult<()> {
-    BackupService::default().restore(&f.db, &f.paths, name, now, || Ok(()))
+    BackupService::default().restore(&f.db, &f.paths, name, instant(now), || Ok(()))
 }
 
 #[test]
@@ -23,7 +23,7 @@ fn a_cleanup_failure_keeps_the_live_database() {
             &f.db,
             &f.paths,
             &info.name,
-            "2026-11-19T11:00:00.000Z",
+            instant("2026-11-19T11:00:00.000Z"),
             || Ok(()),
         )
         .unwrap_err();
@@ -96,8 +96,8 @@ fn changing_the_folder_reports_the_backups_left_in_the_old_one() {
         &f.paths,
         &old,
         BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        true,
+        &Computer::default(),
+        instant("2026-11-19T10:00:00.000Z"),
     )
     .unwrap();
     create(
@@ -105,8 +105,8 @@ fn changing_the_folder_reports_the_backups_left_in_the_old_one() {
         &f.paths,
         &old,
         BackupKind::Safety,
-        "2026-11-19T11:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T11:00:00.000Z"),
     )
     .unwrap();
     let elsewhere = f._dir.path().join("synced");

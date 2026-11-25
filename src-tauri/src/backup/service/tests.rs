@@ -5,14 +5,10 @@ use time::macros::datetime;
 #[test]
 fn old_style_backups_of_this_computer_are_moved_with_the_rest() {
     let f = fixture();
-    let service = BackupService::default();
+    let service = service_for(computer("Máquina"));
     let old = default_folder(&f.paths);
-    as_computer("m-quina");
-    backup(&f, "2026-11-19T10:00:00.000Z");
-    as_computer("laptop");
-    backup(&f, "2026-11-19T11:00:00.000Z");
-    as_computer("maquina");
-    PREVIOUS.with(|tag| *tag.borrow_mut() = Some("m-quina".to_owned()));
+    backup_for(&f, &computer("m-quina"), "2026-11-19T10:00:00.000Z");
+    backup_for(&f, &computer("laptop"), "2026-11-19T11:00:00.000Z");
     let new = f._dir.path().join("new");
     service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
 
@@ -260,7 +256,7 @@ fn a_backup_can_finish_while_the_chosen_folder_is_being_checked() {
 
         let (done, backup) = mpsc::channel();
         scope.spawn(move || {
-            let result = service.backup_now(&f.db, &f.paths, "2026-11-19T10:00:00.000Z");
+            let result = service.backup_now(&f.db, &f.paths, instant("2026-11-19T10:00:00.000Z"));
             let _ = done.send(result);
         });
         backup
@@ -357,7 +353,7 @@ fn a_current_folder_that_does_not_answer_shows_as_unavailable_and_blocks_nothing
     let status = service.status(&f.db, &f.paths).unwrap();
     assert_eq!(status.listing, BackupListing::FolderUnavailable);
     // Nothing that takes the backup lock waits on the folder: each is refused at once.
-    let now = "2026-11-19T12:00:00.000Z";
+    let now = instant("2026-11-19T12:00:00.000Z");
     let errors = [
         service.backup_now(&f.db, &f.paths, now).unwrap_err(),
         service
@@ -421,7 +417,7 @@ fn stuck_manifests_report_a_slow_list_while_backups_keep_working() {
         .unwrap()
         .expect("a daily backup was due");
     let manual = service
-        .backup_now(&f.db, &f.paths, "2026-11-19T11:00:00.000Z")
+        .backup_now(&f.db, &f.paths, instant("2026-11-19T11:00:00.000Z"))
         .unwrap();
     assert_eq!(
         service.status(&f.db, &f.paths).unwrap().listing,
@@ -586,8 +582,8 @@ fn a_different_backup_with_the_same_name_is_never_overwritten_or_removed() {
         &f.paths,
         &old,
         BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T10:00:00.000Z"),
     )
     .unwrap();
     let new = f._dir.path().join("synced");
@@ -598,8 +594,8 @@ fn a_different_backup_with_the_same_name_is_never_overwritten_or_removed() {
         &f.paths,
         &new,
         BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T10:00:00.000Z"),
     )
     .unwrap();
     service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
@@ -624,8 +620,8 @@ fn moving_into_the_same_physical_folder_never_deletes_the_only_copy() {
         &f.paths,
         &old,
         BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T10:00:00.000Z"),
     )
     .unwrap();
     // Another spelling of the same folder.
@@ -656,8 +652,8 @@ fn a_new_folder_inside_the_old_one_is_refused() {
         &f.paths,
         &old,
         BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T10:00:00.000Z"),
     )
     .unwrap();
     let inside = old.join(&info.name).join("sub");
@@ -674,28 +670,10 @@ fn a_new_folder_inside_the_old_one_is_refused() {
 #[test]
 fn another_computers_backups_are_left_where_they_are() {
     let f = fixture();
-    let service = BackupService::default();
+    let service = service_for(computer("desktop"));
     let old = default_folder(&f.paths);
-    as_computer("laptop");
-    let theirs = create(
-        &f.db,
-        &f.paths,
-        &old,
-        BackupKind::Backup,
-        "2026-11-19T09:00:00.000Z",
-        false,
-    )
-    .unwrap();
-    as_computer("desktop");
-    create(
-        &f.db,
-        &f.paths,
-        &old,
-        BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
-    )
-    .unwrap();
+    let theirs = backup_for(&f, &computer("laptop"), "2026-11-19T09:00:00.000Z");
+    backup_for(&f, &service.computer, "2026-11-19T10:00:00.000Z");
     let new = f._dir.path().join("synced");
     service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
 
@@ -713,29 +691,11 @@ fn another_computers_backups_are_left_where_they_are() {
 #[test]
 fn untagged_backups_are_not_ours_to_move_on_a_tagged_computer() {
     let f = fixture();
-    let service = BackupService::default();
+    let service = service_for(computer("desktop"));
     let old = default_folder(&f.paths);
     // Made before tags existed (or by a computer without a tag): it can't be told whose.
-    TAG.with(|tag| *tag.borrow_mut() = Some(None));
-    let untagged = create(
-        &f.db,
-        &f.paths,
-        &old,
-        BackupKind::Backup,
-        "2026-11-19T09:00:00.000Z",
-        false,
-    )
-    .unwrap();
-    as_computer("desktop");
-    create(
-        &f.db,
-        &f.paths,
-        &old,
-        BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
-    )
-    .unwrap();
+    let untagged = backup(&f, "2026-11-19T09:00:00.000Z");
+    backup_for(&f, &service.computer, "2026-11-19T10:00:00.000Z");
     let new = f._dir.path().join("synced");
     service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
 
@@ -764,8 +724,8 @@ fn a_link_inside_a_backup_is_never_followed_and_extra_files_are_not_copied() {
         &f.paths,
         &old,
         BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T10:00:00.000Z"),
     )
     .unwrap();
     let dir = old.join(&info.name);
@@ -784,8 +744,8 @@ fn a_link_inside_a_backup_is_never_followed_and_extra_files_are_not_copied() {
         &f.paths,
         &old,
         BackupKind::Backup,
-        "2026-11-19T11:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T11:00:00.000Z"),
     )
     .unwrap();
     let db_file = old.join(&other.name).join("gabaritei.sqlite");

@@ -186,7 +186,7 @@ pub fn backup_now(
     paths: State<'_, AppPaths>,
     service: State<'_, BackupService>,
 ) -> AppResult<BackupInfo> {
-    service.backup_now(&db, &paths, &crate::clock::now())
+    service.backup_now(&db, &paths, time::OffsetDateTime::now_utc())
 }
 
 /// Asks for a new backup folder and saves it. `None` if the user cancels.
@@ -262,7 +262,7 @@ pub fn backup_restore(
     on_demand: State<'_, OnDemand>,
     name: String,
 ) -> AppResult<()> {
-    service.restore(&db, &paths, &name, &crate::clock::now(), || {
+    service.restore(&db, &paths, &name, time::OffsetDateTime::now_utc(), || {
         ensure_no_ai_job(&generation, &on_demand, "restaurar")
     })?;
     on_demand.clear_proposals();
@@ -343,9 +343,13 @@ pub async fn import_data<R: Runtime>(app: AppHandle<R>) -> AppResult<bool> {
         let service = app.state::<BackupService>();
         let generation = app.state::<GenerationManager>();
         let on_demand = app.state::<OnDemand>();
-        service.import(&db, &paths, &source, &crate::clock::now(), || {
-            ensure_no_ai_job(&generation, &on_demand, "importar")
-        })?;
+        service.import(
+            &db,
+            &paths,
+            &source,
+            time::OffsetDateTime::now_utc(),
+            || ensure_no_ai_job(&generation, &on_demand, "importar"),
+        )?;
         on_demand.clear_proposals();
         Ok(true)
     })

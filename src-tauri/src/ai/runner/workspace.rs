@@ -1,6 +1,5 @@
 //! The temporary run directory and the separate private Claude configuration directory.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use super::{Agent, JobSpec, RemNoteAccess, RunError};
@@ -130,6 +129,7 @@ fn workspace_error(error: std::io::Error) -> RunError {
 fn write_private(path: &Path, content: &str) -> std::io::Result<()> {
     #[cfg(unix)]
     {
+        use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
         let mut file = std::fs::OpenOptions::new()
             .write(true)

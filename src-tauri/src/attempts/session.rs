@@ -29,10 +29,10 @@ pub fn start(
             Some(SourceRef::Topic(*topic_id)),
             topic_questions(conn, *topic_id, *count, rng)?,
         ),
-        SessionSource::Errors { include_blanks } => (
+        SessionSource::Errors { filter } => (
             SourceKind::Errors,
             None,
-            crate::learning::error_questions(conn, *include_blanks, crate::learning::MAX_SESSION)?,
+            crate::learning::error_questions(conn, *filter, crate::learning::MAX_SESSION)?,
         ),
         SessionSource::Reviews => (
             SourceKind::Reviews,

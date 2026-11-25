@@ -178,7 +178,9 @@ fn review_interval(world: &World) -> Option<i64> {
 fn errors_of(world: &World) -> Vec<QuestionId> {
     world
         .db
-        .with(|conn| crate::learning::error_questions(conn, false, 100))
+        .with(|conn| {
+            crate::learning::error_questions(conn, crate::learning::ErrorFilter::WrongOnly, 100)
+        })
         .unwrap()
 }
 

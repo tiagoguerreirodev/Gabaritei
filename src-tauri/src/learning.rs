@@ -18,7 +18,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, Statement, params, params_from_iter};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -36,252 +36,32 @@ const MAX_UPCOMING_ROWS: usize = 50;
 /// Largest practice session built from errors or reviews.
 pub const MAX_SESSION: u32 = 100;
 
-/// What `review_state.state` holds.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ReviewState {
-    interval_days: u32,
-    /// When the answer that set this interval was given.
-    last_answered_at: String,
-}
-
-/// Every answer to a question in a finished attempt, as `(timestamp, hit)`, oldest first.
-/// `hit` is `attempts::outcome` written in SQL (`choice = answer_id`; annulled questions are
-/// skipped by the callers), because replaying history row by row in Rust would be slower. The
-/// test `scoring_in_sql_agrees_with_attempts_outcome` keeps the two together.
-/// A response without an answer time (a blank) is dated by when its attempt finished.
-fn history(conn: &Connection, question_id: &QuestionId) -> AppResult<Vec<(String, bool)>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {RESPONSE_TIME_SQL} AS at,
-                {HIT_SQL}
-         FROM responses r
-         JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NOT NULL
-         JOIN questions q ON q.id = r.question_id
-         WHERE r.question_id = ?1
-         ORDER BY at, a.id, r.position"
-    ))?;
-    let rows = stmt
-        .query_map(params![question_id], |r| Ok((r.get(0)?, r.get(1)?)))?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
-}
-
-/// Recomputes one question's review from its whole history. Call it whenever something that
-/// feeds the schedule changes: an attempt finishes, a key is corrected, a question is
-/// annulled or restored.
-pub fn refresh_question(conn: &Connection, question_id: &QuestionId) -> AppResult<()> {
-    let annulled: Option<bool> = conn
-        .query_row(
-            "SELECT annulled FROM questions WHERE id = ?1",
-            params![question_id],
-            |r| r.get(0),
-        )
-        .optional()?;
-    let events = if annulled == Some(false) {
-        history(conn, question_id)?
-    } else {
-        Vec::new()
-    };
-    let Some((last_at, _)) = events.last().cloned() else {
-        conn.execute(
-            "DELETE FROM review_state WHERE question_id = ?1",
-            params![question_id],
-        )?;
-        return Ok(());
-    };
-    let streak = events
-        .iter()
-        .fold(0usize, |streak, (_, hit)| if *hit { streak + 1 } else { 0 });
-    let interval = LADDER[streak.saturating_sub(1).min(LADDER.len() - 1)];
-    let state = serde_json::to_string(&ReviewState {
-        interval_days: interval,
-        last_answered_at: last_at.clone(),
-    })?;
-    conn.execute(
-        "INSERT INTO review_state (question_id, due_at, state)
-         VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', ?2, '+' || ?3 || ' days'), ?4)
-         ON CONFLICT (question_id) DO UPDATE SET due_at = excluded.due_at, state = excluded.state",
-        params![question_id, last_at, interval, state],
-    )?;
-    Ok(())
-}
-
-/// Refreshes every question of an attempt. Call it when the attempt finishes.
-pub fn refresh_attempt(conn: &Connection, attempt_id: &AttemptId) -> AppResult<()> {
-    let mut stmt =
-        conn.prepare("SELECT DISTINCT question_id FROM responses WHERE attempt_id = ?1")?;
-    let ids = stmt
-        .query_map(params![attempt_id], |r| r.get::<_, QuestionId>(0))?
-        .collect::<Result<Vec<_>, _>>()?;
-    for id in ids {
-        refresh_question(conn, &id)?;
-    }
-    Ok(())
-}
-
-/// Rebuilds every review from the data. Reviews are derived, so this is always safe; it runs
-/// at startup so history that predates the feature, or a restored backup, gets its schedule.
-pub fn refresh_all(conn: &Connection) -> AppResult<()> {
-    let mut stmt = conn.prepare("SELECT DISTINCT question_id FROM responses")?;
-    let ids = stmt
-        .query_map([], |r| r.get::<_, QuestionId>(0))?
-        .collect::<Result<Vec<_>, _>>()?;
-    for id in ids {
-        refresh_question(conn, &id)?;
-    }
-    conn.execute(
-        "DELETE FROM review_state WHERE question_id NOT IN (SELECT question_id FROM responses)",
-        [],
-    )?;
-    Ok(())
-}
-
-// ---- Error notebook --------------------------------------------------------------------------
-
-/// A question's latest result (and latest answered response) in finished attempts.
-struct Latest {
-    question_id: QuestionId,
-    at: String,
-    attempt_id: AttemptId,
-    blank: bool,
-    wrong: bool,
-}
-
-/// The latest result of every non-annulled question that has one, newest first. `blank` is
-/// about the latest result; `wrong` is about the latest *answered* response, so a later blank
-/// never hides an earlier wrong answer (the same blank rule as the topic strength in
-/// Desempenho). When the question is wrong, `at` and `attempt_id` point at that wrong answer,
-/// so the page links to the attempt that shows it.
-fn latest_results(conn: &Connection) -> AppResult<Vec<Latest>> {
-    let mut stmt = conn.prepare(&format!(
-        "WITH base AS (
-           SELECT r.question_id, a.id AS attempt_id, r.choice, ({MISS_SQL}) AS wrong, r.position,
-                  {RESPONSE_TIME_SQL} AS at
-           FROM responses r
-           JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NOT NULL
-           JOIN questions q ON q.id = r.question_id AND q.annulled = 0
-         ),
-         ranked AS (
-           SELECT *, ROW_NUMBER() OVER (
-                    PARTITION BY question_id ORDER BY at DESC, attempt_id DESC, position DESC
-                  ) AS rank
-           FROM base
-         ),
-         answered AS (
-           SELECT question_id, attempt_id, at, wrong, ROW_NUMBER() OVER (
-                    PARTITION BY question_id ORDER BY at DESC, attempt_id DESC, position DESC
-                  ) AS rank
-           FROM base WHERE choice IS NOT NULL
-         )
-         SELECT l.question_id,
-                CASE WHEN w.wrong = 1 THEN w.at ELSE l.at END,
-                CASE WHEN w.wrong = 1 THEN w.attempt_id ELSE l.attempt_id END,
-                l.choice IS NULL, COALESCE(w.wrong, 0)
-         FROM ranked l
-         LEFT JOIN answered w ON w.question_id = l.question_id AND w.rank = 1
-         WHERE l.rank = 1
-         ORDER BY 2 DESC, l.question_id"
-    ))?;
-    let rows = stmt
-        .query_map([], |r| {
-            Ok(Latest {
-                question_id: r.get(0)?,
-                at: r.get(1)?,
-                attempt_id: r.get(2)?,
-                blank: r.get(3)?,
-                wrong: r.get(4)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
-}
-
-impl Latest {
-    fn is_error(&self, include_blanks: bool) -> bool {
-        self.wrong || (include_blanks && self.blank)
-    }
-}
-
-/// The one definition of "held by an open attempt": the questions that sit in an unfinished
-/// attempt. Practice sessions leave them out: they stay due until that attempt is finished,
-/// and would otherwise be picked again. Every query that needs the rule embeds this one.
-const OPEN_ATTEMPT_QUESTIONS_SQL: &str = "SELECT DISTINCT r.question_id FROM responses r
-     JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NULL";
-
-fn open_attempt_questions(conn: &Connection) -> AppResult<HashSet<QuestionId>> {
-    let ids = conn
-        .prepare(OPEN_ATTEMPT_QUESTIONS_SQL)?
-        .query_map([], |r| r.get::<_, QuestionId>(0))?
-        .collect::<Result<_, _>>()?;
-    Ok(ids)
-}
-
+/// A review is due at the instant of its scheduled timestamp.
 pub(crate) const DUE_SQL: &str = "due_at <= ?1";
 
-pub(crate) fn due_count(conn: &Connection, now: &str) -> AppResult<u32> {
-    let sql = format!("SELECT COUNT(*) FROM review_state WHERE {DUE_SQL}");
-    Ok(conn.query_row(&sql, [now], |r| r.get(0))?)
+/// Which results to include in the error notebook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "bool", into = "bool")]
+pub enum ErrorFilter {
+    WrongOnly,
+    IncludeBlanks,
 }
 
-/// How many reviews due at `now` sit in an unfinished attempt: they stay due, but a new
-/// practice session leaves them out. The Home summary and the Learning overview both use this.
-pub fn due_in_open_attempt(conn: &Connection, now: &str) -> AppResult<u32> {
-    Ok(conn.query_row(
-        &format!(
-            "SELECT COUNT(*) FROM review_state
-             WHERE {DUE_SQL} AND question_id IN ({OPEN_ATTEMPT_QUESTIONS_SQL})"
-        ),
-        [now],
-        |r| r.get(0),
-    )?)
-}
-
-/// Questions of the error notebook for a practice session, most recent error first, without
-/// the ones already in an unfinished attempt.
-pub fn error_questions(
-    conn: &Connection,
-    include_blanks: bool,
-    limit: u32,
-) -> AppResult<Vec<QuestionId>> {
-    let in_open_attempt = open_attempt_questions(conn)?;
-    Ok(latest_results(conn)?
-        .into_iter()
-        .filter(|l| l.is_error(include_blanks) && !in_open_attempt.contains(&l.question_id))
-        .take(limit as usize)
-        .map(|l| l.question_id)
-        .collect())
-}
-
-/// The questions of a reviews session: due reviews first (most overdue first), then the most
-/// recent errors that aren't due yet, up to `limit`.
-pub fn review_session(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<QuestionId>> {
-    let mut ids = due_questions(conn, now, limit)?;
-    for id in error_questions(conn, false, limit)? {
-        if ids.len() >= limit as usize {
-            break;
-        }
-        if !ids.contains(&id) {
-            ids.push(id);
+impl From<bool> for ErrorFilter {
+    fn from(include_blanks: bool) -> Self {
+        if include_blanks {
+            Self::IncludeBlanks
+        } else {
+            Self::WrongOnly
         }
     }
-    Ok(ids)
 }
 
-/// Questions whose review is due at `now`, the most overdue first, without the ones already
-/// in an unfinished attempt.
-pub fn due_questions(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<QuestionId>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT question_id FROM review_state
-         WHERE {DUE_SQL} AND question_id NOT IN ({OPEN_ATTEMPT_QUESTIONS_SQL})
-         ORDER BY due_at, question_id LIMIT ?2"
-    ))?;
-    let ids = stmt
-        .query_map(params![now, limit], |r| r.get::<_, QuestionId>(0))?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(ids)
+impl From<ErrorFilter> for bool {
+    fn from(filter: ErrorFilter) -> Self {
+        filter == ErrorFilter::IncludeBlanks
+    }
 }
-
-// ---- The page --------------------------------------------------------------------------------
 
 /// One row of the *Erros e revisões* list. Deliberately carries no stem, option or key: it
 /// links to the past attempt, where the question has already been revealed.
@@ -325,12 +105,365 @@ pub struct LearningOverview {
     pub items: Vec<LearningItem>,
 }
 
+/// Recomputes one question's review from its whole history. Call it when an attempt finishes,
+/// a key is corrected, or a question is annulled or restored.
+pub fn refresh_question(conn: &Connection, question_id: &QuestionId) -> AppResult<()> {
+    let history = review_history(conn, Some(question_id))?;
+    if let Some(review) = history.into_iter().next() {
+        save_review(&mut conn.prepare(SAVE_REVIEW_SQL)?, review)?;
+    } else {
+        conn.execute(
+            "DELETE FROM review_state WHERE question_id = ?1",
+            params![question_id],
+        )?;
+    }
+    Ok(())
+}
+
+/// Refreshes every question of an attempt. Call it when the attempt finishes.
+pub fn refresh_attempt(conn: &Connection, attempt_id: &AttemptId) -> AppResult<()> {
+    let mut stmt =
+        conn.prepare("SELECT DISTINCT question_id FROM responses WHERE attempt_id = ?1")?;
+    let ids = stmt
+        .query_map(params![attempt_id], |r| r.get::<_, QuestionId>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for id in ids {
+        refresh_question(conn, &id)?;
+    }
+    Ok(())
+}
+
+/// Rebuilds every review from current keys and finished responses in one history query.
+pub fn refresh_all(conn: &Connection) -> AppResult<()> {
+    let history = review_history(conn, None)?;
+    let mut write = conn.prepare(SAVE_REVIEW_SQL)?;
+    for review in history {
+        save_review(&mut write, review)?;
+    }
+    conn.execute(
+        &format!(
+            "DELETE FROM review_state WHERE question_id NOT IN (
+                SELECT r.question_id {REVIEW_HISTORY_SOURCE_SQL}
+             )"
+        ),
+        [],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn due_count(conn: &Connection, now: &str) -> AppResult<u32> {
+    let sql = format!("SELECT COUNT(*) FROM review_state WHERE {DUE_SQL}");
+    Ok(conn.query_row(&sql, [now], |r| r.get(0))?)
+}
+
+/// How many reviews due at `now` sit in an unfinished attempt.
+pub fn due_in_open_attempt(conn: &Connection, now: &str) -> AppResult<u32> {
+    Ok(conn.query_row(
+        &format!(
+            "SELECT COUNT(*) FROM review_state
+             WHERE {DUE_SQL} AND question_id IN ({OPEN_ATTEMPT_QUESTIONS_SQL})"
+        ),
+        [now],
+        |r| r.get(0),
+    )?)
+}
+
+/// Questions of the error notebook for a practice session, most recent error first, without
+/// the ones already in an unfinished attempt.
+pub fn error_questions(
+    conn: &Connection,
+    filter: ErrorFilter,
+    limit: u32,
+) -> AppResult<Vec<QuestionId>> {
+    let in_open_attempt = open_attempt_questions(conn)?;
+    let latest = latest_results(conn)?;
+    Ok(error_candidates(&latest, &in_open_attempt, filter)
+        .take(limit as usize)
+        .cloned()
+        .collect())
+}
+
+/// The questions of a reviews session: due reviews first (most overdue first), then the most
+/// recent errors that aren't already selected, up to `limit`.
+pub fn review_session(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<QuestionId>> {
+    let due = due_questions(conn, now, limit)?;
+    let errors = error_questions(conn, ErrorFilter::WrongOnly, limit)?;
+    Ok(fill_review_session(due, errors, limit))
+}
+
+/// Questions whose review is due at `now`, the most overdue first, without the ones already
+/// in an unfinished attempt.
+pub fn due_questions(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<QuestionId>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT question_id FROM review_state
+         WHERE {DUE_SQL} AND question_id NOT IN ({OPEN_ATTEMPT_QUESTIONS_SQL})
+         ORDER BY due_at, question_id LIMIT ?2"
+    ))?;
+    let ids = stmt
+        .query_map(params![now, limit], |r| r.get::<_, QuestionId>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ids)
+}
+
 /// Counts and list for the page at `now`.
-pub fn overview(conn: &Connection, now: &str, include_blanks: bool) -> AppResult<LearningOverview> {
-    let due_dates: HashMap<QuestionId, String> = conn
-        .prepare("SELECT question_id, due_at FROM review_state")?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+pub fn overview(conn: &Connection, now: &str, filter: ErrorFilter) -> AppResult<LearningOverview> {
+    let latest = latest_results(conn)?;
+    let in_open_attempt = open_attempt_questions(conn)?;
+    let schedule = review_schedule(conn, now, &in_open_attempt)?;
+    let practice = fill_review_session(
+        schedule.practice_due,
+        error_candidates(&latest, &in_open_attempt, ErrorFilter::WrongOnly).cloned(),
+        MAX_SESSION,
+    );
+    let practice_errors = error_candidates(&latest, &in_open_attempt, filter)
+        .take(MAX_SESSION as usize)
+        .count() as u32;
+    let items = overview_items(latest, &schedule.dates, question_topics(conn)?, now, filter);
+    Ok(LearningOverview {
+        due: schedule.due,
+        due_in_open_attempt: schedule.due_in_open_attempt,
+        upcoming: schedule.dates.len() as u32 - schedule.due,
+        errors: items.iter().filter(|i| i.is_error).count() as u32,
+        practice: practice.len() as u32,
+        practice_errors,
+        items,
+    })
+}
+
+/// What `review_state.state` holds.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewState {
+    interval_days: u32,
+    /// When the answer that set this interval was given.
+    last_answered_at: String,
+}
+
+struct ReviewHistory {
+    question_id: QuestionId,
+    last_at: String,
+    hits: i64,
+}
+
+const REVIEW_HISTORY_SOURCE_SQL: &str = "FROM responses r
+    JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NOT NULL
+    JOIN questions q ON q.id = r.question_id AND q.annulled = 0";
+
+/// The newest response time and consecutive hits for each question. The first miss while
+/// reading newest first ends the streak; a blank is a miss here.
+fn review_history(
+    conn: &Connection,
+    question_id: Option<&QuestionId>,
+) -> AppResult<Vec<ReviewHistory>> {
+    let filter = if question_id.is_some() {
+        "WHERE r.question_id = ?1"
+    } else {
+        ""
+    };
+    let mut stmt = conn.prepare(&format!(
+        "WITH ranked AS (
+            SELECT r.question_id, {RESPONSE_TIME_SQL} AS at, ({HIT_SQL}) AS hit,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY r.question_id
+                       ORDER BY {RESPONSE_TIME_SQL} DESC, a.id DESC, r.position DESC
+                   ) AS recency
+            {REVIEW_HISTORY_SOURCE_SQL}
+            {filter}
+         )
+         SELECT question_id, MAX(CASE WHEN recency = 1 THEN at END),
+                COALESCE(MIN(CASE WHEN NOT hit THEN recency END) - 1, COUNT(*))
+         FROM ranked GROUP BY question_id"
+    ))?;
+    let rows = stmt
+        .query_map(params_from_iter(question_id), |r| {
+            Ok(ReviewHistory {
+                question_id: r.get(0)?,
+                last_at: r.get(1)?,
+                hits: r.get(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn interval_after(hits: i64) -> u32 {
+    let rung = hits.saturating_sub(1).clamp(0, LADDER.len() as i64 - 1);
+    LADDER[rung as usize]
+}
+
+const SAVE_REVIEW_SQL: &str = "INSERT INTO review_state (question_id, due_at, state)
+    VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', ?2, '+' || ?3 || ' days'), ?4)
+    ON CONFLICT (question_id) DO UPDATE SET due_at = excluded.due_at, state = excluded.state";
+
+fn save_review(stmt: &mut Statement<'_>, review: ReviewHistory) -> AppResult<()> {
+    let state = ReviewState {
+        interval_days: interval_after(review.hits),
+        last_answered_at: review.last_at,
+    };
+    stmt.execute(params![
+        review.question_id,
+        state.last_answered_at,
+        state.interval_days,
+        serde_json::to_string(&state)?,
+    ])?;
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum LatestStatus {
+    Correct,
+    Blank,
+    Wrong,
+}
+
+/// A question's latest result in finished attempts, keeping an earlier wrong answer visible.
+struct Latest {
+    question_id: QuestionId,
+    at: String,
+    attempt_id: AttemptId,
+    status: LatestStatus,
+}
+
+impl Latest {
+    fn is_error(&self, filter: ErrorFilter) -> bool {
+        match self.status {
+            LatestStatus::Correct => false,
+            LatestStatus::Blank => filter == ErrorFilter::IncludeBlanks,
+            LatestStatus::Wrong => true,
+        }
+    }
+}
+
+/// A later blank never hides an earlier wrong answer. In that case the timestamp and attempt
+/// ID point to the wrong answer. Otherwise they point to the latest response.
+fn latest_results(conn: &Connection) -> AppResult<Vec<Latest>> {
+    let mut stmt = conn.prepare(&format!(
+        "WITH base AS (
+           SELECT r.question_id, a.id AS attempt_id, r.choice, ({MISS_SQL}) AS wrong, r.position,
+                  {RESPONSE_TIME_SQL} AS at
+           FROM responses r
+           JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NOT NULL
+           JOIN questions q ON q.id = r.question_id AND q.annulled = 0
+         ),
+         ranked AS (
+           SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY question_id ORDER BY at DESC, attempt_id DESC, position DESC
+                  ) AS rank
+           FROM base
+         ),
+         answered AS (
+           SELECT question_id, attempt_id, at, wrong, ROW_NUMBER() OVER (
+                    PARTITION BY question_id ORDER BY at DESC, attempt_id DESC, position DESC
+                  ) AS rank
+           FROM base WHERE choice IS NOT NULL
+         )
+         SELECT l.question_id,
+                CASE WHEN w.wrong = 1 THEN w.at ELSE l.at END,
+                CASE WHEN w.wrong = 1 THEN w.attempt_id ELSE l.attempt_id END,
+                l.choice IS NULL, COALESCE(w.wrong, 0)
+         FROM ranked l
+         LEFT JOIN answered w ON w.question_id = l.question_id AND w.rank = 1
+         WHERE l.rank = 1
+         ORDER BY 2 DESC, l.question_id"
+    ))?;
+    let rows = stmt
+        .query_map([], |r| {
+            let status = match (r.get(3)?, r.get(4)?) {
+                (_, true) => LatestStatus::Wrong,
+                (true, false) => LatestStatus::Blank,
+                (false, false) => LatestStatus::Correct,
+            };
+            Ok(Latest {
+                question_id: r.get(0)?,
+                at: r.get(1)?,
+                attempt_id: r.get(2)?,
+                status,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// The one definition of "held by an open attempt": the questions that sit in an unfinished
+/// attempt. Practice sessions leave them out: they stay due until that attempt is finished,
+/// and would otherwise be picked again. Every query that needs the rule embeds this one.
+const OPEN_ATTEMPT_QUESTIONS_SQL: &str = "SELECT DISTINCT r.question_id FROM responses r
+     JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NULL";
+
+fn open_attempt_questions(conn: &Connection) -> AppResult<HashSet<QuestionId>> {
+    let ids = conn
+        .prepare(OPEN_ATTEMPT_QUESTIONS_SQL)?
+        .query_map([], |r| r.get::<_, QuestionId>(0))?
         .collect::<Result<_, _>>()?;
+    Ok(ids)
+}
+
+fn error_candidates<'a>(
+    latest: &'a [Latest],
+    in_open_attempt: &'a HashSet<QuestionId>,
+    filter: ErrorFilter,
+) -> impl Iterator<Item = &'a QuestionId> {
+    latest
+        .iter()
+        .filter(move |result| {
+            result.is_error(filter) && !in_open_attempt.contains(&result.question_id)
+        })
+        .map(|result| &result.question_id)
+}
+
+fn fill_review_session(
+    mut due: Vec<QuestionId>,
+    errors: impl IntoIterator<Item = QuestionId>,
+    limit: u32,
+) -> Vec<QuestionId> {
+    for id in errors {
+        if due.len() >= limit as usize {
+            break;
+        }
+        if !due.contains(&id) {
+            due.push(id);
+        }
+    }
+    due
+}
+
+#[derive(Default)]
+struct ReviewSchedule {
+    dates: HashMap<QuestionId, String>,
+    due: u32,
+    due_in_open_attempt: u32,
+    practice_due: Vec<QuestionId>,
+}
+
+fn review_schedule(
+    conn: &Connection,
+    now: &str,
+    in_open_attempt: &HashSet<QuestionId>,
+) -> AppResult<ReviewSchedule> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT question_id, due_at, {DUE_SQL}
+         FROM review_state ORDER BY due_at, question_id"
+    ))?;
+    let rows = stmt.query_map([now], |r| {
+        Ok((r.get::<_, QuestionId>(0)?, r.get(1)?, r.get::<_, bool>(2)?))
+    })?;
+    let mut schedule = ReviewSchedule::default();
+    for row in rows {
+        let (id, date, is_due) = row?;
+        if is_due {
+            schedule.due += 1;
+            if in_open_attempt.contains(&id) {
+                schedule.due_in_open_attempt += 1;
+            } else if schedule.practice_due.len() < MAX_SESSION as usize {
+                schedule.practice_due.push(id.clone());
+            }
+        }
+        schedule.dates.insert(id, date);
+    }
+    Ok(schedule)
+}
+
+fn question_topics(conn: &Connection) -> AppResult<HashMap<QuestionId, Vec<TopicPath>>> {
     let mut topics: HashMap<QuestionId, Vec<TopicPath>> = HashMap::new();
     let mut stmt = conn.prepare(
         "SELECT qt.question_id, t.area, t.matter, t.topic
@@ -351,10 +484,20 @@ pub fn overview(conn: &Connection, now: &str, include_blanks: bool) -> AppResult
         topics.entry(question_id).or_default().push(path);
     }
 
+    Ok(topics)
+}
+
+fn overview_items(
+    latest: Vec<Latest>,
+    dates: &HashMap<QuestionId, String>,
+    mut topics: HashMap<QuestionId, Vec<TopicPath>>,
+    now: &str,
+    filter: ErrorFilter,
+) -> Vec<LearningItem> {
     let mut items = Vec::new();
-    for latest in latest_results(conn)? {
-        let due_at = due_dates.get(&latest.question_id).cloned();
-        let is_error = latest.is_error(include_blanks);
+    for latest in latest {
+        let due_at = dates.get(&latest.question_id).cloned();
+        let is_error = latest.is_error(filter);
         if due_at.is_none() && !is_error {
             continue;
         }
@@ -383,17 +526,7 @@ pub fn overview(conn: &Connection, now: &str, include_blanks: bool) -> AppResult
         }
         !only_upcoming || upcoming_only <= MAX_UPCOMING_ROWS
     });
-    let due = due_count(conn, now)?;
-    let due_in_open_attempt = due_in_open_attempt(conn, now)?;
-    Ok(LearningOverview {
-        due,
-        due_in_open_attempt,
-        upcoming: due_dates.len() as u32 - due,
-        errors: items.iter().filter(|i| i.is_error).count() as u32,
-        practice: review_session(conn, now, MAX_SESSION)?.len() as u32,
-        practice_errors: error_questions(conn, include_blanks, MAX_SESSION)?.len() as u32,
-        items,
-    })
+    items
 }
 
 #[cfg(test)]

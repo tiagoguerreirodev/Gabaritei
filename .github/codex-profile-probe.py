@@ -31,10 +31,12 @@ with tempfile.TemporaryDirectory(prefix='gabaritei-restricted-') as temp:
     schema.write_text('}', encoding='utf-8')
     codex_home = base / 'codex-home'
     codex_home.mkdir()
-    install = str(binary.parent)
+    runtime = binary.parent.parent
+    install = runtime if runtime.joinpath('codex-package.json').is_file() else binary
     filesystem = (
         'permissions.gabaritei.filesystem={":minimal"="read", '
-        '":workspace_roots"={"."="read"}, ' + json.dumps(install, ensure_ascii=False) + '="read"}'
+        + json.dumps(str(install), ensure_ascii=False) + '="read", '
+        + json.dumps(str(work), ensure_ascii=False) + '="read"}'
     )
     config = ['-c', filesystem, '-c', 'permissions.gabaritei.network.enabled=false']
     env = {key: value for key, value in os.environ.items() if key not in (
@@ -106,11 +108,16 @@ for path in ('/System', '/Library', '/usr', '/dev', '/private/tmp', '/Users', os
         'exec', '--strict-config', '--ignore-user-config', '--ignore-rules', '--ephemeral',
         '--skip-git-repo-check', '--output-schema', str(schema),
         '-c', 'default_permissions="gabaritei"', '-c', 'approval_policy="never"', *config,
+        '-c', 'shell_environment_policy.inherit="core"',
     ]
     accepted = run([*strict, 'Synthetic'])
     assert 'is not valid JSON' in accepted.stderr, accepted.returncode
     rejected = run([*strict, '-c', 'gabaritei_unknown_key=true', 'Synthetic'])
     assert 'unknown configuration field' in rejected.stderr, rejected.returncode
-    assert check.returncode == 0, check.returncode
-    answers = set(check.stdout.splitlines())
-    assert {'attachment=True', 'outside=False', 'write=False', 'network=False'} <= answers
+    if windows:
+        assert check.returncode != 0, check.returncode
+        assert 'requires effective `:root` read access' in check.stderr
+    else:
+        assert check.returncode == 0, check.returncode
+        answers = set(check.stdout.splitlines())
+        assert {'attachment=True', 'outside=False', 'write=False', 'network=False'} <= answers

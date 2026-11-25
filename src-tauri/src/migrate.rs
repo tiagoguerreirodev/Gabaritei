@@ -16,14 +16,14 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use flate2::read::GzDecoder;
-use rusqlite::params;
+use rusqlite::{Transaction, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::bank::catalog::CollectionKind;
 use crate::bank::identity::sha256_hex;
 use crate::bank::question::is_valid_image_name;
-use crate::bank::store::plan_import;
+use crate::bank::store::{ImportPlan, plan_import};
 use crate::bank::{Provenance, QuestionInput, QuestionOption, QuestionType, TopicPath};
 use crate::db::{Database, SettingKey, get_setting, set_setting};
 use crate::error::{AppError, AppResult};
@@ -33,6 +33,11 @@ const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_STATE_BYTES: u64 = 80 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+
+const LEGACY_FORMAT: &str = "caderno-local";
+const FORMAT_VERSION: u32 = 1;
+const DATABASE_VERSION: u32 = 2;
+const MAX_REPORTED_PROBLEMS: usize = 10;
 
 const UNCHANGED: &str = "Nenhum dado foi alterado.";
 
@@ -66,6 +71,42 @@ pub struct LegacyImportOutcome {
     pub report: LegacyImportReport,
     /// `true` when the migration had already run; nothing was changed.
     pub already_imported: bool,
+}
+
+/// Current migration status, for the first-run screen and settings.
+pub fn status(db: &Database) -> AppResult<LegacyImportStatus> {
+    db.with(|conn| {
+        let report = get_setting::<LegacyImportReport>(conn, SettingKey::LegacyImport)?;
+        let questions: i64 = conn.query_row("SELECT COUNT(*) FROM questions", [], |r| r.get(0))?;
+        Ok(LegacyImportStatus {
+            report,
+            bank_empty: questions == 0,
+        })
+    })
+}
+
+/// Imports the legacy bank from `source` (the clone or its `biblioteca` folder) once.
+/// A second call returns the first report and changes nothing.
+pub fn import_legacy_bank(
+    db: &Database,
+    images_dir: &Path,
+    source: &Path,
+    now: &str,
+) -> AppResult<LegacyImportOutcome> {
+    if let Some(report) = db.with(|conn| get_setting(conn, SettingKey::LegacyImport))? {
+        return Ok(LegacyImportOutcome {
+            report,
+            already_imported: true,
+        });
+    }
+
+    let library = locate_library(source)?;
+    let manifest = read_manifest(&library)?;
+    let snapshot = read_snapshot(&library, &manifest)?;
+    let prepared = prepare(snapshot.tables)?;
+    let images = read_images(&library, &manifest, &prepared.images)?;
+
+    write_import(db, images_dir, prepared, &images, now)
 }
 
 fn invalid(message: impl std::fmt::Display) -> AppError {
@@ -212,7 +253,7 @@ fn read_manifest(library: &Path) -> AppResult<Manifest> {
             "O manifesto.json não está no formato esperado ({e})."
         ))
     })?;
-    if manifest.format != "caderno-local" || manifest.version != 1 {
+    if manifest.format != LEGACY_FORMAT || manifest.version != FORMAT_VERSION {
         return Err(invalid(format!(
             "Formato de manifesto não reconhecido ({} versão {}).",
             manifest.format, manifest.version
@@ -251,7 +292,9 @@ fn read_snapshot(library: &Path, manifest: &Manifest) -> AppResult<Snapshot> {
             "O estado do Caderno Local não está no formato esperado ({e})."
         ))
     })?;
-    if snapshot.format != "caderno-local" || snapshot.version != 1 || snapshot.database_version != 2
+    if snapshot.format != LEGACY_FORMAT
+        || snapshot.version != FORMAT_VERSION
+        || snapshot.database_version != DATABASE_VERSION
     {
         return Err(invalid(format!(
             "Versão do estado não suportada ({} {} / banco {}).",
@@ -271,10 +314,36 @@ struct Prepared {
 
 /// Maps the legacy tables to question inputs and checks the references between tables.
 fn prepare(tables: Tables) -> AppResult<Prepared> {
+    let mut topics = question_topics(&tables.subjects, &tables.question_subjects)?;
+    let mut inputs = Vec::with_capacity(tables.questions.len());
+    let mut images = Vec::new();
+    for row in &tables.questions {
+        let input = question_input(row, topics.remove(&row.id).unwrap_or_default())?;
+        if let Some(image) = &input.image {
+            images.push(image.clone());
+        }
+        inputs.push(input);
+    }
+    check_collection_items(&tables)?;
+    images.sort();
+    images.dedup();
+    Ok(Prepared {
+        inputs,
+        topics: tables.subjects.len(),
+        collections: tables.collections,
+        items: tables.collection_items,
+        images,
+    })
+}
+
+fn question_topics(
+    subjects: &[SubjectRow],
+    links: &[QuestionSubjectRow],
+) -> AppResult<HashMap<QuestionId, Vec<TopicPath>>> {
     let subjects: HashMap<&str, &SubjectRow> =
-        tables.subjects.iter().map(|s| (s.id.as_str(), s)).collect();
-    let mut topics_by_question: HashMap<&QuestionId, Vec<TopicPath>> = HashMap::new();
-    for link in &tables.question_subjects {
+        subjects.iter().map(|s| (s.id.as_str(), s)).collect();
+    let mut topics_by_question: HashMap<QuestionId, Vec<TopicPath>> = HashMap::new();
+    for link in links {
         let subject = subjects.get(link.subject_id.as_str()).ok_or_else(|| {
             invalid(format!(
                 "O assunto {} usado pela questão {} não existe.",
@@ -282,7 +351,7 @@ fn prepare(tables: Tables) -> AppResult<Prepared> {
             ))
         })?;
         topics_by_question
-            .entry(&link.question_id)
+            .entry(link.question_id.clone())
             .or_default()
             .push(TopicPath::new(
                 &subject.area,
@@ -291,40 +360,39 @@ fn prepare(tables: Tables) -> AppResult<Prepared> {
             ));
     }
 
-    let mut inputs = Vec::with_capacity(tables.questions.len());
-    let mut images = Vec::new();
-    for row in &tables.questions {
-        let legacy: LegacyQuestion = serde_json::from_str(&row.data).map_err(|e| {
-            invalid(format!(
-                "A questão {} está em um formato inesperado ({e}).",
-                row.id
-            ))
-        })?;
-        let kind = legacy.kind.parse::<QuestionType>().map_err(|_| {
-            invalid(format!(
-                "A questão {} é do tipo \"{}\", que o Gabaritei não importa.",
-                row.id, legacy.kind
-            ))
-        })?;
-        if let Some(image) = &legacy.image {
-            images.push(image.clone());
-        }
-        inputs.push(QuestionInput {
-            id: row.id.as_str().to_owned(),
-            kind,
-            stem: legacy.stem,
-            options: legacy.options,
-            answer_id: legacy.answer_id,
-            explanation: legacy.explanation,
-            refs: legacy.refs,
-            topics: topics_by_question.remove(&row.id).unwrap_or_default(),
-            image: legacy.image,
-            image_alt: legacy.image_alt,
-            annulled: legacy.annulled,
-            provenance: Provenance::Legacy,
-        });
-    }
+    Ok(topics_by_question)
+}
 
+fn question_input(row: &QuestionRow, topics: Vec<TopicPath>) -> AppResult<QuestionInput> {
+    let legacy: LegacyQuestion = serde_json::from_str(&row.data).map_err(|e| {
+        invalid(format!(
+            "A questão {} está em um formato inesperado ({e}).",
+            row.id
+        ))
+    })?;
+    let kind = legacy.kind.parse::<QuestionType>().map_err(|_| {
+        invalid(format!(
+            "A questão {} é do tipo \"{}\", que o Gabaritei não importa.",
+            row.id, legacy.kind
+        ))
+    })?;
+    Ok(QuestionInput {
+        id: row.id.as_str().to_owned(),
+        kind,
+        stem: legacy.stem,
+        options: legacy.options,
+        answer_id: legacy.answer_id,
+        explanation: legacy.explanation,
+        refs: legacy.refs,
+        topics,
+        image: legacy.image,
+        image_alt: legacy.image_alt,
+        annulled: legacy.annulled,
+        provenance: Provenance::Legacy,
+    })
+}
+
+fn check_collection_items(tables: &Tables) -> AppResult<()> {
     let question_ids: HashSet<&QuestionId> = tables.questions.iter().map(|q| &q.id).collect();
     let collection_ids: HashSet<&CollectionId> = tables.collections.iter().map(|c| &c.id).collect();
     let versions: HashMap<&str, &QuestionId> = tables
@@ -344,15 +412,7 @@ fn prepare(tables: Tables) -> AppResult<Prepared> {
         }
     }
 
-    images.sort();
-    images.dedup();
-    Ok(Prepared {
-        inputs,
-        topics: tables.subjects.len(),
-        collections: tables.collections,
-        items: tables.collection_items,
-        images,
-    })
+    Ok(())
 }
 
 /// Reads and verifies every image the questions use.
@@ -410,42 +470,6 @@ fn write_images(images_dir: &Path, images: &[(String, Vec<u8>)]) -> AppResult<()
 
 // ---- Entry points ----------------------------------------------------------------------------
 
-/// Current migration status, for the first-run screen and settings.
-pub fn status(db: &Database) -> AppResult<LegacyImportStatus> {
-    db.with(|conn| {
-        let report = get_setting::<LegacyImportReport>(conn, SettingKey::LegacyImport)?;
-        let questions: i64 = conn.query_row("SELECT COUNT(*) FROM questions", [], |r| r.get(0))?;
-        Ok(LegacyImportStatus {
-            report,
-            bank_empty: questions == 0,
-        })
-    })
-}
-
-/// Imports the legacy bank from `source` (the clone or its `biblioteca` folder) once.
-/// A second call returns the first report and changes nothing.
-pub fn import_legacy_bank(
-    db: &Database,
-    images_dir: &Path,
-    source: &Path,
-    now: &str,
-) -> AppResult<LegacyImportOutcome> {
-    if let Some(report) = db.with(|conn| get_setting(conn, SettingKey::LegacyImport))? {
-        return Ok(LegacyImportOutcome {
-            report,
-            already_imported: true,
-        });
-    }
-
-    let library = locate_library(source)?;
-    let manifest = read_manifest(&library)?;
-    let snapshot = read_snapshot(&library, &manifest)?;
-    let prepared = prepare(snapshot.tables)?;
-    let images = read_images(&library, &manifest, &prepared.images)?;
-
-    write_import(db, images_dir, prepared, &images, now)
-}
-
 /// Writes the prepared bank in one transaction. The "already imported" check happens inside it,
 /// so two imports that both passed the early check cannot both write: the database lock
 /// serializes the transactions and the second one returns the first one's report. This keeps
@@ -466,51 +490,22 @@ fn write_import(
             });
         }
         let plan = plan_import(tx, prepared.inputs)?;
-        if !plan.problems().is_empty() {
-            let shown: Vec<&str> = plan.problems().iter().take(10).map(String::as_str).collect();
-            return Err(invalid(format!(
-                "O banco do Caderno Local tem {} problema(s), por exemplo:\n{}\n",
-                plan.problems().len(),
-                shown.join("\n")
-            )));
-        }
-        let changed_ids = plan.changed_id_count();
-        if changed_ids > 0 {
-            return Err(invalid(format!(
-                "{changed_ids} questão(ões) não manteriam o identificador original do Caderno Local."
-            )));
-        }
-
-        let questions = plan.question_count() as u32;
-        let outcome = plan.apply(now)?;
-
-        for collection in &prepared.collections {
-            tx.execute(
-                "INSERT INTO collections (id, title, kind, contest, board, created_at)
-                 VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
-                params![collection.id, collection.title, CollectionKind::Imported, collection.contest, collection.created],
-            )?;
-        }
-        for item in &prepared.items {
-            tx.execute(
-                "INSERT INTO collection_items (collection_id, position, question_id)
-                 VALUES (?1, ?2, ?3)",
-                params![
-                    item.collection_id,
-                    item.position,
-                    outcome.ids_by_local_id[item.question_id.as_str()]
-                ],
-            )?;
-        }
-
+        check_plan(&plan)?;
         let report = LegacyImportReport {
             imported_at: now.to_owned(),
-            questions,
-            collections: prepared.collections.len() as u32,
-            collection_items: prepared.items.len() as u32,
-            topics: prepared.topics as u32,
-            images: images.len() as u32,
+            questions: count(plan.question_count())?,
+            collections: count(prepared.collections.len())?,
+            collection_items: count(prepared.items.len())?,
+            topics: count(prepared.topics)?,
+            images: count(images.len())?,
         };
+        let outcome = plan.apply(now)?;
+        write_collections(
+            tx,
+            &prepared.collections,
+            &prepared.items,
+            &outcome.ids_by_local_id,
+        )?;
         // The last step before the commit that touches the database is done; writing the
         // images is the last fallible one, so a failure above (bad data, a conflicting row, the
         // status setting) rolls back without leaving image files behind. Only a failing commit
@@ -523,6 +518,72 @@ fn write_import(
             already_imported: false,
         })
     })
+}
+
+fn check_plan(plan: &ImportPlan<'_>) -> AppResult<()> {
+    if !plan.problems().is_empty() {
+        let shown: Vec<&str> = plan
+            .problems()
+            .iter()
+            .take(MAX_REPORTED_PROBLEMS)
+            .map(String::as_str)
+            .collect();
+        return Err(invalid(format!(
+            "O banco do Caderno Local tem {} problema(s), por exemplo:\n{}\n",
+            plan.problems().len(),
+            shown.join("\n")
+        )));
+    }
+    let changed_ids = plan.changed_id_count();
+    if changed_ids > 0 {
+        return Err(invalid(format!(
+            "{changed_ids} questão(ões) não manteriam o identificador original do Caderno Local."
+        )));
+    }
+
+    Ok(())
+}
+
+fn count(value: usize) -> AppResult<u32> {
+    u32::try_from(value).map_err(|_| invalid("O banco excede o tamanho máximo de importação."))
+}
+
+fn write_collections(
+    tx: &Transaction<'_>,
+    collections: &[CollectionRow],
+    items: &[ItemRow],
+    ids: &HashMap<String, QuestionId>,
+) -> AppResult<()> {
+    for collection in collections {
+        tx.execute(
+            "INSERT INTO collections (id, title, kind, contest, board, created_at)
+                 VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
+            params![
+                collection.id,
+                collection.title,
+                CollectionKind::Imported,
+                collection.contest,
+                collection.created
+            ],
+        )?;
+    }
+    for item in items {
+        tx.execute(
+            "INSERT INTO collection_items (collection_id, position, question_id)
+                 VALUES (?1, ?2, ?3)",
+            params![
+                item.collection_id,
+                item.position,
+                ids.get(item.question_id.as_str())
+                    .ok_or_else(|| invalid(format!(
+                        "O caderno {} referencia uma questão inexistente.",
+                        item.collection_id
+                    )))?
+            ],
+        )?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

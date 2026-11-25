@@ -102,6 +102,7 @@ function Package(props: { id: string }) {
 function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
   const navigate = useNavigate();
   const [busy, setBusy] = createSignal(false);
+  const [requestingCheck, setRequestingCheck] = createSignal(false);
   const [onlyFlagged, setOnlyFlagged] = createSignal(false);
   const [expanded, setExpanded] = createSignal<ReadonlySet<number>>(new Set());
   const [confirmingDiscard, setConfirmingDiscard] = createSignal(false);
@@ -134,10 +135,8 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
     const { id, needsCheck } = s();
     const onChanged = props.onChanged;
     return run(async () => {
-      if (needsCheck) {
-        showToast("Conferindo as questões que faltavam. A importação segue sozinha.");
-      }
-      const outcome = await api.draftImportAll(id);
+      setRequestingCheck(needsCheck);
+      const outcome = await api.draftImportAll(id).finally(() => setRequestingCheck(false));
       if (outcome.kind === "pending") {
         onChanged();
         showToast(outcome.message);
@@ -368,6 +367,9 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
           </p>
         }
       >
+        <Show when={requestingCheck() && !checking()}>
+          <p role="status">Solicitando conferência e importação…</p>
+        </Show>
         <div class="review-actions">
           <button
             type="button"

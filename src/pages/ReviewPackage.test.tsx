@@ -393,6 +393,33 @@ describe("Revisar pacote", () => {
     expect(commands).not.toContain("draft_import");
   });
 
+  it("shows a refused check request without promising automatic import", async () => {
+    let refuse = (_error: Error) => {};
+    const response = new Promise<never>((_, reject) => (refuse = reject));
+    mockIPC((command) => {
+      switch (command) {
+        case "draft_summary":
+          return { ...summary, needsCheck: true };
+        case "draft_import_all":
+          return response;
+        default:
+          throw new Error(`Unexpected command: ${command}`);
+      }
+    });
+    const user = userEvent.setup();
+    renderAt("/revisar-pacote?id=d1");
+    await user.click(await screen.findByRole("button", { name: "Conferir e importar tudo" }));
+    expect(screen.getByText("Solicitando conferência e importação…")).toBeVisible();
+
+    const busy = "Já existe uma geração em andamento. Espere terminar ou cancele.";
+    refuse(new Error(busy));
+
+    expect(await screen.findByText(busy)).toBeVisible();
+    expect(screen.queryByText(/A importação segue sozinha/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Solicitando conferência e importação…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Conferir e importar tudo" })).toBeEnabled();
+  });
+
   it("refreshes the package after the backend reports a failed check", async () => {
     const failed: DraftSummary = {
       ...summary,

@@ -23,12 +23,17 @@ describe("App shell", () => {
       if (command === "topics_tree") return { areas: [], questions: 0 };
       if (command === "generation_status")
         return {
+          revision: 0,
           running: false,
           startedAt: null,
           kind: null,
           stage: "preparing",
+          stages: [],
+          cancelDiscardsDraft: false,
+          canCancel: false,
           progress: null,
           outcome: null,
+          outcomeKind: null,
         };
       if (command === "drafts_waiting") return [];
       if (command === "collections")

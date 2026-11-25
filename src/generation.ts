@@ -60,11 +60,13 @@ const [progressPanel, setProgressPanel] = createSignal(false);
 export const generationPanelShown = progressPanel;
 export const setGenerationPanelShown = setProgressPanel;
 
-/** Updates the mirrored status. Exported for tests; the app calls it from `watchGeneration`. */
-export function applyGenerationStatus(next: GenerationStatus | null) {
+/** Updates the mirrored status when the snapshot is newer. Exported for tests. */
+export function applyGenerationStatus(next: GenerationStatus) {
+  const before = untrack(status);
+  if (before && next.revision <= before.revision) return false;
   setStatusRaw(next);
+  return true;
 }
-const setStatus = applyGenerationStatus;
 
 /** The latest known status (`null` until the first read). */
 export const generationStatus = status;
@@ -85,25 +87,18 @@ export async function refreshWaitingDrafts() {
 export function watchGeneration() {
   if (watching) return;
   watching = true;
-  // Listen first, then read: an event that arrives before the read answers is newer than it.
-  let sawEvent = false;
+  // Listen first to cover transitions during the read. Snapshots may arrive in either order.
   void refreshWaitingDrafts();
-  // A finished generation adds a draft, and a finished blind check changes its verdicts. The
-  // list only changes when a run starts or ends, not on every progress update.
   const listening = api.onGenerationStatus((next) => {
-    sawEvent = true;
     const before = untrack(status);
     const changed =
       before?.running !== next.running || before?.outcome?.kind !== next.outcome?.kind;
-    setStatus(next);
-    if (changed) void refreshWaitingDrafts();
+    if (applyGenerationStatus(next) && changed) void refreshWaitingDrafts();
   });
   void listening
     .catch(() => undefined)
     .then(() => api.generationStatus())
-    .then((initial) => {
-      if (!sawEvent) setStatus(initial);
-    })
+    .then(applyGenerationStatus)
     .catch(() => undefined);
 }
 
@@ -117,6 +112,6 @@ export async function dismissGeneration() {
 /** For tests: forget everything and allow `watchGeneration` to run again. */
 export function resetGenerationWatch() {
   watching = false;
-  setStatus(null);
+  setStatusRaw(null);
   setWaiting([]);
 }

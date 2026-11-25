@@ -94,6 +94,9 @@ impl GenerationKind {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct GenerationStatus {
+    /// Orders snapshots from IPC reads and events even when they arrive out of order.
+    #[ts(type = "number")]
+    pub revision: u64,
     pub running: bool,
     pub started_at: Option<String>,
     /// What kind of run is going, while running.
@@ -114,6 +117,7 @@ pub struct GenerationStatus {
 
 #[derive(Default)]
 struct Inner {
+    revision: u64,
     running: Option<Running>,
     outcome: Option<GenerationOutcome>,
     outcome_kind: Option<GenerationKind>,
@@ -191,6 +195,7 @@ impl GenerationManager {
             ));
         }
         let cancel = CancelToken::new();
+        inner.revision += 1;
         inner.outcome = None;
         inner.outcome_kind = None;
         inner.running = Some(Running {
@@ -211,14 +216,19 @@ impl GenerationManager {
         // A panic must not leave the slot held forever.
         std::panic::catch_unwind(AssertUnwindSafe(|| {
             work(&mut |progress| {
-                if let Some(running) = lock(&self.inner).running.as_mut() {
-                    if let Some(stage) = progress.stage {
-                        // Stages only move forward, whatever order events arrive in.
-                        running.stage = running.stage.max(stage);
+                let status = {
+                    let mut inner = lock(&self.inner);
+                    if let Some(running) = inner.running.as_mut() {
+                        if let Some(stage) = progress.stage {
+                            // Stages only move forward, whatever order events arrive in.
+                            running.stage = running.stage.max(stage);
+                        }
+                        running.progress = Some(progress);
+                        inner.revision += 1;
                     }
-                    running.progress = Some(progress);
-                }
-                on_event(&self.status());
+                    inner.status()
+                };
+                on_event(&status);
             })
         }))
         .unwrap_or_else(|_| {
@@ -234,6 +244,7 @@ impl GenerationManager {
             let kind = inner.running.take().map(|running| running.kind);
             inner.outcome_kind = outcome.as_ref().and(kind);
             inner.outcome = outcome;
+            inner.revision += 1;
             inner.status()
         };
         let _ = std::panic::catch_unwind(AssertUnwindSafe(|| on_event(&status)));
@@ -260,8 +271,10 @@ impl GenerationManager {
     /// Forgets the last outcome (the user has seen it).
     pub fn dismiss(&self) {
         let mut inner = lock(&self.inner);
-        inner.outcome = None;
-        inner.outcome_kind = None;
+        if inner.outcome.take().is_some() {
+            inner.outcome_kind = None;
+            inner.revision += 1;
+        }
     }
 }
 
@@ -272,6 +285,7 @@ impl Inner {
         let stage = running.map_or_else(Default::default, |r| r.stage);
         let can_cancel = running.is_some_and(|run| run.cancel.is_some());
         GenerationStatus {
+            revision: self.revision,
             running: running.is_some(),
             started_at: running.map(|r| r.started_at.clone()),
             kind,
@@ -306,6 +320,7 @@ impl ImportCheck<'_> {
         }
         if let Some(running) = inner.running.as_mut() {
             running.cancel = None;
+            inner.revision += 1;
         }
         true
     }
@@ -435,6 +450,61 @@ mod tests {
                 },
             )
             .unwrap();
+    }
+
+    #[test]
+    fn a_delayed_completion_has_an_older_revision_than_the_next_run() {
+        let manager = GenerationManager::default();
+        let (finishing, finish_started) = mpsc::channel();
+        let (release_finish, wait_to_finish) = mpsc::channel();
+        let (finished, delayed) = mpsc::channel();
+        manager
+            .start(
+                GenerationKind::Generate,
+                STARTED_AT.into(),
+                |_, _| Ok("first".into()),
+                move |status| {
+                    finishing.send(()).unwrap();
+                    wait_to_finish.recv().unwrap();
+                    finished.send(status.clone()).unwrap();
+                },
+            )
+            .unwrap();
+        finish_started.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let (emit, next_event) = mpsc::channel();
+        let (release_next, wait_for_release) = mpsc::channel();
+        manager
+            .start(
+                GenerationKind::Recheck,
+                STARTED_AT.into(),
+                move |_, progress| {
+                    progress(Progress::starting(
+                        GenerationStage::Checking,
+                        ProgressKind::Started,
+                        "x",
+                    ));
+                    wait_for_release.recv().unwrap();
+                    Ok("second".into())
+                },
+                move |status| emit.send(status.clone()).unwrap(),
+            )
+            .unwrap();
+        let next = next_event.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(manager.status(), next);
+
+        release_finish.send(()).unwrap();
+        let completion = delayed.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(!completion.running);
+        assert!(next.running);
+        assert!(completion.revision < next.revision);
+        release_next.send(()).unwrap();
+        assert!(
+            !next_event
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .running
+        );
     }
 
     fn wait_until_done(manager: &GenerationManager) -> GenerationStatus {

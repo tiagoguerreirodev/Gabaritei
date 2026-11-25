@@ -22,11 +22,14 @@ const stages = [
   { id: "resolving", label: "Resolvendo as contestações" },
 ] as const;
 
+let revision = 0;
+
 const running = (
   kind: GenerationKind,
   stage: GenerationStage,
   label: string | null = null,
 ): GenerationStatus => ({
+  revision: ++revision,
   running: true,
   startedAt: "2026-11-20T10:00:00.000Z",
   kind,
@@ -39,6 +42,7 @@ const running = (
   outcomeKind: null,
 });
 const idle: GenerationStatus = {
+  revision: 0,
   running: false,
   startedAt: null,
   kind: null,
@@ -51,7 +55,10 @@ const idle: GenerationStatus = {
   outcomeKind: null,
 };
 
-beforeEach(() => resetGenerationWatch());
+beforeEach(() => {
+  revision = 0;
+  resetGenerationWatch();
+});
 
 describe("generation stage state", () => {
   it("follows a full generation by the stage the backend reports", () => {
@@ -79,7 +86,7 @@ describe("generation stage state", () => {
 
   it("resets between runs", () => {
     applyGenerationStatus(running("generate", "resolving"));
-    applyGenerationStatus(idle);
+    applyGenerationStatus({ ...idle, revision: ++revision });
     expect(generationStage()).toBeNull();
     expect(cancelDiscardsDraft()).toBe(false);
     applyGenerationStatus(running("generate", "generating"));
@@ -104,6 +111,7 @@ describe("generation stage state", () => {
 describe("outcome wording", () => {
   const ended = (outcomeKind: GenerationKind | null): GenerationStatus => ({
     ...idle,
+    revision: ++revision,
     outcome: { kind: "cancelled" },
     outcomeKind,
   });
@@ -121,7 +129,7 @@ describe("outcome wording", () => {
 });
 
 describe("watchGeneration", () => {
-  it("ignores the initial read when an event arrived first", async () => {
+  async function watchWithDeferredRead() {
     let emit: (status: GenerationStatus) => void = () => undefined;
     let answer: (status: GenerationStatus) => void = () => undefined;
     vi.spyOn(api, "onGenerationStatus").mockImplementation((handler) => {
@@ -134,11 +142,41 @@ describe("watchGeneration", () => {
     vi.spyOn(api, "draftsWaiting").mockResolvedValue([]);
     watchGeneration();
     await vi.waitFor(() => expect(api.generationStatus).toHaveBeenCalled());
-    emit(running("generate", "checking"));
-    answer(running("generate", "generating"));
+    return { emit, answer };
+  }
+
+  it("ignores an initial read older than the event that arrived first", async () => {
+    const { emit, answer } = await watchWithDeferredRead();
+    const initial = running("generate", "generating");
+    const checking = running("generate", "checking");
+    emit(checking);
+    answer(initial);
     await Promise.resolve();
     await Promise.resolve();
-    expect(generationStatus()?.stage).toBe("checking");
+    expect(generationStatus()).toEqual(checking);
+    vi.restoreAllMocks();
+  });
+
+  it("uses a newer initial read even after a completion event arrived", async () => {
+    const { emit, answer } = await watchWithDeferredRead();
+    const complete = { ...idle, revision: ++revision };
+    const nextRun = running("recheck", "checking");
+    emit(complete);
+    answer(nextRun);
+    await vi.waitFor(() => expect(generationStatus()).toEqual(nextRun));
+    vi.restoreAllMocks();
+  });
+
+  it("ignores a delayed completion after a newer run reports progress", async () => {
+    const { emit, answer } = await watchWithDeferredRead();
+    const complete = { ...idle, revision: ++revision };
+    const nextRun = running("recheck", "checking");
+    emit(nextRun);
+    emit(complete);
+    answer(complete);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(generationStatus()).toEqual(nextRun);
     vi.restoreAllMocks();
   });
 

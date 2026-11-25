@@ -8,7 +8,11 @@ import type { Progress } from "./Progress";
 /**
  * What the frontend shows about the generation, on any page.
  */
-export type GenerationStatus = { running: boolean, startedAt: string | null, 
+export type GenerationStatus = { 
+/**
+ * Orders snapshots from IPC reads and events even when they arrive out of order.
+ */
+revision: number, running: boolean, startedAt: string | null, 
 /**
  * What kind of run is going, while running.
  */

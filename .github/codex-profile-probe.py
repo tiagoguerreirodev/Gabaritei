@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import json
 import os
 import pathlib
@@ -19,7 +20,8 @@ assert len(binaries) == 1, binaries
 binary, = binaries
 subprocess.run([str(binary), '--version'], check=True)
 
-with tempfile.TemporaryDirectory(prefix='gabaritei-restricted-') as temp:
+with contextlib.ExitStack() as stack:
+    temp = stack.enter_context(tempfile.TemporaryDirectory(prefix='gabaritei-restricted-'))
     base = pathlib.Path(temp).resolve()
     work = base / 'run'
     work.mkdir()
@@ -33,10 +35,16 @@ with tempfile.TemporaryDirectory(prefix='gabaritei-restricted-') as temp:
     codex_home.mkdir()
     runtime = binary.parent.parent
     install = runtime if runtime.joinpath('codex-package.json').is_file() else binary
+    scratch = ['/private/tmp', '/private/var/tmp'] if not windows else []
+    scratch_dirs = [stack.enter_context(tempfile.TemporaryDirectory(dir=p)) for p in scratch]
+    for directory in scratch_dirs:
+        pathlib.Path(directory, 'read-canary').write_text('synthetic')
     filesystem = (
         'permissions.gabaritei.filesystem={":minimal"="read", '
         + json.dumps(str(install), ensure_ascii=False) + '="read", '
-        + json.dumps(str(work), ensure_ascii=False) + '="read"}'
+        + json.dumps(str(work), ensure_ascii=False) + '="read"'
+        + ''.join(', ' + json.dumps(p) + '="deny"' for p in scratch)
+        + '}'
     )
     config = ['-c', filesystem, '-c', 'permissions.gabaritei.network.enabled=false']
     env = {key: value for key, value in os.environ.items() if key not in (
@@ -100,8 +108,19 @@ except OSError:
     print('network=False')
 for path in ('/System', '/Library', '/usr', '/dev', '/private/tmp', '/Users', os.environ['HOME']):
     print(f'root={path},read={os.access(path, os.R_OK)}')
+for directory in map(pathlib.Path, sys.argv[2:]):
+    try:
+        directory.joinpath('read-canary').read_text()
+        print('scratch-read=True')
+    except OSError:
+        print('scratch-read=False')
+    try:
+        directory.joinpath('write-canary').write_text('synthetic')
+        print('scratch-write=True')
+    except OSError:
+        print('scratch-write=False')
 '''
-            child = ['/usr/bin/python3', '-c', probe, str(port)]
+            child = ['/usr/bin/python3', '-c', probe, str(port), *scratch_dirs]
         check = run([*args, '--', *child])
 
     strict = [
@@ -120,4 +139,5 @@ for path in ('/System', '/Library', '/usr', '/dev', '/private/tmp', '/Users', os
     else:
         assert check.returncode == 0, check.returncode
         answers = set(check.stdout.splitlines())
-        assert {'attachment=True', 'outside=False', 'write=False', 'network=False'} <= answers
+        assert {'attachment=True', 'outside=False', 'write=False', 'network=False', 'scratch-read=False', 'scratch-write=False'} <= answers
+        assert not {'scratch-read=True', 'scratch-write=True'} & answers

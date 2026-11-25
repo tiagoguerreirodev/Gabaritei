@@ -19,15 +19,21 @@ let inflight: Promise<void> | undefined;
 
 export const catalogState = catalog;
 
-/**
- * Loads the lists the first time (a failed load is tried again), or reloads them with `refresh`.
- * Simultaneous calls share one request.
- */
-export function loadCatalog(refresh = false): Promise<void> {
+/** Loads the lists once, retrying a failed load. */
+export function loadCatalog(): Promise<void> {
   if (inflight) return inflight;
-  if (!refresh && catalog()) return Promise.resolve();
-  const request: Promise<void> = api
-    .aiCatalog(refresh)
+  return catalog() ? Promise.resolve() : fetchCatalog(api.aiCatalog);
+}
+
+/** Reloads the lists from the CLIs. */
+export function refreshCatalog(): Promise<void> {
+  return fetchCatalog(api.refreshAiCatalog);
+}
+
+/** Simultaneous calls share one request. */
+function fetchCatalog(load: () => Promise<Catalog>): Promise<void> {
+  if (inflight) return inflight;
+  const request = load()
     .then((loaded) => {
       setCatalog(loaded);
     })

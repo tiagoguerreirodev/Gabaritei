@@ -131,12 +131,12 @@ export const api = {
   backupChooseFolder: () => call<BackupStatus | null>("backup_choose_folder"),
   /** Goes back to the default backup folder. */
   backupUseDefaultFolder: () => call<BackupStatus>("backup_use_default_folder"),
-  /**
-   * Copies (or moves, with `removeOriginals`) the backups left in the previous folder to the
-   * current one. An original is deleted only after its copy was verified.
-   */
-  backupRelocateLeftBehind: (removeOriginals: boolean) =>
-    call<RelocateOutcome>("backup_relocate_left_behind", { removeOriginals }),
+  /** Copies the backups left in the previous folder to the current one. */
+  backupCopyLeftBehind: () =>
+    call<RelocateOutcome>("backup_relocate_left_behind", { removeOriginals: false }),
+  /** Moves the backups left in the previous folder, deleting originals after verification. */
+  backupMoveLeftBehind: () =>
+    call<RelocateOutcome>("backup_relocate_left_behind", { removeOriginals: true }),
   /** Forgets the offer to move the backups left in the previous folder. Moves and deletes nothing. */
   backupForgetLeftBehind: () => call<null>("backup_forget_left_behind"),
   /** Replaces the current data with a backup, after a safety backup of the current data. */
@@ -147,8 +147,10 @@ export const api = {
   importData: () => call<boolean>("import_data"),
   /** CLI paths, role configuration and RemNote (never the token). Writes defaults on first use. */
   aiSettings: () => call<AiSettings>("ai_settings"),
-  /** Models and efforts each agent offers, from the CLIs. Cached; `refresh` reads them again. */
-  aiCatalog: (refresh = false) => call<Catalog>("ai_catalog", { refresh }),
+  /** Models and efforts each agent offers, from the cached CLI lists. */
+  aiCatalog: () => call<Catalog>("ai_catalog", { refresh: false }),
+  /** Reads the agents' models and efforts from the CLIs again. */
+  refreshAiCatalog: () => call<Catalog>("ai_catalog", { refresh: true }),
   /** Validates and saves the AI settings; returns them as saved. */
   saveAiSettings: (input: AiSettingsInput) => call<AiSettings>("save_ai_settings", { input }),
   /** Saves the RemNote token in the OS keychain (`null` or blank removes it). */

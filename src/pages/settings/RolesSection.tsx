@@ -3,7 +3,7 @@ import { For, Show } from "solid-js";
 import type { Agent } from "../../bindings/Agent";
 import type { RoleConfig } from "../../bindings/RoleConfig";
 import type { RoleSettings } from "../../bindings/RoleSettings";
-import { catalogState, loadCatalog, roleForAgent, roleProblem } from "../../catalog";
+import { catalogState, refreshCatalog, roleForAgent, roleProblem } from "../../catalog";
 import { CatalogNotice, EffortField, FastField, ModelField } from "../../components/ModelOptions";
 import { agentLabels, agents, roleLabels, roleOrder } from "../../labels";
 
@@ -21,7 +21,7 @@ export default function RolesSection(props: {
         daquela vez.
       </p>
       <p>
-        <button type="button" onClick={() => void loadCatalog(true)}>
+        <button type="button" onClick={() => void refreshCatalog()}>
           Atualizar listas
         </button>
       </p>

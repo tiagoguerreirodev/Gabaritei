@@ -2,12 +2,15 @@ import { formatDateTime, formatMegabytes } from "../../format";
 import { For, Show, createResource, createSignal } from "solid-js";
 import { api } from "../../api";
 import type { BackupInfo } from "../../bindings/BackupInfo";
+import type { BackupKind } from "../../bindings/BackupKind";
+import type { BackupListing } from "../../bindings/BackupListing";
 import type { BackupStatus } from "../../bindings/BackupStatus";
 import type { LeftBehind } from "../../bindings/LeftBehind";
+import type { RelocateOutcome } from "../../bindings/RelocateOutcome";
 import ConfirmModal from "../../components/ConfirmModal";
 import { InlineError, ResourceView } from "../../components/states";
-import { showError, showToast } from "../../components/toasts";
-import type { Busy } from "../../actions";
+import { showToast } from "../../components/toasts";
+import type { ActionRunner } from "../../actions";
 import { openFolder } from "./openFolder";
 
 /** Backups of the study data: the folder, a backup now, and restore. */
@@ -17,7 +20,7 @@ function availableOffer(offer: LeftBehind) {
 
 export default function BackupSection(props: {
   /** Shared with the data-file section, so only one action runs at a time. */
-  busy: Busy;
+  busy: ActionRunner;
   /** Called after a restore replaced the data, so the app shows the restored state. */
   onRestored?: () => void;
 }) {
@@ -36,14 +39,9 @@ export default function BackupSection(props: {
   const [confirmingMove, setConfirmingMove] = createSignal(false);
 
   const run = (work: () => Promise<void>) =>
-    busy.run(async () => {
-      try {
-        await work();
-      } catch (error) {
-        showError(error);
-        // The failure may have been recorded (a backup that failed), so show it.
-        void refetch();
-      }
+    busy.run(work, () => {
+      // The failure may have been recorded (a backup that failed), so show it.
+      void refetch();
     });
 
   const backupNow = () =>
@@ -76,15 +74,14 @@ export default function BackupSection(props: {
   // Set once a copy or move ran, so the notice stops saying nothing was moved.
   const [relocated, setRelocated] = createSignal(false);
 
-  const relocate = (removeOriginals: boolean) =>
+  const relocate = (operation: () => Promise<RelocateOutcome>, verb: "copiado" | "movido") =>
     run(async () => {
-      const { report, status: next } = await api.backupRelocateLeftBehind(removeOriginals);
+      const { report, status: next } = await operation();
       mutate(next);
       setLeftBehind(next.leftBehind);
       setRelocated(true);
       const count = (n: number) => (n === 1 ? "1 backup" : `${n} backups`);
       const done = report.copied + report.alreadyThere;
-      const verb = removeOriginals ? "movido" : "copiado";
       const parts: string[] = [];
       if (done > 0 || report.failed === 0) {
         parts.push(`${count(done)} ${verb}${done === 1 ? "" : "s"} para a pasta nova`);
@@ -105,6 +102,9 @@ export default function BackupSection(props: {
       }
       showToast(`${parts.join(". ")}.`);
     });
+
+  const copyBackups = () => relocate(api.backupCopyLeftBehind, "copiado");
+  const moveBackups = () => relocate(api.backupMoveLeftBehind, "movido");
 
   const restore = (backup: BackupInfo) =>
     run(async () => {
@@ -166,11 +166,7 @@ export default function BackupSection(props: {
                       e 5 de antes de restaurar).
                     </Show>
                   </p>
-                  <button
-                    type="button"
-                    disabled={busy.active()}
-                    onClick={() => void relocate(false)}
-                  >
+                  <button type="button" disabled={busy.active()} onClick={() => void copyBackups()}>
                     Copiar para a pasta nova
                   </button>{" "}
                   <button
@@ -229,7 +225,7 @@ export default function BackupSection(props: {
           onClose={() => setConfirmingMove(false)}
           onConfirm={() => {
             setConfirmingMove(false);
-            void relocate(true);
+            void moveBackups();
           }}
         >
           <p>
@@ -269,6 +265,26 @@ export default function BackupSection(props: {
   );
 }
 
+const backupKindBadge: Record<BackupKind, string | undefined> = {
+  backup: undefined,
+  safety: "antes de restaurar",
+  manual: "manual",
+};
+
+const listingNotices: Record<
+  Exclude<BackupListing["state"], "ready">,
+  { id: string; text: string }
+> = {
+  folderUnavailable: {
+    id: "folder-unavailable",
+    text: "A pasta dos backups não está acessível agora (um disco desconectado ou uma pasta de rede fora do ar, por exemplo). Os backups dela não aparecem até ela voltar; nada foi apagado. Conecte-a de novo ou escolha outra pasta.",
+  },
+  slow: {
+    id: "backup-list-slow",
+    text: "A leitura da lista de backups está demorando. Você ainda pode fazer backups nesta pasta.",
+  },
+};
+
 function Content(props: {
   status: BackupStatus;
   busy: boolean;
@@ -281,6 +297,10 @@ function Content(props: {
   onRestore: (backup: BackupInfo) => void;
 }) {
   const folderUnavailable = () => props.status.listing.state === "folderUnavailable";
+  const notice = () => {
+    const { state } = props.status.listing;
+    return state === "ready" ? undefined : listingNotices[state];
+  };
   const backups = () => {
     const listing = props.status.listing;
     return listing.state === "ready" ? listing.backups : undefined;
@@ -318,23 +338,19 @@ function Content(props: {
           </button>
         </Show>
       </p>
-      <Show when={props.status.listing.state !== "ready"}>
-        <p
-          class="notice"
-          role="status"
-          data-testid={folderUnavailable() ? "folder-unavailable" : "backup-list-slow"}
-        >
-          {folderUnavailable()
-            ? "A pasta dos backups não está acessível agora (um disco desconectado ou uma pasta de rede fora do ar, por exemplo). Os backups dela não aparecem até ela voltar; nada foi apagado. Conecte-a de novo ou escolha outra pasta."
-            : "A leitura da lista de backups está demorando. Você ainda pode fazer backups nesta pasta."}{" "}
-          <button
-            type="button"
-            disabled={props.busy || props.refreshing}
-            onClick={() => props.onRefresh()}
-          >
-            Verificar de novo
-          </button>
-        </p>
+      <Show when={notice()}>
+        {(current) => (
+          <p class="notice" role="status" data-testid={current().id}>
+            {current().text}{" "}
+            <button
+              type="button"
+              disabled={props.busy || props.refreshing}
+              onClick={() => props.onRefresh()}
+            >
+              Verificar de novo
+            </button>
+          </p>
+        )}
       </Show>
       <Show
         when={backups()?.length}
@@ -354,11 +370,13 @@ function Content(props: {
                     {" "}
                     <span class="badge">outro computador ({backup.computer})</span>
                   </Show>
-                  <Show when={backup.kind !== "backup"}>
-                    {" "}
-                    <span class="badge">
-                      {backup.kind === "safety" ? "antes de restaurar" : "manual"}
-                    </span>
+                  <Show when={backupKindBadge[backup.kind]}>
+                    {(label) => (
+                      <>
+                        {" "}
+                        <span class="badge">{label()}</span>
+                      </>
+                    )}
                   </Show>
                 </span>
                 <button

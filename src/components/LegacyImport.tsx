@@ -2,7 +2,7 @@ import { formatDate, formatNumber } from "../format";
 import { Match, Show, Switch, createSignal } from "solid-js";
 import { api } from "../api";
 import type { LegacyImportReport } from "../bindings/LegacyImportReport";
-import type { Busy } from "../actions";
+import type { ActionRunner } from "../actions";
 import { errorMessage, InlineError } from "./states";
 import { showToast } from "./toasts";
 
@@ -26,7 +26,7 @@ export default function LegacyImport(props: {
    * cannot start while a backup, restore, export or data-file import runs, and they cannot
    * start while this one runs.
    */
-  busy?: Busy;
+  busy?: ActionRunner;
 }) {
   const [report, setReport] = createSignal(props.initialReport);
   const [importing, setImporting] = createSignal(false);

@@ -1,10 +1,13 @@
-import { For, Match, Show, Switch, createEffect, createResource, createSignal } from "solid-js";
+import { createAction } from "../actions";
+import { feedbackModes, modeLabel } from "../labels";
+import FilterSelect from "../components/FilterSelect";
+import { For, Show, createEffect, createResource, createSignal } from "solid-js";
 import { api } from "../api";
 import type { FeedbackMode } from "../bindings/FeedbackMode";
 import type { FilterOptions } from "../bindings/FilterOptions";
 import type { PerformanceQuery } from "../bindings/PerformanceQuery";
-import { EmptyState, ErrorState, Loading } from "../components/states";
-import { showError, showToast } from "../components/toasts";
+import { EmptyState, Loading, ResourceView } from "../components/states";
+import { showToast } from "../components/toasts";
 import StatCards from "./performance/StatCards";
 import StrengthTable, { SmallSample } from "./performance/StrengthTable";
 import TrendChart from "./performance/TrendChart";
@@ -18,7 +21,7 @@ export default function Performance() {
   const [contest, setContest] = createSignal("");
   const [board, setBoard] = createSignal("");
   const [mode, setMode] = createSignal<FeedbackMode | "">("");
-  const [exporting, setExporting] = createSignal(false);
+  const exporting = createAction();
 
   const query = (): PerformanceQuery => ({
     contest: contest() || null,
@@ -37,15 +40,18 @@ export default function Performance() {
   });
   const filtering = () => contest() !== "" || board() !== "" || mode() !== "";
 
-  const exportCsv = async () => {
-    setExporting(true);
-    try {
-      if (await api.exportPerformanceCsv(query())) showToast("Planilha salva.");
-    } catch (error) {
-      showError(error);
-    } finally {
-      setExporting(false);
-    }
+  const exportCsv = () => {
+    const filters = query();
+    return exporting.run(async () => {
+      if (await api.exportPerformanceCsv(filters)) showToast("Planilha salva.");
+    });
+  };
+
+  const display = () => {
+    const loaded = current();
+    return loaded && (loaded.overall.available > 0 || loaded.overall.score.evaluated > 0)
+      ? loaded
+      : undefined;
   };
 
   return (
@@ -57,35 +63,37 @@ export default function Performance() {
       </p>
 
       <div class="filters" role="search">
-        <label>
-          <span>Concurso</span>
-          <select value={contest()} onChange={(event) => setContest(event.currentTarget.value)}>
-            <option value="">Todos os concursos</option>
-            <For each={options().contests}>{(name) => <option value={name}>{name}</option>}</For>
-          </select>
-        </label>
-        <label>
-          <span>Banca</span>
-          <select value={board()} onChange={(event) => setBoard(event.currentTarget.value)}>
-            <option value="">Todas as bancas</option>
-            <For each={options().boards}>{(name) => <option value={name}>{name}</option>}</For>
-          </select>
-        </label>
+        <FilterSelect
+          field="contest"
+          value={contest()}
+          options={options().contests ?? []}
+          onChange={setContest}
+        />
+        <FilterSelect
+          field="board"
+          value={board()}
+          options={options().boards ?? []}
+          onChange={setBoard}
+        />
         <label>
           <span>Modo</span>
           <select
             value={mode()}
-            onChange={(event) => setMode(event.currentTarget.value as FeedbackMode | "")}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setMode(feedbackModes.find((mode) => mode === value) ?? "");
+            }}
           >
             <option value="">Todos os modos</option>
-            <option value="study">Estudo</option>
-            <option value="exam">Simulado</option>
+            <For each={feedbackModes}>
+              {(mode) => <option value={mode}>{modeLabel[mode]}</option>}
+            </For>
           </select>
         </label>
         <button
           type="button"
           class="export-button"
-          disabled={exporting()}
+          disabled={exporting.active()}
           onClick={() => void exportCsv()}
         >
           Exportar CSV
@@ -97,89 +105,84 @@ export default function Performance() {
           Atualizando…
         </p>
       </Show>
-      <Switch>
-        <Match when={result.error as unknown}>
-          {(error) => (
-            <ErrorState error={error()} onRetry={() => refetch()} busy={result.loading} />
-          )}
-        </Match>
-        <Match when={current()}>
-          {(data) => (
+      <ResourceView
+        value={display()}
+        error={() => result.error}
+        pending={result.state === "pending"}
+        retrying={result.loading}
+        onRetry={() => refetch()}
+        placeholder={<Loading variant="skeleton" label="Calculando desempenho…" />}
+        empty={
+          <EmptyState
+            title={
+              filtering()
+                ? "Nenhuma questão corresponde a estes filtros."
+                : "Nenhuma questão no banco ainda."
+            }
+          >
+            <p class="muted">
+              {filtering()
+                ? "Tente outro concurso, banca ou modo."
+                : "Importe o banco do Caderno Local em Início ou em Configurações."}
+            </p>
+          </EmptyState>
+        }
+      >
+        {(data) => (
+          <>
+            <StatCards stats={data().overall} label="Resumo" />
             <Show
-              when={data().overall.available > 0 || data().overall.score.evaluated > 0}
+              when={data().overall.score.evaluated > 0}
               fallback={
                 <EmptyState
                   title={
                     filtering()
-                      ? "Nenhuma questão corresponde a estes filtros."
-                      : "Nenhuma questão no banco ainda."
+                      ? "Nenhuma tentativa finalizada com estes filtros."
+                      : "Você ainda não finalizou nenhuma tentativa."
                   }
                 >
                   <p class="muted">
-                    {filtering()
-                      ? "Tente outro concurso, banca ou modo."
-                      : "Importe o banco do Caderno Local em Início ou em Configurações."}
+                    Resolva um caderno ou assunto do Banco e finalize para ver seu desempenho.
                   </p>
                 </EmptyState>
               }
             >
-              <StatCards stats={data().overall} label="Resumo" />
-              <Show
-                when={data().overall.score.evaluated > 0}
-                fallback={
-                  <EmptyState
-                    title={
-                      filtering()
-                        ? "Nenhuma tentativa finalizada com estes filtros."
-                        : "Você ainda não finalizou nenhuma tentativa."
-                    }
-                  >
-                    <p class="muted">
-                      Resolva um caderno ou assunto do Banco e finalize para ver seu desempenho.
-                    </p>
-                  </EmptyState>
-                }
-              >
-                <section class="card wide" aria-labelledby="weakest-title">
-                  <h2 id="weakest-title">Assuntos mais fracos</h2>
-                  <ol class="weakest-list">
-                    <For each={data().weakest}>
-                      {(topic) => (
-                        <li>
-                          <span class="weak-name">
-                            <strong>{topic.topic}</strong>
-                            <span class="muted">
-                              {" "}
-                              {topic.area} › {topic.matter}
-                            </span>
+              <section class="card wide" aria-labelledby="weakest-title">
+                <h2 id="weakest-title">Assuntos mais fracos</h2>
+                <ol class="weakest-list">
+                  <For each={data().weakest}>
+                    {(topic) => (
+                      <li>
+                        <span class="weak-name">
+                          <strong>{topic.topic}</strong>
+                          <span class="muted">
+                            {" "}
+                            {topic.area} › {topic.matter}
                           </span>
-                          <span class="weak-value">
-                            {formatPercent(topic.stats.score.achievement)}
-                          </span>
-                          <SmallSample stats={topic.stats} />
-                        </li>
-                      )}
-                    </For>
-                  </ol>
-                </section>
-              </Show>
-              <section class="card wide" aria-labelledby="trend-title">
-                <h2 id="trend-title">Evolução semanal</h2>
-                <TrendChart weeks={data().trend} />
+                        </span>
+                        <span class="weak-value">
+                          {formatPercent(topic.stats.score.achievement)}
+                        </span>
+                        <SmallSample stats={topic.stats} />
+                      </li>
+                    )}
+                  </For>
+                </ol>
               </section>
-              <Show when={data().areas.length > 0}>
-                <section class="card wide" aria-labelledby="table-title">
-                  <h2 id="table-title">Por área, matéria e assunto</h2>
-                  <StrengthTable areas={data().areas} />
-                </section>
-              </Show>
             </Show>
-          )}
-        </Match>
-        <Match when={result.loading}>
-          <Loading variant="skeleton" label="Calculando desempenho…" />
-        </Match>
-      </Switch>
+            <section class="card wide" aria-labelledby="trend-title">
+              <h2 id="trend-title">Evolução semanal</h2>
+              <TrendChart weeks={data().trend} />
+            </section>
+            <Show when={data().areas.length > 0}>
+              <section class="card wide" aria-labelledby="table-title">
+                <h2 id="table-title">Por área, matéria e assunto</h2>
+                <StrengthTable areas={data().areas} />
+              </section>
+            </Show>
+          </>
+        )}
+      </ResourceView>
     </section>
   );
 }

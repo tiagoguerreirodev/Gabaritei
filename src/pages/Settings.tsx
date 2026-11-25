@@ -1,7 +1,7 @@
-import { createResource, createSignal } from "solid-js";
+import { createResource } from "solid-js";
 import { createStore, reconcile, unwrap } from "solid-js/store";
 import { api } from "../api";
-import { loadCatalog } from "../catalog";
+import { refreshCatalog } from "../catalog";
 import type { Agent } from "../bindings/Agent";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { RoleConfig } from "../bindings/RoleConfig";
@@ -9,12 +9,12 @@ import type { RoleSettings } from "../bindings/RoleSettings";
 import { cloneJson } from "../json";
 import LegacyImport from "../components/LegacyImport";
 import { ResourceView } from "../components/states";
-import { showError, showToast } from "../components/toasts";
+import { showToast } from "../components/toasts";
 import AppearanceSection from "./settings/AppearanceSection";
 import BackupSection from "./settings/BackupSection";
 import DataFolderSection from "./settings/DataFolderSection";
 import DataFileSection from "./settings/DataFileSection";
-import { createBusy } from "../actions";
+import { createAction } from "../actions";
 import AgentsSection from "./settings/AgentsSection";
 import RemNoteSection from "./settings/RemNoteSection";
 import RolesSection from "./settings/RolesSection";
@@ -25,7 +25,7 @@ export default function Settings() {
   const [loaded, { refetch }] = createResource(() => api.aiSettings());
   const [legacy, { refetch: refetchLegacy }] = createResource(() => api.legacyImportStatus());
   // One flag for every section of Dados: a restore and an import must never overlap.
-  const busy = createBusy();
+  const busy = createAction();
 
   return (
     <section class="page">
@@ -62,28 +62,23 @@ export default function Settings() {
 
 function Form(props: { initial: AiSettings; onReload: () => void }) {
   const [draft, setDraft] = createStore<AiSettings>(cloneJson(props.initial));
-  const [saving, setSaving] = createSignal(false);
+  const saving = createAction();
   let savedPaths = JSON.stringify(props.initial.cliPaths);
 
-  const save = async (quiet: boolean): Promise<boolean> => {
-    setSaving(true);
-    try {
+  const persistSettings = () =>
+    saving.run(async () => {
       const { cliPaths, roles, remnote } = cloneJson(unwrap(draft));
       const saved = await api.saveAiSettings({ cliPaths, roles, remnote });
       setDraft(reconcile(saved));
       // The model lists come from the CLIs, so a different CLI path means different lists.
       if (JSON.stringify(saved.cliPaths) !== savedPaths) {
         savedPaths = JSON.stringify(saved.cliPaths);
-        void loadCatalog(true);
+        void refreshCatalog();
       }
-      if (!quiet) showToast("Configurações salvas.");
-      return true;
-    } catch (error) {
-      showError(error);
-      return false;
-    } finally {
-      setSaving(false);
-    }
+    });
+
+  const saveSettings = async () => {
+    if (await persistSettings()) showToast("Configurações salvas.");
   };
 
   return (
@@ -91,7 +86,7 @@ function Form(props: { initial: AiSettings; onReload: () => void }) {
       <AgentsSection
         paths={draft.cliPaths}
         onChange={(agent: Agent, path: string) => setDraft("cliPaths", agent, path || null)}
-        beforeTest={() => save(true)}
+        beforeTest={persistSettings}
       />
       <RolesSection
         roles={draft.roles}
@@ -102,11 +97,16 @@ function Form(props: { initial: AiSettings; onReload: () => void }) {
         hasToken={draft.hasRemnoteToken}
         onChange={(remnote) => setDraft("remnote", remnote)}
         onTokenSaved={(has) => setDraft("hasRemnoteToken", has)}
-        beforeTest={() => save(true)}
+        beforeTest={persistSettings}
       />
       <p>
-        <button type="button" class="primary" disabled={saving()} onClick={() => void save(false)}>
-          {saving() ? "Salvando…" : "Salvar configurações"}
+        <button
+          type="button"
+          class="primary"
+          disabled={saving.active()}
+          onClick={() => void saveSettings()}
+        >
+          {saving.active() ? "Salvando…" : "Salvar configurações"}
         </button>
       </p>
     </>

@@ -1,3 +1,4 @@
+import FilterSelect from "../../components/FilterSelect";
 import { For, Show, createResource, createSignal } from "solid-js";
 import { api } from "../../api";
 import type { CollectionSummary } from "../../bindings/CollectionSummary";
@@ -53,31 +54,19 @@ export default function CollectionsView() {
             onInput={(event) => filter(setSearch)(event.currentTarget.value)}
           />
         </label>
-        <label>
-          <span>Concurso</span>
-          <select
-            value={contest()}
-            onChange={(event) => filter(setContest)(event.currentTarget.value)}
-          >
-            <option value="">Todos os concursos</option>
-            <For each={current()?.contests ?? []}>
-              {(name) => <option value={name}>{name}</option>}
-            </For>
-          </select>
-        </label>
+        <FilterSelect
+          field="contest"
+          value={contest()}
+          options={current()?.contests ?? []}
+          onChange={filter(setContest)}
+        />
         <Show when={(current()?.boards.length ?? 0) > 0}>
-          <label>
-            <span>Banca</span>
-            <select
-              value={board()}
-              onChange={(event) => filter(setBoard)(event.currentTarget.value)}
-            >
-              <option value="">Todas as bancas</option>
-              <For each={current()?.boards ?? []}>
-                {(name) => <option value={name}>{name}</option>}
-              </For>
-            </select>
-          </label>
+          <FilterSelect
+            field="board"
+            value={board()}
+            options={current()?.boards ?? []}
+            onChange={filter(setBoard)}
+          />
         </Show>
       </div>
 

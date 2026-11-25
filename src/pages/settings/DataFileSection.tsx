@@ -1,13 +1,13 @@
 import { Show, createSignal } from "solid-js";
 import { api } from "../../api";
 import ConfirmModal from "../../components/ConfirmModal";
-import { showError, showToast } from "../../components/toasts";
-import type { Busy } from "../../actions";
+import { showToast } from "../../components/toasts";
+import type { ActionRunner } from "../../actions";
 
 /** Moves the study data between computers with one file. */
 export default function DataFileSection(props: {
   /** Shared with the backup section, so only one action runs at a time. */
-  busy: Busy;
+  busy: ActionRunner;
   /** Called after an import replaced the data, so the app shows the imported state. */
   onImported?: () => void;
 }) {
@@ -18,16 +18,12 @@ export default function DataFileSection(props: {
 
   const exportData = () =>
     busy.run(async () => {
-      try {
-        if (await api.exportData()) showToast("Arquivo de dados salvo.");
-      } catch (error) {
-        showError(error);
-      }
+      if (await api.exportData()) showToast("Arquivo de dados salvo.");
     });
 
   const importData = () =>
-    busy.run(async () => {
-      try {
+    busy.run(
+      async () => {
         const imported = await api.importData();
         setConfirming(false);
         if (imported) {
@@ -35,11 +31,9 @@ export default function DataFileSection(props: {
           if (onImported) onImported();
           else window.location.reload();
         }
-      } catch (error) {
-        setConfirming(false);
-        showError(error);
-      }
-    });
+      },
+      () => setConfirming(false),
+    );
 
   return (
     <section class="card" aria-labelledby="data-file-title">

@@ -7,6 +7,7 @@ import {
   fallbackEfforts,
   fastSupport,
   loadCatalog,
+  refreshCatalog,
   resetCatalog,
   roleForAgent,
   roleForModel,
@@ -100,7 +101,7 @@ describe("roleForModel", () => {
 });
 
 describe("loadCatalog", () => {
-  it("fetches once, and shares one request between simultaneous refreshes", async () => {
+  it("fetches the list once", async () => {
     let calls = 0;
     mockIPC((command) => {
       if (command === "ai_catalog") {
@@ -112,9 +113,21 @@ describe("loadCatalog", () => {
     await loadCatalog();
     expect(calls).toBe(1);
     expect(catalogState()).toEqual(codexReady);
+  });
 
-    await Promise.all([loadCatalog(true), loadCatalog(true)]);
-    expect(calls).toBe(2);
+  it("shares one request between simultaneous refreshes", async () => {
+    const refreshes: unknown[] = [];
+    mockIPC((command, args) => {
+      if (command === "ai_catalog") {
+        refreshes.push(args);
+        return codexReady;
+      }
+    });
+
+    await loadCatalog();
+    await Promise.all([refreshCatalog(), refreshCatalog()]);
+
+    expect(refreshes).toEqual([{ refresh: false }, { refresh: true }]);
   });
 
   it("records a failed request as null, not an exception", async () => {

@@ -1,33 +1,32 @@
 import { createSignal } from "solid-js";
+import { showError } from "./components/toasts";
 
-/**
- * One "something is running" flag for the whole Dados section, shared by the backup and the
- * data-file sections: a restore, an import and an export must never overlap, or the second
- * would replace what the first just did.
- */
-export interface Busy {
+export interface ActionRunner {
   /** Whether any action is running now. */
   active: () => boolean;
   /**
-   * Runs `work` unless another action is running (then it does nothing and returns `false`).
-   * The flag is cleared when `work` ends, however it ends.
+   * Runs one action at a time, shows any error, and returns whether the action succeeded.
    */
-  run: (work: () => Promise<void>) => Promise<boolean>;
+  run: (work: () => Promise<void>, afterError?: () => void) => Promise<boolean>;
 }
 
-export function createBusy(): Busy {
+export function createAction(): ActionRunner {
   const [active, setActive] = createSignal(false);
   return {
     active,
-    run: async (work) => {
+    run: async (work, afterError) => {
       if (active()) return false;
       setActive(true);
       try {
         await work();
+        return true;
+      } catch (error) {
+        showError(error);
+        afterError?.();
+        return false;
       } finally {
         setActive(false);
       }
-      return true;
     },
   };
 }

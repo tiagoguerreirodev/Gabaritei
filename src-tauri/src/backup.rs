@@ -148,6 +148,14 @@ fn manifest_key(folder: &Path) -> PathBuf {
     PathBuf::from(key)
 }
 
+/// A stalled write check must leave the configured folder's read probes available.
+fn candidate_key(folder: &Path) -> PathBuf {
+    let mut key = folder.as_os_str().to_owned();
+    // NUL keeps this key distinct from filesystem paths and manifest probe keys.
+    key.push("\u{0}candidate");
+    PathBuf::from(key)
+}
+
 /// What a quick look at the backup folder found.
 enum FolderState {
     /// It can be listed.
@@ -1008,7 +1016,9 @@ impl BackupService {
             .map(|chosen| {
                 let (candidate, images_dir) = (chosen.to_path_buf(), paths.images_dir());
                 self.probe
-                    .run(chosen, move || check(&candidate, &images_dir))
+                    .run(&candidate_key(chosen), move || {
+                        check(&candidate, &images_dir)
+                    })
                     .ok_or_else(folder_unavailable)?
             })
             .transpose()?;
@@ -3114,7 +3124,7 @@ mod tests {
         let service = service_with_long_probe();
         let (old, current) = make_left_behind(&f, &service);
         let chosen = f._dir.path().join("offline");
-        service.probe.mark_stuck(&chosen);
+        service.probe.mark_stuck(&candidate_key(&chosen));
 
         let error = service
             .change_folder(&f.db, &f.paths, Some(&chosen))
@@ -3125,6 +3135,36 @@ mod tests {
             f.db.with(|conn| Ok((folder(conn, &f.paths)?, get_setting(conn, KEY_LEFT_BEHIND)?)))
                 .unwrap();
         assert_eq!(settings, (current, Some(old.display().to_string())));
+    }
+
+    #[test]
+    fn a_stalled_candidate_check_leaves_the_current_folder_readable() {
+        let f = fixture();
+        let mut service = service_with_long_probe();
+        let folder = f._dir.path().join("chosen");
+        service
+            .change_folder(&f.db, &f.paths, Some(&folder))
+            .unwrap();
+
+        // Hold the write check past its deadline and until both read probes finish.
+        let (release, work) = blocked();
+        service.probe.timeout = Duration::from_millis(50);
+        let error = service
+            .change_folder_with(&f.db, &f.paths, Some(&folder), move |chosen, _| {
+                work();
+                Ok(chosen.display().to_string())
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("não está acessível"), "{error}");
+        service.probe.timeout = LONG;
+
+        let status = service.status(&f.db, &f.paths).unwrap();
+        assert!(!status.folder_unavailable);
+        service
+            .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 10:00:00 UTC))
+            .unwrap()
+            .expect("the daily backup is due");
+        drop(release);
     }
 
     #[test]

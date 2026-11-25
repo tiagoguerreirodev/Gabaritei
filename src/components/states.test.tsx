@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import MasteryBar from "./MasteryBar";
-import { EmptyState, ErrorState, Loading } from "./states";
+import { EmptyState, ErrorState, Loading, ResourceView } from "./states";
 
 describe("Loading", () => {
   it("keeps the text variant as a status message", () => {
@@ -72,6 +72,49 @@ describe("ErrorState", () => {
   it("has no retry button without a callback", () => {
     render(() => <ErrorState error="Erro." />);
     expect(screen.queryByRole("button")).toBeNull();
+  });
+});
+
+describe("ResourceView", () => {
+  it("keeps the retry visible while a failed resource reloads", () => {
+    render(() => (
+      <ResourceView
+        value="Versão anterior"
+        error={() => "Falhou."}
+        pending
+        retrying
+        onRetry={() => undefined}
+      >
+        {(current) => <p>{current()}</p>}
+      </ResourceView>
+    ));
+    expect(screen.getByRole("alert")).toHaveTextContent("Falhou.");
+    expect(screen.getByRole("button", { name: "Tentando…" })).toBeDisabled();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText("Versão anterior")).not.toBeInTheDocument();
+  });
+
+  it("keeps the empty state hidden until the initial load ends", () => {
+    const [pending, setPending] = createSignal(true);
+    render(() => (
+      <ResourceView value={undefined} pending={pending()} empty={<EmptyState title="Vazio." />}>
+        {() => <p>Dados carregados.</p>}
+      </ResourceView>
+    ));
+    expect(screen.getByRole("status")).toHaveTextContent("Carregando…");
+    expect(screen.queryByText("Vazio.")).not.toBeInTheDocument();
+
+    setPending(false);
+    expect(screen.getByText("Vazio.")).toBeVisible();
+  });
+
+  it("renders zero as loaded content", () => {
+    render(() => (
+      <ResourceView value={0} pending={false} empty={<EmptyState title="Nada." />}>
+        {(current) => <p>Total: {current()}</p>}
+      </ResourceView>
+    ));
+    expect(screen.getByText("Total: 0")).toBeVisible();
   });
 });
 

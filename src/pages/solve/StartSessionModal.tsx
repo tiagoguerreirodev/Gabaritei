@@ -6,16 +6,8 @@ import type { SessionSource } from "../../bindings/SessionSource";
 import { ErrorState } from "../../components/states";
 import Modal from "../../components/Modal";
 import { showError } from "../../components/toasts";
-import { openAttempt } from "./format";
-
-const modes: { id: FeedbackMode; label: string; hint: string }[] = [
-  {
-    id: "study",
-    label: "Estudo",
-    hint: "Mostra o gabarito e a explicação logo após cada resposta.",
-  },
-  { id: "exam", label: "Simulado", hint: "Mostra o gabarito e as explicações só ao finalizar." },
-];
+import { feedbackModes, modeHint, modeLabel } from "../../labels";
+import { openAttempt } from "../../navigation";
 
 /**
  * Chooses the feedback mode (and, for a topic, how many questions) and starts a session.
@@ -81,19 +73,19 @@ export default function StartSessionModal(props: {
     >
       <fieldset class="mode-choice">
         <legend>Modo</legend>
-        <For each={modes}>
+        <For each={feedbackModes}>
           {(m) => (
             <label>
               <input
                 type="radio"
                 name="feedback-mode"
-                value={m.id}
-                checked={mode() === m.id}
-                onChange={() => setMode(m.id)}
+                value={m}
+                checked={mode() === m}
+                onChange={() => setMode(m)}
               />
               <span>
-                <strong>{m.label}</strong>
-                <span class="muted"> — {m.hint}</span>
+                <strong>{modeLabel[m]}</strong>
+                <span class="muted"> — {modeHint[m]}</span>
               </span>
             </label>
           )}

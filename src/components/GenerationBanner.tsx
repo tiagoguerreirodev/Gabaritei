@@ -1,3 +1,4 @@
+import { formatNumber } from "../format";
 import { A, useLocation } from "@solidjs/router";
 import { Match, Show, Switch } from "solid-js";
 import {
@@ -35,7 +36,7 @@ function WaitingNotice() {
         <span>
           {count() === 1
             ? "1 pacote esperando revisão."
-            : `${count().toLocaleString("pt-BR")} pacotes esperando revisão.`}
+            : `${formatNumber(count())} pacotes esperando revisão.`}
         </span>
         <A
           href={

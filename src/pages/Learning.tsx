@@ -1,21 +1,12 @@
-import {
-  For,
-  Match,
-  Show,
-  Switch,
-  createEffect,
-  createResource,
-  createSignal,
-  onCleanup,
-} from "solid-js";
+import { For, Show, createEffect, createResource, createSignal, onCleanup } from "solid-js";
 import { api } from "../api";
 import type { LearningItem } from "../bindings/LearningItem";
 import type { ScheduledReview } from "../bindings/ScheduledReview";
 import type { SessionSource } from "../bindings/SessionSource";
-import { EmptyState, ErrorState, Loading } from "../components/states";
-import { formatDate, formatNumber } from "./bank/format";
+import { EmptyState, Loading, ResourceView } from "../components/states";
+import { formatDate, formatNumber } from "../format";
 import StartSessionModal from "./solve/StartSessionModal";
-import { openAttempt } from "./solve/format";
+import { openAttempt } from "../navigation";
 
 const topicLabel = (item: LearningItem) =>
   item.topics.length === 0
@@ -62,113 +53,110 @@ export default function Learning() {
     <section class="page">
       <h1>Erros e revisões</h1>
 
-      <Switch>
-        <Match when={overview.error as unknown}>
-          {(error) => (
-            <ErrorState error={error()} onRetry={() => refetch()} busy={overview.loading} />
-          )}
-        </Match>
-        <Match when={overview()}>
-          {(data) => (
-            <>
-              <ul class="stat-cards" aria-label="Resumo">
-                <li class="stat-card">
-                  <span class="stat-name">Para revisar agora</span>
-                  <strong class="stat-value">{formatNumber(data().due)}</strong>
-                  <span class="stat-hint muted">
-                    Revisões vencidas
-                    <Show when={data().dueInOpenAttempt > 0}>
-                      {" "}
-                      · {formatNumber(data().dueInOpenAttempt)} em tentativa aberta
-                    </Show>
-                  </span>
-                </li>
-                <li class="stat-card">
-                  <span class="stat-name">Próximas</span>
-                  <strong class="stat-value">{formatNumber(data().upcoming)}</strong>
-                  <span class="stat-hint muted">Revisões agendadas</span>
-                </li>
-                <li class="stat-card">
-                  <span class="stat-name">Caderno de erros</span>
-                  <strong class="stat-value">{formatNumber(data().errors)}</strong>
-                  <span class="stat-hint muted">Última resposta errada</span>
-                </li>
-              </ul>
+      <ResourceView
+        value={overview()}
+        error={() => overview.error}
+        pending={overview.state === "pending"}
+        retrying={overview.loading}
+        onRetry={() => refetch()}
+        placeholder={<Loading variant="skeleton" />}
+      >
+        {(data) => (
+          <>
+            <ul class="stat-cards" aria-label="Resumo">
+              <li class="stat-card">
+                <span class="stat-name">Para revisar agora</span>
+                <strong class="stat-value">{formatNumber(data().due)}</strong>
+                <span class="stat-hint muted">
+                  Revisões vencidas
+                  <Show when={data().dueInOpenAttempt > 0}>
+                    {" "}
+                    · {formatNumber(data().dueInOpenAttempt)} em tentativa aberta
+                  </Show>
+                </span>
+              </li>
+              <li class="stat-card">
+                <span class="stat-name">Próximas</span>
+                <strong class="stat-value">{formatNumber(data().upcoming)}</strong>
+                <span class="stat-hint muted">Revisões agendadas</span>
+              </li>
+              <li class="stat-card">
+                <span class="stat-name">Caderno de erros</span>
+                <strong class="stat-value">{formatNumber(data().errors)}</strong>
+                <span class="stat-hint muted">Última resposta errada</span>
+              </li>
+            </ul>
 
-              <div class="learning-actions">
-                <button
-                  type="button"
-                  class="primary"
-                  disabled={data().practice === 0}
-                  onClick={() =>
-                    setPractice({ title: "Praticar revisões", source: { kind: "reviews" } })
-                  }
-                >
-                  Praticar agora ({formatNumber(data().practice)})
-                </button>
-                <button
-                  type="button"
-                  disabled={data().practiceErrors === 0}
-                  onClick={() =>
-                    setPractice({
-                      title: "Praticar erros",
-                      source: { kind: "errors", includeBlanks: includeBlanks() },
-                    })
-                  }
-                >
-                  Praticar erros ({formatNumber(data().practiceErrors)})
-                </button>
-                <label class="learning-blanks">
-                  <input
-                    type="checkbox"
-                    checked={includeBlanks()}
-                    onChange={(event) => setIncludeBlanks(event.currentTarget.checked)}
-                  />
-                  Incluir questões em branco
-                </label>
-              </div>
-
-              <Show
-                when={data().items.length > 0}
-                fallback={
-                  <EmptyState title="Nada para revisar por enquanto.">
-                    <p class="muted">
-                      Finalize uma tentativa: as questões entram aqui conforme você responde.
-                    </p>
-                  </EmptyState>
+            <div class="learning-actions">
+              <button
+                type="button"
+                class="primary"
+                disabled={data().practice === 0}
+                onClick={() =>
+                  setPractice({ title: "Praticar revisões", source: { kind: "reviews" } })
                 }
               >
-                <ul class="learning-list" aria-label="Questões">
-                  <For each={data().items}>
-                    {(item) => (
-                      <li>
-                        <span class="learning-topic">{topicLabel(item)}</span>
-                        <span class="muted">
-                          {dueText(item.review)}
-                          <Show when={item.isError}>
-                            {" "}
-                            · <span class="badge">Erro</span>
-                          </Show>
-                        </span>
-                        <button
-                          type="button"
-                          aria-label={`Ver resultado: ${topicLabel(item)}`}
-                          onClick={() => openAttempt(item.lastAttemptId)}
-                        >
-                          Ver resultado
-                        </button>
-                      </li>
-                    )}
-                  </For>
-                </ul>
-              </Show>
-            </>
-          )}
-        </Match>
-        <Match when={overview.loading}>
-          <Loading variant="skeleton" />
-        </Match>
-      </Switch>
+                Praticar agora ({formatNumber(data().practice)})
+              </button>
+              <button
+                type="button"
+                disabled={data().practiceErrors === 0}
+                onClick={() =>
+                  setPractice({
+                    title: "Praticar erros",
+                    source: { kind: "errors", includeBlanks: includeBlanks() },
+                  })
+                }
+              >
+                Praticar erros ({formatNumber(data().practiceErrors)})
+              </button>
+              <label class="learning-blanks">
+                <input
+                  type="checkbox"
+                  checked={includeBlanks()}
+                  onChange={(event) => setIncludeBlanks(event.currentTarget.checked)}
+                />
+                Incluir questões em branco
+              </label>
+            </div>
+
+            <Show
+              when={data().items.length > 0}
+              fallback={
+                <EmptyState title="Nada para revisar por enquanto.">
+                  <p class="muted">
+                    Finalize uma tentativa: as questões entram aqui conforme você responde.
+                  </p>
+                </EmptyState>
+              }
+            >
+              <ul class="learning-list" aria-label="Questões">
+                <For each={data().items}>
+                  {(item) => (
+                    <li>
+                      <span class="learning-topic">{topicLabel(item)}</span>
+                      <span class="muted">
+                        {dueText(item.review)}
+                        <Show when={item.isError}>
+                          {" "}
+                          · <span class="badge">Erro</span>
+                        </Show>
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Ver resultado: ${topicLabel(item)}`}
+                        onClick={() => openAttempt(item.lastAttemptId)}
+                      >
+                        Ver resultado
+                      </button>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+          </>
+        )}
+      </ResourceView>
 
       <Show when={practice()}>
         {(session) => (

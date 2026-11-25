@@ -1,16 +1,15 @@
+import { formatDate, formatNumber } from "../format";
 import { Match, Show, Switch, createSignal } from "solid-js";
 import { api } from "../api";
 import type { LegacyImportReport } from "../bindings/LegacyImportReport";
-import type { Busy } from "../pages/settings/busy";
+import type { ActionRunner } from "../actions";
+import { errorMessage, InlineError } from "./states";
 import { showToast } from "./toasts";
-
-const number = (n: number) => n.toLocaleString("pt-BR");
-const date = (iso: string) => new Date(iso).toLocaleDateString("pt-BR");
 
 export function reportSummary(report: LegacyImportReport) {
   return (
-    `${number(report.questions)} questões, ${number(report.collections)} cadernos, ` +
-    `${number(report.topics)} assuntos e ${number(report.images)} imagens`
+    `${formatNumber(report.questions)} questões, ${formatNumber(report.collections)} cadernos, ` +
+    `${formatNumber(report.topics)} assuntos e ${formatNumber(report.images)} imagens`
   );
 }
 
@@ -27,7 +26,7 @@ export default function LegacyImport(props: {
    * cannot start while a backup, restore, export or data-file import runs, and they cannot
    * start while this one runs.
    */
-  busy?: Busy;
+  busy?: ActionRunner;
 }) {
   const [report, setReport] = createSignal(props.initialReport);
   const [importing, setImporting] = createSignal(false);
@@ -45,7 +44,7 @@ export default function LegacyImport(props: {
         props.onImported?.(outcome.report);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setImporting(false);
     }
@@ -63,7 +62,7 @@ export default function LegacyImport(props: {
         <Match when={report()}>
           {(done) => (
             <p data-testid="legacy-import-summary">
-              Importado em {date(done().importedAt)}: {reportSummary(done())}.
+              Importado em {formatDate(done().importedAt)}: {reportSummary(done())}.
             </p>
           )}
         </Match>
@@ -79,9 +78,7 @@ export default function LegacyImport(props: {
         </Match>
       </Switch>
       <Show when={error()}>
-        <p class="error" role="alert">
-          {error()}
-        </p>
+        <InlineError>{error()}</InlineError>
       </Show>
     </section>
   );

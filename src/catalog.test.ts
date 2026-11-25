@@ -1,7 +1,7 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Catalog } from "./bindings/Catalog";
-import { catalogState, loadCatalog, resetCatalog } from "./catalog";
+import { catalogState, loadCatalog, refreshCatalog, resetCatalog } from "./catalog";
 
 const codexReady: Catalog = {
   agents: [
@@ -25,7 +25,7 @@ const codexReady: Catalog = {
 beforeEach(() => resetCatalog());
 
 describe("loadCatalog", () => {
-  it("fetches once, and shares one request between simultaneous refreshes", async () => {
+  it("fetches the list once", async () => {
     let calls = 0;
     mockIPC((command) => {
       if (command === "ai_catalog") {
@@ -37,9 +37,21 @@ describe("loadCatalog", () => {
     await loadCatalog();
     expect(calls).toBe(1);
     expect(catalogState()).toEqual(codexReady);
+  });
 
-    await Promise.all([loadCatalog(true), loadCatalog(true)]);
-    expect(calls).toBe(2);
+  it("shares one request between simultaneous refreshes", async () => {
+    const refreshes: unknown[] = [];
+    mockIPC((command, args) => {
+      if (command === "ai_catalog") {
+        refreshes.push(args);
+        return codexReady;
+      }
+    });
+
+    await loadCatalog();
+    await Promise.all([refreshCatalog(), refreshCatalog()]);
+
+    expect(refreshes).toEqual([{ refresh: false }, { refresh: true }]);
   });
 
   it("ignores the previous CLI path's list after a reset", async () => {
@@ -52,7 +64,7 @@ describe("loadCatalog", () => {
 
     const loading = loadCatalog();
     resetCatalog();
-    await loadCatalog(true);
+    await refreshCatalog();
     finishOld(codexReady);
     await loading;
     expect(catalogState()).toEqual(newCatalog);

@@ -1,6 +1,7 @@
+import { InlineError } from "../../components/states";
 import { For, Show } from "solid-js";
 import type { Role } from "../../bindings/Role";
-import { loadCatalog, type RoleEditor } from "../../catalog";
+import { refreshCatalog, type RoleEditor } from "../../catalog";
 import {
   AgentField,
   CatalogNotice,
@@ -8,7 +9,7 @@ import {
   FastField,
   ModelField,
 } from "../../components/ModelOptions";
-import { roleLabels } from "./labels";
+import { roleLabels } from "../../labels";
 
 /** Agent, model, effort for each of the four roles. */
 export default function RolesSection(props: {
@@ -23,7 +24,7 @@ export default function RolesSection(props: {
         daquela vez.
       </p>
       <p>
-        <button type="button" onClick={() => void loadCatalog(true)}>
+        <button type="button" onClick={() => void refreshCatalog()}>
           Atualizar listas
         </button>
       </p>
@@ -71,9 +72,9 @@ export default function RolesSection(props: {
         {({ role, editor }) => (
           <Show when={editor.options()?.problem}>
             {(problem) => (
-              <p role="alert" class="error">
+              <InlineError>
                 {roleLabels[role].name}: {problem()}
-              </p>
+              </InlineError>
             )}
           </Show>
         )}

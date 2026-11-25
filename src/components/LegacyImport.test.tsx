@@ -8,7 +8,7 @@ import type { LegacyImportStatus } from "../bindings/LegacyImportStatus";
 import Home from "../pages/Home";
 import { emptyHome } from "../test/fixtures";
 import Settings from "../pages/Settings";
-import { createBusy } from "../pages/settings/busy";
+import { createAction } from "../actions";
 import LegacyImport from "./LegacyImport";
 
 const report: LegacyImportReport = {
@@ -122,7 +122,7 @@ describe("legacy import", () => {
   describe("shared busy state", () => {
     it("cannot start while another Dados action runs", async () => {
       const calls = backend({ report: null, bankEmpty: true });
-      const busy = createBusy();
+      const busy = createAction();
       let release!: () => void;
       void busy.run(() => new Promise<void>((resolve) => (release = resolve)));
       render(() => <LegacyImport initialReport={null} busy={busy} />);
@@ -137,7 +137,7 @@ describe("legacy import", () => {
 
     it("does nothing when clicked while another action runs", async () => {
       const calls = backend({ report: null, bankEmpty: true });
-      const busy = createBusy();
+      const busy = createAction();
       let release!: () => void;
       void busy.run(() => new Promise<void>((resolve) => (release = resolve)));
       const user = userEvent.setup();
@@ -155,7 +155,7 @@ describe("legacy import", () => {
         { report: null, bankEmpty: true },
         () => new Promise((resolve) => (finish = resolve)),
       );
-      const busy = createBusy();
+      const busy = createAction();
       const user = userEvent.setup();
       render(() => <LegacyImport initialReport={null} busy={busy} />);
 

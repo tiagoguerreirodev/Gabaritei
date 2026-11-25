@@ -1,8 +1,7 @@
 import { For, Show, createSignal } from "solid-js";
 import type { AreaStats } from "../../bindings/AreaStats";
 import type { GroupStats } from "../../bindings/GroupStats";
-import { formatNumber } from "../bank/format";
-import { formatPercent } from "../solve/format";
+import { formatNumber, formatPercent } from "../../format";
 
 /** Marks a group whose percentages rest on very few answers. */
 export function SmallSample(props: { stats: GroupStats }) {

@@ -1,7 +1,7 @@
 import { Show, createSignal } from "solid-js";
 import { api } from "../api";
 import { cancelDiscardsDraft } from "../generation";
-import Modal from "./Modal";
+import ConfirmModal from "./ConfirmModal";
 import { showError } from "./toasts";
 
 /**
@@ -33,32 +33,22 @@ export default function CancelGeneration() {
         {pending() ? "Cancelando…" : "Cancelar"}
       </button>
       <Show when={confirming()}>
-        <Modal
+        <ConfirmModal
           title="Cancelar a geração?"
+          confirmLabel="Cancelar geração"
+          cancelLabel="Continuar gerando"
+          danger
           onClose={() => setConfirming(false)}
-          footer={
-            <>
-              <button type="button" onClick={() => setConfirming(false)}>
-                Continuar gerando
-              </button>
-              <button
-                type="button"
-                class="primary danger"
-                onClick={() => {
-                  setConfirming(false);
-                  void cancel();
-                }}
-              >
-                Cancelar geração
-              </button>
-            </>
-          }
+          onConfirm={() => {
+            setConfirming(false);
+            void cancel();
+          }}
         >
           <p>
             As questões já foram geradas, mas a conferência ainda não terminou. Cancelar agora
             descarta o pacote e nada é salvo.
           </p>
-        </Modal>
+        </ConfirmModal>
       </Show>
     </>
   );

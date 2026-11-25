@@ -3,7 +3,10 @@ import type { RecheckView } from "../../bindings/RecheckView";
 import type { ResponseView } from "../../bindings/ResponseView";
 import QuestionImage from "../../components/QuestionImage";
 import RichText from "../../components/RichText";
-import { optionLetters, outcomeText } from "./format";
+import { optionLetters } from "../../format";
+import { outcomeText } from "../../labels";
+
+const ANSWER_POP_MS = 600;
 import RecheckPanel from "./RecheckPanel";
 import { showError } from "../../components/toasts";
 
@@ -82,7 +85,7 @@ export default function QuestionCard(props: {
           queueMicrotask(() => revealSection?.focus());
           setPopping(true);
           clearTimeout(popTimer);
-          popTimer = setTimeout(() => setPopping(false), 600);
+          popTimer = setTimeout(() => setPopping(false), ANSWER_POP_MS);
         }
       },
     ),

@@ -1,5 +1,6 @@
 import { For, Show, createResource } from "solid-js";
 import { api } from "../../api";
+import { formatNumber } from "../../format";
 import type { TopicPath } from "../../bindings/TopicPath";
 import type { TopicTree } from "../../bindings/TopicTree";
 
@@ -22,6 +23,10 @@ export default function TopicPicker(props: {
   );
   const current = () => (choices.loading || choices.error ? undefined : choices());
 
+  const existingQuestions = () => {
+    const count = current()?.questions;
+    return count == null ? undefined : { count };
+  };
   return (
     <div
       class="topic-path"
@@ -79,11 +84,11 @@ export default function TopicPicker(props: {
           Assunto novo: será criado quando você importar o pacote.
         </p>
       </Show>
-      <Show when={current()?.questions != null ? current() : undefined}>
+      <Show when={existingQuestions()}>
         {(found) => (
           <p class="muted" role="note">
-            Já existem {found().questions?.toLocaleString("pt-BR")} questões neste assunto; a IA vai
-            evitar repeti-las.
+            Já existem {formatNumber(found().count)} questões neste assunto; a IA vai evitar
+            repeti-las.
           </p>
         )}
       </Show>

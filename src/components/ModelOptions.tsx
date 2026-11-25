@@ -8,7 +8,7 @@ import {
   unavailableReason,
   type RoleEditor,
 } from "../catalog";
-import { agentLabels, agents, effortLabels } from "../pages/settings/labels";
+import { agentLabels, agents, effortLabels } from "../labels";
 
 interface FieldProps {
   /** Names the field for assistive technology, e.g. the role's name. */

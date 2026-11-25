@@ -18,6 +18,7 @@ use crate::attempts;
 use crate::bank::store::load_question;
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
+use crate::ids::AttemptId;
 use crate::learning;
 
 const MAX_REASONING: usize = 20_000;
@@ -92,7 +93,7 @@ pub fn ask_recheck(
     db: &Database,
     secrets: &Secrets,
     jobs: &OnDemand,
-    attempt_id: &str,
+    attempt_id: &AttemptId,
     position: u32,
 ) -> AppResult<RecheckView> {
     let (settings, question) = db.with(|conn| {
@@ -155,7 +156,7 @@ pub fn ask_recheck(
         based_on_key: question.answer_id.clone(),
     };
     let view = RecheckView::from(&proposal);
-    jobs.keep(&question.id, proposal);
+    jobs.keep(question.id, proposal);
     Ok(view)
 }
 
@@ -164,7 +165,7 @@ pub fn ask_recheck(
 pub fn apply(
     conn: &Connection,
     jobs: &OnDemand,
-    attempt_id: &str,
+    attempt_id: &AttemptId,
     position: u32,
     now: &str,
 ) -> AppResult<()> {
@@ -212,7 +213,7 @@ pub fn apply(
 pub fn dismiss(
     conn: &Connection,
     jobs: &OnDemand,
-    attempt_id: &str,
+    attempt_id: &AttemptId,
     position: u32,
 ) -> AppResult<()> {
     let question_id = attempts::revealed_question(conn, attempt_id, position)?;

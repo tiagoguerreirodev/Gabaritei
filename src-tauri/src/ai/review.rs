@@ -17,6 +17,7 @@ use super::generate::{DraftProblem, check_draft, draft_inputs};
 use crate::bank::store::import_questions;
 use crate::bank::{PackageQuestion, QuestionType, TopicPath};
 use crate::error::{AppError, AppResult};
+use crate::ids::{self, CollectionId, DraftId, QuestionId};
 
 /// Where a question stands after the blind check, as one line of the preview ("Q3 · contestada").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
@@ -81,7 +82,7 @@ pub struct StageLabel {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct DraftSummary {
-    pub id: String,
+    pub id: DraftId,
     pub status: DraftStatus,
     pub created_at: String,
     pub topic: TopicPath,
@@ -113,7 +114,7 @@ pub struct DraftSummary {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct DraftListItem {
-    pub id: String,
+    pub id: DraftId,
     pub topic: TopicPath,
     pub count: u32,
     pub created_at: String,
@@ -138,7 +139,7 @@ pub enum ImportMode {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ImportResult {
-    pub collection_id: String,
+    pub collection_id: CollectionId,
     pub title: String,
     /// New questions added to the bank.
     pub imported: u32,
@@ -190,7 +191,7 @@ fn count(items: &[LineState], wanted: LineState) -> u32 {
     u32::try_from(items.iter().filter(|s| **s == wanted).count()).unwrap_or(u32::MAX)
 }
 
-pub fn summary(conn: &Connection, id: &str) -> AppResult<DraftSummary> {
+pub fn summary(conn: &Connection, id: &DraftId) -> AppResult<DraftSummary> {
     let draft = draft::load(conn, id)?;
     let check = check_draft(conn, &draft)?;
     let (states, check_failed, checking) = states(&draft)?;
@@ -241,7 +242,7 @@ pub fn summary(conn: &Connection, id: &str) -> AppResult<DraftSummary> {
 
 /// Drafts waiting for review, newest first.
 pub fn waiting(conn: &Connection) -> AppResult<Vec<DraftListItem>> {
-    let ids: Vec<String> = conn
+    let ids: Vec<DraftId> = conn
         .prepare("SELECT id FROM drafts WHERE status = 'review' ORDER BY created_at DESC, id")?
         .query_map([], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
@@ -271,7 +272,12 @@ fn not_waiting() -> AppError {
 
 /// Imports a draft's questions into the bank as a new `generated` collection. Call inside a
 /// transaction. Nothing is written if it fails.
-pub fn import(conn: &Connection, id: &str, mode: ImportMode, now: &str) -> AppResult<ImportResult> {
+pub fn import(
+    conn: &Connection,
+    id: &DraftId,
+    mode: ImportMode,
+    now: &str,
+) -> AppResult<ImportResult> {
     let draft = draft::load(conn, id)?;
     if draft.status != DraftStatus::Review {
         return Err(not_waiting());
@@ -335,14 +341,14 @@ pub fn import(conn: &Connection, id: &str, mode: ImportMode, now: &str) -> AppRe
         "{} › {} › {} · gerado em {date}",
         topic.area, topic.matter, topic.topic
     );
-    let collection_id = draft::new_draft_id();
+    let collection_id = ids::generate::<CollectionId>(&mut rand::rng());
     conn.execute(
         "INSERT INTO collections (id, title, kind, contest, board, created_at)
          VALUES (?1, ?2, 'generated', NULL, ?3, ?4)",
         params![collection_id, title, request.board, now],
     )?;
     let mut position = 0;
-    let mut placed: Vec<&String> = Vec::new();
+    let mut placed: Vec<&QuestionId> = Vec::new();
     for local_id in &local_ids {
         let question_id = &outcome.ids_by_local_id[local_id];
         if placed.contains(&question_id) {
@@ -367,7 +373,7 @@ pub fn import(conn: &Connection, id: &str, mode: ImportMode, now: &str) -> AppRe
 }
 
 /// Discards a draft that is still waiting.
-pub fn discard(conn: &Connection, id: &str) -> AppResult<()> {
+pub fn discard(conn: &Connection, id: &DraftId) -> AppResult<()> {
     let draft = draft::load(conn, id)?;
     if draft.status != DraftStatus::Review {
         return Err(not_waiting());

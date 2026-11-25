@@ -15,7 +15,7 @@ struct World {
     db: Database,
     secrets: Secrets,
     jobs: OnDemand,
-    attempt: String,
+    attempt: AttemptId,
     key: String,
 }
 

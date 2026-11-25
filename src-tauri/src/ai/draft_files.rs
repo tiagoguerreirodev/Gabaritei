@@ -10,10 +10,12 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 
 use crate::error::{AppError, AppResult};
+use crate::ids::DraftId;
 
 /// The draft's folder, or `None` if the id is not a single plain name. Draft ids reach commands
 /// from the frontend, so `..`, separators and absolute paths must never leave `root`.
-fn folder(root: &Path, draft_id: &str) -> Option<PathBuf> {
+fn folder(root: &Path, draft_id: &DraftId) -> Option<PathBuf> {
+    let draft_id = draft_id.as_str();
     let valid = !draft_id.is_empty()
         && draft_id
             .chars()
@@ -25,7 +27,7 @@ fn folder(root: &Path, draft_id: &str) -> Option<PathBuf> {
 /// its own numbered subfolder under its original name, so two files with the same name don't
 /// collide and the agent sees the same file names as on the first run. If any copy fails,
 /// nothing is kept.
-pub fn keep(root: &Path, draft_id: &str, files: &[PathBuf]) -> AppResult<Vec<PathBuf>> {
+pub fn keep(root: &Path, draft_id: &DraftId, files: &[PathBuf]) -> AppResult<Vec<PathBuf>> {
     if files.is_empty() {
         return Ok(Vec::new());
     }
@@ -52,7 +54,7 @@ pub fn keep(root: &Path, draft_id: &str, files: &[PathBuf]) -> AppResult<Vec<Pat
 }
 
 /// The kept copies of a draft, in the order they were attached. Empty if there are none.
-pub fn load(root: &Path, draft_id: &str) -> AppResult<Vec<PathBuf>> {
+pub fn load(root: &Path, draft_id: &DraftId) -> AppResult<Vec<PathBuf>> {
     let Some(target) = folder(root, draft_id) else {
         return Ok(Vec::new());
     };
@@ -78,7 +80,7 @@ pub fn load(root: &Path, draft_id: &str) -> AppResult<Vec<PathBuf>> {
 }
 
 /// Deletes a draft's kept copies. Best effort: a leftover folder is harmless.
-pub fn remove(root: &Path, draft_id: &str) {
+pub fn remove(root: &Path, draft_id: &DraftId) {
     if let Some(target) = folder(root, draft_id) {
         let _ = std::fs::remove_dir_all(target);
     }
@@ -92,15 +94,15 @@ pub fn sweep(conn: &Connection, root: &Path) -> AppResult<usize> {
         return Ok(0); // no folder yet: nothing to sweep
     };
     let mut statement = conn.prepare("SELECT id FROM drafts WHERE status = 'review'")?;
-    let waiting: HashSet<String> = statement
+    let waiting: HashSet<DraftId> = statement
         .query_map([], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
     let mut removed = 0;
     for entry in entries.flatten() {
         let keep = entry
             .file_name()
-            .to_str()
-            .is_some_and(|name| waiting.contains(name));
+            .into_string()
+            .is_ok_and(|name| waiting.contains(&DraftId::from(name)));
         if keep {
             continue;
         }
@@ -129,7 +131,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn copies_are_kept_in_order_and_removed_with_the_draft() {
+    fn copies_with_the_same_name_are_kept_in_order() {
         let source = tempfile::tempdir().unwrap();
         let root = tempfile::tempdir().unwrap();
         let a = source.path().join("aula.md");
@@ -139,17 +141,34 @@ mod tests {
         std::fs::write(&a, "um").unwrap();
         std::fs::write(&b, "dois").unwrap();
 
-        let kept = keep(root.path(), "d1", &[a, b]).unwrap();
+        let id = DraftId::from("d1");
+        let kept = keep(root.path(), &id, &[a, b]).unwrap();
         assert_eq!(kept.len(), 2, "same file name must not collide");
         assert!(kept.iter().all(|p| p.file_name().unwrap() == "aula.md"));
         assert_eq!(std::fs::read_to_string(&kept[0]).unwrap(), "um");
         assert_eq!(std::fs::read_to_string(&kept[1]).unwrap(), "dois");
-        assert_eq!(load(root.path(), "d1").unwrap(), kept);
-        assert!(load(root.path(), "outro").unwrap().is_empty());
+        assert_eq!(load(root.path(), &id).unwrap(), kept);
+        assert!(
+            load(root.path(), &DraftId::from("outro"))
+                .unwrap()
+                .is_empty()
+        );
+    }
 
-        remove(root.path(), "d1");
-        assert!(load(root.path(), "d1").unwrap().is_empty());
-        remove(root.path(), "d1"); // already gone: no panic
+    #[test]
+    fn removing_a_draft_deletes_its_kept_copies() {
+        let source = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let file = source.path().join("aula.md");
+        std::fs::write(&file, "texto").unwrap();
+        let id = DraftId::from("d1");
+        let kept = keep(root.path(), &id, &[file]).unwrap();
+
+        remove(root.path(), &id);
+
+        assert!(load(root.path(), &id).unwrap().is_empty());
+        assert!(!kept[0].exists());
+        remove(root.path(), &id); // already gone: no panic
     }
 
     #[test]
@@ -160,9 +179,10 @@ mod tests {
         let outside = parent.path().join("keep");
         std::fs::create_dir(&outside).unwrap();
         for id in ["..", "../keep", "", "/etc", "a/b", "a\\b", "."] {
-            remove(&root, id);
-            assert!(load(&root, id).unwrap().is_empty());
-            assert!(keep(&root, id, &[outside.join("x")]).is_err(), "{id:?}");
+            let id = DraftId::from(id);
+            remove(&root, &id);
+            assert!(load(&root, &id).unwrap().is_empty());
+            assert!(keep(&root, &id, &[outside.join("x")]).is_err(), "{id:?}");
         }
         assert!(outside.is_dir(), "nothing outside the root was removed");
         assert!(root.is_dir());
@@ -175,19 +195,24 @@ mod tests {
         let good = source.path().join("a.md");
         std::fs::write(&good, "ok").unwrap();
         let missing = source.path().join("sumiu.md");
-        assert!(keep(root.path(), "d1", &[good, missing]).is_err());
-        assert!(load(root.path(), "d1").unwrap().is_empty());
+        let id = DraftId::from("d1");
+        assert!(keep(root.path(), &id, &[good, missing]).is_err());
+        assert!(load(root.path(), &id).unwrap().is_empty());
         assert!(!root.path().join("d1").exists());
     }
 
     #[test]
     fn a_draft_without_attachments_creates_nothing() {
         let root = tempfile::tempdir().unwrap();
-        assert!(keep(root.path(), "d1", &[]).unwrap().is_empty());
+        assert!(
+            keep(root.path(), &DraftId::from("d1"), &[])
+                .unwrap()
+                .is_empty()
+        );
         assert!(!root.path().join("d1").exists());
     }
 
-    fn insert_draft(conn: &Connection, id: &str, status: &str) {
+    fn insert_draft(conn: &Connection, id: &DraftId, status: &str) {
         conn.execute(
             "INSERT INTO drafts (id, created_at, status, request, package) \
              VALUES (?1, '2026-01-01T00:00:00Z', ?2, '{}', '{}')",
@@ -204,21 +229,24 @@ mod tests {
         let file = source.path().join("a.md");
         std::fs::write(&file, "x").unwrap();
         db.with(|conn| {
-            insert_draft(conn, "waiting", "review");
-            insert_draft(conn, "done", "imported");
-            insert_draft(conn, "dropped", "discarded");
+            insert_draft(conn, &DraftId::from("waiting"), "review");
+            insert_draft(conn, &DraftId::from("done"), "imported");
+            insert_draft(conn, &DraftId::from("dropped"), "discarded");
             Ok(())
         })
         .unwrap();
         for id in ["waiting", "done", "dropped", "orphan"] {
-            keep(root.path(), id, std::slice::from_ref(&file)).unwrap();
+            keep(root.path(), &DraftId::from(id), std::slice::from_ref(&file)).unwrap();
         }
         std::fs::write(root.path().join("stray.txt"), "x").unwrap();
 
         let removed = db.with(|conn| sweep(conn, root.path())).unwrap();
 
         assert_eq!(removed, 4);
-        assert_eq!(load(root.path(), "waiting").unwrap().len(), 1);
+        assert_eq!(
+            load(root.path(), &DraftId::from("waiting")).unwrap().len(),
+            1
+        );
         for id in ["done", "dropped", "orphan"] {
             assert!(!root.path().join(id).exists(), "{id}");
         }

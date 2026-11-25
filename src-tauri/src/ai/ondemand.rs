@@ -8,11 +8,12 @@ use std::sync::{Mutex, MutexGuard};
 use super::recheck::Proposal;
 use super::runner::CancelToken;
 use crate::error::{AppError, AppResult};
+use crate::ids::QuestionId;
 
 #[derive(Default)]
 pub struct OnDemand {
     current: Mutex<Option<CancelToken>>,
-    proposals: Mutex<HashMap<String, Proposal>>,
+    proposals: Mutex<HashMap<QuestionId, Proposal>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -63,12 +64,12 @@ impl OnDemand {
             .is_some()
     }
 
-    pub fn keep(&self, question_id: &str, proposal: Proposal) {
-        lock(&self.proposals).insert(question_id.to_owned(), proposal);
+    pub fn keep(&self, question_id: QuestionId, proposal: Proposal) {
+        lock(&self.proposals).insert(question_id, proposal);
     }
 
     /// Takes the proposal for a question, if the AI produced one that is still waiting.
-    pub fn take(&self, question_id: &str) -> Option<Proposal> {
+    pub fn take(&self, question_id: &QuestionId) -> Option<Proposal> {
         lock(&self.proposals).remove(question_id)
     }
 }
@@ -88,17 +89,26 @@ mod tests {
     }
 
     #[test]
-    fn one_job_at_a_time_and_cancel_reaches_it() {
+    fn only_one_job_runs_at_a_time() {
         let jobs = OnDemand::default();
-        let outcome = jobs.run(|token| {
-            assert!(jobs.cancel());
-            assert!(token.is_cancelled());
+        let outcome = jobs.run(|_| {
             let error = jobs.run(|_| Ok(())).unwrap_err();
             assert!(error.to_string().contains("em andamento"));
             Ok(1)
         });
         assert_eq!(outcome.unwrap(), 1);
-        assert!(!jobs.cancel(), "the slot is free again");
         jobs.run(|_| Ok(())).unwrap();
+    }
+
+    #[test]
+    fn cancel_reaches_the_running_job() {
+        let jobs = OnDemand::default();
+        jobs.run(|token| {
+            assert!(jobs.cancel());
+            assert!(token.is_cancelled());
+            Ok(())
+        })
+        .unwrap();
+        assert!(!jobs.cancel(), "the slot is free again");
     }
 }

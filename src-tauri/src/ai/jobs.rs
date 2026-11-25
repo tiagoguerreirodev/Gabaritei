@@ -9,6 +9,7 @@ use ts_rs::TS;
 
 use super::runner::{CancelToken, Progress};
 use crate::error::{AppError, AppResult};
+use crate::ids::DraftId;
 
 /// How a finished generation ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -21,7 +22,7 @@ use crate::error::{AppError, AppResult};
 pub enum GenerationOutcome {
     /// A draft is ready for review.
     Draft {
-        draft_id: String,
+        draft_id: DraftId,
     },
     /// pt-BR reason, safe to show.
     Failed {
@@ -106,7 +107,7 @@ impl GenerationManager {
     /// status, for pushing them to the window.
     pub fn start<W, E>(&self, kind: GenerationKind, work: W, on_event: E) -> AppResult<()>
     where
-        W: FnOnce(&CancelToken, &mut dyn FnMut(Progress)) -> AppResult<String> + Send + 'static,
+        W: FnOnce(&CancelToken, &mut dyn FnMut(Progress)) -> AppResult<DraftId> + Send + 'static,
         E: Fn(&GenerationStatus) + Send + 'static,
     {
         let cancel = CancelToken::new();

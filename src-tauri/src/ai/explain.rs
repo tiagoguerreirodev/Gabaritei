@@ -15,6 +15,7 @@ use crate::bank::question::{MAX_EXPLANATION, MAX_REF, MAX_REFS};
 use crate::bank::store::load_question;
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
+use crate::ids::AttemptId;
 
 /// The explainer's structured answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -36,7 +37,7 @@ pub fn ask_explain(
     db: &Database,
     secrets: &Secrets,
     jobs: &OnDemand,
-    attempt_id: &str,
+    attempt_id: &AttemptId,
     position: u32,
 ) -> AppResult<AttemptView> {
     let (settings, question) = db.with(|conn| {

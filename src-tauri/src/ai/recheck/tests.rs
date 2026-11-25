@@ -7,6 +7,7 @@ use crate::attempts::{
 };
 use crate::bank::import_questions;
 use crate::bank::question::tests::multiple;
+use crate::ids::QuestionId;
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -18,7 +19,7 @@ struct World {
     db: Database,
     secrets: Secrets,
     jobs: OnDemand,
-    question_id: String,
+    question_id: QuestionId,
     old_key: String,
     other_option: String,
 }
@@ -110,7 +111,7 @@ fn world(answer: impl FnOnce(&str, &str) -> Value) -> World {
     }
 }
 
-fn start(world: &World, mode: FeedbackMode) -> String {
+fn start(world: &World, mode: FeedbackMode) -> AttemptId {
     world
         .db
         .transaction(|tx| {
@@ -129,7 +130,7 @@ fn start(world: &World, mode: FeedbackMode) -> String {
         .id
 }
 
-fn answer_with(world: &World, attempt: &str, option: &str) {
+fn answer_with(world: &World, attempt: &AttemptId, option: &str) {
     world
         .db
         .transaction(|tx| answer_question(tx, attempt, 0, Some(option), T0))
@@ -142,7 +143,7 @@ fn calls(world: &World) -> usize {
         .unwrap_or(0)
 }
 
-fn ask_it(world: &World, attempt: &str) -> AppResult<RecheckView> {
+fn ask_it(world: &World, attempt: &AttemptId) -> AppResult<RecheckView> {
     ask_recheck(&world.db, &world.secrets, &world.jobs, attempt, 0)
 }
 
@@ -150,7 +151,7 @@ fn wrong_answer(_old: &str, new: &str) -> Value {
     json!({ "verdict": "wrong", "correctedKey": new, "reasoning": "O art. 5º diz outra coisa.", "sources": ["CF/88, art. 5º"] })
 }
 
-fn outcome_of(world: &World, attempt: &str) -> Outcome {
+fn outcome_of(world: &World, attempt: &AttemptId) -> Outcome {
     let view = world.db.with(|conn| attempts::load(conn, attempt)).unwrap();
     view.questions[0].reveal.as_ref().unwrap().outcome
 }
@@ -170,7 +171,7 @@ fn review_interval(world: &World) -> Option<i64> {
         .unwrap()
 }
 
-fn errors_of(world: &World) -> Vec<String> {
+fn errors_of(world: &World) -> Vec<QuestionId> {
     world
         .db
         .with(|conn| crate::learning::error_questions(conn, false, 100))

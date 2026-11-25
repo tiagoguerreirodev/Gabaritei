@@ -12,6 +12,7 @@ use super::generate::GenerateRequest;
 use super::roles::RoleConfig;
 use crate::bank::Package;
 use crate::error::{AppError, AppResult};
+use crate::ids::DraftId;
 
 /// Where a draft is in its life.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -70,18 +71,13 @@ pub struct DraftRequest {
 /// A generated package and its provenance. Holds answer keys: backend only.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Draft {
-    pub id: String,
+    pub id: DraftId,
     pub created_at: String,
     pub status: DraftStatus,
     pub request: DraftRequest,
     pub package: Package,
     /// Blind-check verdicts (#17), stored as JSON.
     pub blind_check: Option<serde_json::Value>,
-}
-
-pub fn new_draft_id() -> String {
-    let bytes: [u8; 16] = rand::random();
-    hex::encode(bytes)
 }
 
 pub fn insert(conn: &Connection, draft: &Draft) -> AppResult<()> {
@@ -104,7 +100,7 @@ pub fn insert(conn: &Connection, draft: &Draft) -> AppResult<()> {
     Ok(())
 }
 
-pub fn load(conn: &Connection, id: &str) -> AppResult<Draft> {
+pub fn load(conn: &Connection, id: &DraftId) -> AppResult<Draft> {
     let row = conn
         .query_row(
             "SELECT created_at, status, request, package, blind_check FROM drafts WHERE id = ?1",
@@ -131,7 +127,11 @@ pub fn load(conn: &Connection, id: &str) -> AppResult<Draft> {
     })
 }
 
-pub fn set_blind_check(conn: &Connection, id: &str, verdicts: &serde_json::Value) -> AppResult<()> {
+pub fn set_blind_check(
+    conn: &Connection,
+    id: &DraftId,
+    verdicts: &serde_json::Value,
+) -> AppResult<()> {
     // Only a draft still waiting for review: one that was imported or discarded stays as it is.
     conn.execute(
         "UPDATE drafts SET blind_check = ?2 WHERE id = ?1 AND status = 'review'",
@@ -140,7 +140,7 @@ pub fn set_blind_check(conn: &Connection, id: &str, verdicts: &serde_json::Value
     Ok(())
 }
 
-pub fn set_package(conn: &Connection, id: &str, package: &Package) -> AppResult<()> {
+pub fn set_package(conn: &Connection, id: &DraftId, package: &Package) -> AppResult<()> {
     conn.execute(
         "UPDATE drafts SET package = ?2 WHERE id = ?1 AND status = 'review'",
         params![id, serde_json::to_string(package)?],
@@ -150,7 +150,7 @@ pub fn set_package(conn: &Connection, id: &str, package: &Package) -> AppResult<
 
 /// Moves a draft out of `review`. Fails if it already left it, so an import or a discard
 /// can never be overwritten by a late write.
-pub fn set_status(conn: &Connection, id: &str, status: DraftStatus) -> AppResult<()> {
+pub fn set_status(conn: &Connection, id: &DraftId, status: DraftStatus) -> AppResult<()> {
     let changed = conn.execute(
         "UPDATE drafts SET status = ?2 WHERE id = ?1 AND status = 'review'",
         params![id, status.as_str()],

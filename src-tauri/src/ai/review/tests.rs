@@ -100,11 +100,11 @@ fn mixed(db: &Database) -> Draft {
 }
 
 fn summary_of(db: &Database, id: &str) -> DraftSummary {
-    db.with(|conn| summary(conn, id)).unwrap()
+    db.with(|conn| summary(conn, &DraftId::from(id))).unwrap()
 }
 
 fn import_with(db: &Database, id: &str, mode: ImportMode) -> AppResult<ImportResult> {
-    db.transaction(|tx| import(tx, id, mode, NOW))
+    db.transaction(|tx| import(tx, &DraftId::from(id), mode, NOW))
 }
 
 fn waiting_items(conn: &Connection) -> AppResult<Vec<DraftListItem>> {
@@ -249,7 +249,7 @@ fn a_draft_without_a_check_shows_every_question_unchecked() {
 
     let failed = draft_of("d2", vec![question("q1", "a")], None);
     insert(&db, &failed);
-    blind_check::record_failure(&db, "d2", "A conferência falhou.").unwrap();
+    blind_check::record_failure(&db, &DraftId::from("d2"), "A conferência falhou.").unwrap();
     assert_eq!(
         summary_of(&db, "d2").check_failed.as_deref(),
         Some("A conferência falhou.")
@@ -434,7 +434,7 @@ fn a_package_whose_check_is_running_cannot_be_imported_or_discarded() {
         let error = import_with(&db, "d1", mode).unwrap_err();
         assert!(error.to_string().contains("ainda está em andamento"));
     }
-    assert!(db.with(|conn| discard(conn, "d1")).is_err());
+    assert!(db.with(|conn| discard(conn, &draft.id)).is_err());
     assert_eq!(count(&db, "SELECT COUNT(*) FROM questions"), 0);
     assert_eq!(summary_of(&db, "d1").status, DraftStatus::Review);
 }
@@ -513,10 +513,10 @@ fn a_draft_is_imported_or_discarded_only_once() {
             .to_string()
             .contains("já foi importado")
     );
-    assert!(db.with(|conn| discard(conn, "d1")).is_err());
+    assert!(db.with(|conn| discard(conn, &DraftId::from("d1"))).is_err());
 
     insert(&db, &draft_of("d2", vec![question("q7", "a")], None));
-    db.with(|conn| discard(conn, "d2")).unwrap();
+    db.with(|conn| discard(conn, &DraftId::from("d2"))).unwrap();
     assert_eq!(summary_of(&db, "d2").status, DraftStatus::Discarded);
     assert!(import_with(&db, "d2", ImportMode::All).is_err());
     assert_eq!(
@@ -534,12 +534,18 @@ fn the_waiting_list_has_only_drafts_to_review() {
     mixed(&db);
     insert(&db, &draft_of("d2", vec![question("q7", "a")], None));
     insert(&db, &draft_of("d3", vec![question("q8", "a")], None));
-    db.with(|conn| discard(conn, "d3")).unwrap();
+    db.with(|conn| discard(conn, &DraftId::from("d3"))).unwrap();
     let list = db.with(|conn| waiting(conn)).unwrap();
     let mut ids: Vec<_> = list.iter().map(|d| d.id.as_str()).collect();
     ids.sort_unstable();
     assert_eq!(ids, ["d1", "d2"]);
-    assert_eq!(list.iter().find(|d| d.id == "d1").unwrap().disputed, 1);
+    assert_eq!(
+        list.iter()
+            .find(|d| d.id.as_str() == "d1")
+            .unwrap()
+            .disputed,
+        1
+    );
     let json = serde_json::to_string(&list).unwrap();
     assert!(!json.contains("ENUNCIADO"));
 }

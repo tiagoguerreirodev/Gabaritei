@@ -18,6 +18,7 @@ use crate::bank::store::{load_question, topic_stems};
 use crate::bank::{Package, QuestionType, TopicPath, canonicalize, package_json_schema};
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
+use crate::ids::{self, DraftId, QuestionId};
 
 pub const MAX_COUNT: u32 = 30;
 const MAX_BOARD: usize = 100;
@@ -275,7 +276,7 @@ pub fn fixed_message(problem: &str) -> &'static str {
         })
 }
 
-fn provenance(draft_id: &str, disputed: bool) -> Provenance {
+fn provenance(draft_id: &DraftId, disputed: bool) -> Provenance {
     Provenance::Generated {
         draft_id: draft_id.to_owned(),
         disputed,
@@ -303,7 +304,7 @@ pub fn draft_inputs(
 /// Validates a draft's package: structure, option rules, duplicates and the requested format.
 pub fn check_draft(conn: &Connection, draft: &Draft) -> AppResult<DraftCheck> {
     let mut check = DraftCheck::default();
-    let mut seen: HashMap<String, (usize, String)> = HashMap::new();
+    let mut seen: HashMap<QuestionId, (usize, String)> = HashMap::new();
     let mut local_ids: HashSet<&str> = HashSet::new();
     let format = draft.request.request.format;
     let inputs = draft_inputs(draft, &|_| false);
@@ -427,7 +428,7 @@ pub fn generate_draft(
     }
 
     let draft = Draft {
-        id: draft::new_draft_id(),
+        id: ids::generate::<DraftId>(&mut rand::rng()),
         created_at: crate::clock::now(),
         status: DraftStatus::Review,
         request: DraftRequest {

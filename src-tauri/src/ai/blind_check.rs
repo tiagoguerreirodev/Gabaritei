@@ -20,6 +20,7 @@ use super::task::{Task, ask};
 use crate::bank::PackageQuestion;
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
+use crate::ids::DraftId;
 
 /// How sure the checker is of its answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -34,6 +35,7 @@ pub enum Confidence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct CheckerAnswer {
+    // Checker answers, disputes and verdicts use the package's own question IDs.
     pub question_id: String,
     /// ID of the option the checker chose.
     pub choice: String,
@@ -217,7 +219,7 @@ fn revisions(
 pub fn run(
     db: &Database,
     secrets: &Secrets,
-    draft_id: &str,
+    draft_id: &DraftId,
     attachments: &[std::path::PathBuf],
     cancel: &CancelToken,
     progress: &mut dyn FnMut(Progress),
@@ -359,7 +361,7 @@ pub fn run(
 }
 
 /// Records that the check couldn't be completed, so the preview can say so.
-pub fn record_failure(db: &Database, draft_id: &str, message: &str) -> AppResult<()> {
+pub fn record_failure(db: &Database, draft_id: &DraftId, message: &str) -> AppResult<()> {
     let failed = BlindCheck {
         verdicts: Vec::new(),
         failed: Some(message.to_owned()),
@@ -388,7 +390,7 @@ pub fn generate_and_check(
     request: GenerateRequest,
     cancel: &CancelToken,
     progress: &mut dyn FnMut(Progress),
-) -> AppResult<String> {
+) -> AppResult<DraftId> {
     progress(Progress::starting(
         GenerationStage::Generating,
         ProgressKind::Started,
@@ -431,10 +433,10 @@ pub fn recheck_draft(
     db: &Database,
     secrets: &Secrets,
     files_dir: &std::path::Path,
-    draft_id: &str,
+    draft_id: &DraftId,
     cancel: &CancelToken,
     progress: &mut dyn FnMut(Progress),
-) -> AppResult<String> {
+) -> AppResult<DraftId> {
     let wanted = db.transaction(|tx| {
         let draft = draft::load(tx, draft_id)?;
         if draft.status != DraftStatus::Review {

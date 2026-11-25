@@ -99,7 +99,7 @@ struct Setup {
     dir: tempfile::TempDir,
     db: Database,
     secrets: Secrets,
-    draft_id: String,
+    draft_id: DraftId,
 }
 
 fn files_dir(s: &Setup) -> PathBuf {
@@ -362,11 +362,8 @@ mod flow {
     }
 
     #[test]
-    fn a_retry_is_refused_while_a_check_is_running_and_after_a_restart_it_recovers() {
-        let s = setup(
-            package(vec![question("q1", "c")]),
-            &[answers(vec![answer("q1", "c")])],
-        );
+    fn a_retry_is_refused_while_a_check_is_running() {
+        let s = setup(package(vec![question("q1", "c")]), &[]);
         s.db.with(|conn| draft::set_blind_check(conn, &s.draft_id, &pending_record()))
             .unwrap();
         let error = recheck_draft(
@@ -380,8 +377,17 @@ mod flow {
         .unwrap_err();
         assert!(error.to_string().contains("já está em andamento"));
         assert_eq!(calls(s.dir.path()), 0);
+    }
 
-        // After a restart nothing can still be running: the check is marked interrupted.
+    #[test]
+    fn a_restart_recovers_a_pending_check_so_it_can_be_retried() {
+        let s = setup(
+            package(vec![question("q1", "c")]),
+            &[answers(vec![answer("q1", "c")])],
+        );
+        s.db.with(|conn| draft::set_blind_check(conn, &s.draft_id, &pending_record()))
+            .unwrap();
+
         s.db.with(|conn| recover_interrupted(conn)).unwrap();
         let stored = s.db.with(|conn| draft::load(conn, &s.draft_id)).unwrap();
         let check = super::stored(&stored).unwrap().unwrap();
@@ -454,12 +460,12 @@ mod pipeline {
             Ok(())
         })
         .unwrap();
-        s.draft_id.clear();
+        s.draft_id = DraftId::from("");
         s
     }
 
     fn only_draft(db: &Database) -> Draft {
-        let id: String = db
+        let id: DraftId = db
             .with(|conn| Ok(conn.query_row("SELECT id FROM drafts", [], |r| r.get(0))?))
             .unwrap();
         db.with(|conn| draft::load(conn, &id)).unwrap()
@@ -544,7 +550,7 @@ mod pipeline {
             &CancelToken::new(),
             &mut |p| {
                 if p.stage == Some(GenerationStage::Checking) && kept_at_checking.is_none() {
-                    let id: String =
+                    let id: DraftId =
                         s.db.with(|c| Ok(c.query_row("SELECT id FROM drafts", [], |r| r.get(0))?))
                             .unwrap();
                     kept_at_checking = Some(draft_files::load(&dir, &id).unwrap().len());

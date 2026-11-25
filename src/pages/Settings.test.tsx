@@ -326,9 +326,8 @@ describe("Configurações", () => {
     expect(modes.getByRole("radio", { name: "Servidor MCP (endereço e token)" })).toBeEnabled();
   });
 
-  it("feeds the model and effort selectors from the catalog, and reloads them on Atualizar", async () => {
-    const calls = backend(defaults, undefined, undefined, listed);
-    const user = userEvent.setup();
+  it("shows the models and efforts provided by the catalog", async () => {
+    backend(defaults, undefined, undefined, listed);
     render(() => <Settings />);
     const model = await screen.findByRole("combobox", { name: "Modelo: Gerar questões" });
     expect(within(model).getByRole("option", { name: "GPT-6.2-Sol" })).toBeTruthy();
@@ -340,6 +339,13 @@ describe("Configurações", () => {
           .map((o) => o.textContent),
       ).toEqual(["Baixo", "Extra alto", "Ultra"]);
     });
+  });
+
+  it("reloads the model lists on Atualizar", async () => {
+    const calls = backend(defaults, undefined, undefined, listed);
+    const user = userEvent.setup();
+    render(() => <Settings />);
+    await screen.findByRole("combobox", { name: "Modelo: Gerar questões" });
 
     await user.click(screen.getByRole("button", { name: "Atualizar listas" }));
     await waitFor(() => {

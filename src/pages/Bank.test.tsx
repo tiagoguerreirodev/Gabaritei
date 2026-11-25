@@ -285,7 +285,7 @@ describe("Banco", () => {
       expect(queries.at(-1)).toMatchObject({ contest: "ALEPA · Programação", board: "Cebraspe" });
     });
 
-    it("pages through results, and a new filter goes back to the first page", async () => {
+    it("moves to the next page of collections", async () => {
       const queries = backend();
       const user = await openCollections();
       expect(screen.getByText("Página 1 de 2")).toBeVisible();
@@ -296,36 +296,60 @@ describe("Banco", () => {
       expect(listedTitles()).toHaveLength(3);
       expect(screen.getByRole("button", { name: "Próxima" })).toBeDisabled();
       expect(queries.at(-1)?.page).toBe(1);
+    });
+
+    it("returns to the first collection page after a filter change", async () => {
+      const queries = backend();
+      const user = await openCollections();
+      await user.click(screen.getByRole("button", { name: "Próxima" }));
+      await screen.findByText("Página 2 de 2");
 
       await user.selectOptions(
         screen.getByRole("combobox", { name: "Concurso" }),
         "Perito Criminal",
       );
+
       expect(await screen.findByText("Página 1 de 2")).toBeVisible();
       expect(queries.at(-1)).toMatchObject({ contest: "Perito Criminal", page: 0 });
     });
 
-    it("opens a collection's details and starts a session in the chosen mode", async () => {
-      const calls = backend();
-      const user = await openCollections();
-
+    async function sqlCollection(user: Awaited<ReturnType<typeof openCollections>>) {
       await user.click(screen.getByRole("button", { name: /Informática › SQL/ }));
+      return screen.findByRole("dialog", { name: "Informática › SQL" });
+    }
 
-      const dialog = await screen.findByRole("dialog", { name: "Informática › SQL" });
+    it("shows the selected collection's details", async () => {
+      backend();
+      const user = await openCollections();
+      const dialog = await sqlCollection(user);
+
       expect(await within(dialog).findByTestId("collection-questions")).toHaveTextContent(
         "30 questões",
       );
       expect(within(dialog).getByText("FGV")).toBeVisible();
       expect(within(dialog).getByText("Nenhuma tentativa ainda.")).toBeVisible();
-      // Cancelling the mode choice goes back to the collection's details.
-      await user.click(within(dialog).getByRole("button", { name: "Iniciar" }));
-      let start = await screen.findByRole("dialog", { name: "Informática › SQL" });
+    });
+
+    it("returns to the collection details when the mode choice is cancelled", async () => {
+      backend();
+      const user = await openCollections();
+      const dialog = await sqlCollection(user);
+
+      await user.click(await within(dialog).findByRole("button", { name: "Iniciar" }));
+      const start = await screen.findByRole("dialog", { name: "Informática › SQL" });
       await user.click(within(start).getByRole("button", { name: "Cancelar" }));
+
       const details = await screen.findByRole("dialog", { name: "Informática › SQL" });
       expect(within(details).getByText("Nenhuma tentativa ainda.")).toBeVisible();
+    });
 
-      await user.click(within(details).getByRole("button", { name: "Iniciar" }));
-      start = await screen.findByRole("dialog", { name: "Informática › SQL" });
+    it("starts a collection session in the chosen mode", async () => {
+      const calls = backend();
+      const user = await openCollections();
+      const details = await sqlCollection(user);
+
+      await user.click(await within(details).findByRole("button", { name: "Iniciar" }));
+      const start = await screen.findByRole("dialog", { name: "Informática › SQL" });
       await user.click(within(start).getByRole("radio", { name: /Simulado/ }));
       await user.click(within(start).getByRole("button", { name: "Começar" }));
 

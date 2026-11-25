@@ -7,6 +7,7 @@ import type { BackupListing } from "../../bindings/BackupListing";
 import type { BackupStatus } from "../../bindings/BackupStatus";
 import type { LeftBehind } from "../../bindings/LeftBehind";
 import type { RelocateOutcome } from "../../bindings/RelocateOutcome";
+import type { RelocateReport } from "../../bindings/RelocateReport";
 import ConfirmModal from "../../components/ConfirmModal";
 import { InlineError, ResourceView } from "../../components/states";
 import { showToast } from "../../components/toasts";
@@ -34,6 +35,8 @@ export default function BackupSection(props: {
   });
   const [restoring, setRestoring] = createSignal<BackupInfo | null>(null);
   const [confirmingMove, setConfirmingMove] = createSignal(false);
+  // Set once a copy or move ran, so the notice stops saying nothing was moved.
+  const [relocated, setRelocated] = createSignal(false);
 
   const run = (work: () => Promise<void>) =>
     busy.run(work, () => {
@@ -68,36 +71,13 @@ export default function BackupSection(props: {
       showToast("Voltou para a pasta padrão.");
     });
 
-  // Set once a copy or move ran, so the notice stops saying nothing was moved.
-  const [relocated, setRelocated] = createSignal(false);
-
   const relocate = (operation: () => Promise<RelocateOutcome>, verb: "copiado" | "movido") =>
     run(async () => {
       const { report, status: next } = await operation();
       mutate(next);
       setLeftBehind(next.leftBehind);
       setRelocated(true);
-      const count = (n: number) => (n === 1 ? "1 backup" : `${n} backups`);
-      const done = report.copied + report.alreadyThere;
-      const parts: string[] = [];
-      if (done > 0 || report.failed === 0) {
-        parts.push(`${count(done)} ${verb}${done === 1 ? "" : "s"} para a pasta nova`);
-      }
-      if (report.failed > 0) {
-        parts.push(
-          `${count(report.failed)} não ${report.failed === 1 ? "foi" : "foram"} ${verb}` +
-            `${report.failed === 1 ? "" : "s"}` +
-            `${report.firstFailure ? ` (${report.firstFailure})` : ""}; ` +
-            "os originais continuam na pasta anterior",
-        );
-      }
-      if (report.leftAlone > 0) {
-        parts.push(
-          `${count(report.leftAlone)} de outro computador (ou sem identificação) ` +
-            `${report.leftAlone === 1 ? "ficou" : "ficaram"} onde ${report.leftAlone === 1 ? "estava" : "estavam"}`,
-        );
-      }
-      showToast(`${parts.join(". ")}.`);
+      showToast(relocateSummary(report, verb));
     });
 
   const copyBackups = () => relocate(api.backupCopyLeftBehind, "copiado");
@@ -210,6 +190,33 @@ export default function BackupSection(props: {
       </Show>
     </section>
   );
+}
+
+/** Formats the outcome of a backup relocation in pt-BR. */
+export function relocateSummary(report: RelocateReport, verb: "copiado" | "movido"): string {
+  const done = report.copied + report.alreadyThere;
+  const parts: string[] = [];
+  if (done > 0 || report.failed === 0) {
+    parts.push(`${backupCount(done)} ${verb}${done === 1 ? "" : "s"} para a pasta nova`);
+  }
+  if (report.failed > 0) {
+    const action = report.failed === 1 ? `foi ${verb}` : `foram ${verb}s`;
+    const failure = report.firstFailure ? ` (${report.firstFailure})` : "";
+    parts.push(
+      `${backupCount(report.failed)} não ${action}${failure}; os originais continuam na pasta anterior`,
+    );
+  }
+  if (report.leftAlone > 0) {
+    const action = report.leftAlone === 1 ? "ficou onde estava" : "ficaram onde estavam";
+    parts.push(
+      `${backupCount(report.leftAlone)} de outro computador (ou sem identificação) ${action}`,
+    );
+  }
+  return `${parts.join(". ")}.`;
+}
+
+function backupCount(count: number): string {
+  return `${count} ${count === 1 ? "backup" : "backups"}`;
 }
 
 const backupKindBadge: Record<BackupKind, string | undefined> = {

@@ -35,12 +35,8 @@ export default function LeftBehindNotice(props: {
                 : `${offer().backups} backups, que não aparecem mais aqui.`}
               <Show when={offer().safety > 0}>
                 {" "}
-                {offer().backups === 1
-                  ? "Ele é uma cópia feita antes de restaurar ou importar"
-                  : offer().safety === 1
-                    ? "Um deles é uma cópia feita antes de restaurar ou importar"
-                    : `${offer().safety} deles são cópias feitas antes de restaurar ou importar`}
-                ; para voltar atrás, volte para aquela pasta.
+                {safetyCopies(offer().backups, offer().safety)}; para voltar atrás, volte para
+                aquela pasta.
               </Show>{" "}
               <Show
                 when={props.relocated}
@@ -65,4 +61,10 @@ export default function LeftBehindNotice(props: {
       </button>
     </div>
   );
+}
+
+function safetyCopies(backups: number, safety: number): string {
+  if (backups === 1) return "Ele é uma cópia feita antes de restaurar ou importar";
+  if (safety === 1) return "Um deles é uma cópia feita antes de restaurar ou importar";
+  return `${safety} deles são cópias feitas antes de restaurar ou importar`;
 }

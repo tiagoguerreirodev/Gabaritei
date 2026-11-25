@@ -6,35 +6,26 @@
 //! the caller to validate against its own typed schema. Progress events carry fixed pt-BR
 //! labels only, never model text, so a generation can't leak a question through them.
 
-use std::ffi::OsString;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
 use super::agent::{Agent, Effort};
-use super::{claude, codex};
 use crate::error::AppError;
 
-/// Environment variables that would make a CLI bill an API key instead of using the login the
-/// user made. The app only ever uses the logged-in CLIs (AGENTS.md rule 2).
-const SCRUBBED_ENV: &[&str] = &[
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "OPENAI_API_KEY",
-    "CODEX_API_KEY",
-];
+mod process;
+mod workspace;
 
-/// How much of the CLI's stderr we keep for error messages.
-const STDERR_KEEP: usize = 8 * 1024;
-const POLL: Duration = Duration::from_millis(50);
+pub use process::run_job;
+pub(super) use process::{Parser, Plan};
+pub(super) use workspace::Workdir;
+
+const MAX_TOOL_NAME_LENGTH: usize = 100;
 
 /// How a RemNote MCP server is made available to a run.
 #[derive(Clone, PartialEq, Eq)]
@@ -102,6 +93,32 @@ impl JobSpec {
             grace: Self::DEFAULT_GRACE,
         }
     }
+
+    pub fn with_input(self, instructions: String, prompt: String) -> Self {
+        Self {
+            instructions,
+            prompt,
+            ..self
+        }
+    }
+
+    pub fn with_sources(
+        self,
+        attachments: Vec<PathBuf>,
+        web: bool,
+        remnote: Option<RemNoteAccess>,
+    ) -> Self {
+        Self {
+            attachments,
+            web,
+            remnote,
+            ..self
+        }
+    }
+
+    pub fn with_fast(self, fast: bool) -> Self {
+        Self { fast, ..self }
+    }
 }
 
 impl std::fmt::Debug for JobSpec {
@@ -117,6 +134,18 @@ impl std::fmt::Debug for JobSpec {
             .field("remnote", &self.remnote)
             .finish_non_exhaustive()
     }
+}
+
+/// The pipeline stage a run is in. `Preparing` until the first stage starts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum GenerationStage {
+    #[default]
+    Preparing,
+    Generating,
+    Checking,
+    Resolving,
 }
 
 /// A stage of a run, for the progress indicator.
@@ -142,7 +171,7 @@ pub struct Progress {
     /// latest one, so runner events (which carry none) never reset the stage.
     #[serde(skip)]
     #[ts(skip)]
-    pub stage: Option<crate::ai::jobs::GenerationStage>,
+    pub stage: Option<GenerationStage>,
 }
 
 impl Progress {
@@ -155,15 +184,26 @@ impl Progress {
     }
 
     /// A progress event that starts a pipeline stage.
-    pub fn starting(
-        stage: crate::ai::jobs::GenerationStage,
-        kind: ProgressKind,
-        label: &str,
-    ) -> Self {
+    pub fn starting(stage: GenerationStage, kind: ProgressKind, label: &str) -> Self {
         Self {
             stage: Some(stage),
             ..Self::new(kind, label)
         }
+    }
+
+    pub(super) fn from_kind(kind: ProgressKind) -> Self {
+        let label = match kind {
+            ProgressKind::Started => "Iniciando…",
+            ProgressKind::Thinking => "Raciocinando…",
+            ProgressKind::Reading => "Lendo as fontes…",
+            ProgressKind::Searching => "Pesquisando na web…",
+            ProgressKind::Writing => "Redigindo a resposta…",
+        };
+        Self::new(kind, label)
+    }
+
+    pub(super) fn consulting_remnote() -> Self {
+        Self::new(ProgressKind::Searching, "Consultando o RemNote…")
     }
 }
 
@@ -251,7 +291,7 @@ pub fn is_write_like(tool: &str) -> bool {
 /// Whether a tool name is plain: letters, digits, `_` and `-`, 1 to 100 characters. Anything
 /// else (a comma, parenthesis, `*` or `:`) could change what an allowlist entry means to a CLI.
 pub fn is_valid_tool_name(tool: &str) -> bool {
-    (1..=100).contains(&tool.chars().count())
+    (1..=MAX_TOOL_NAME_LENGTH).contains(&tool.chars().count())
         && tool
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
@@ -283,404 +323,6 @@ impl CancelToken {
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::SeqCst)
     }
-}
-
-/// The run's temporary folder and the files the CLI is pointed at. Deleted on drop.
-pub(super) struct Workdir {
-    dir: tempfile::TempDir,
-    /// Holds `mcp.json`, which contains the RemNote token. It is a separate folder, not under
-    /// the agent's working directory, so the agent's file tools can't read the token.
-    _config_dir: Option<tempfile::TempDir>,
-    pub schema: PathBuf,
-    /// Claude's role instructions, passed by file. On Windows an npm install is a `.cmd` shim,
-    /// and Rust refuses newlines in the arguments of batch files (and `cmd.exe` caps a command
-    /// line at 8191 characters), so long multi-line text must not travel as an argument.
-    pub instructions: Option<PathBuf>,
-    /// Where Codex writes its last message (`-o`).
-    pub output: PathBuf,
-    /// Claude's MCP config, if RemNote is on (outside the working directory).
-    pub mcp_config: Option<PathBuf>,
-    pub has_attachments: bool,
-}
-
-impl Workdir {
-    pub fn path(&self) -> &Path {
-        self.dir.path()
-    }
-
-    fn prepare(spec: &JobSpec) -> Result<Self, RunError> {
-        let workspace = |error: std::io::Error| RunError::Workspace(error.to_string());
-        let dir = tempfile::Builder::new()
-            .prefix("gabaritei-run-")
-            .tempdir()
-            .map_err(workspace)?;
-        let schema = dir.path().join("schema.json");
-        std::fs::write(
-            &schema,
-            serde_json::to_vec_pretty(&spec.schema).unwrap_or_default(),
-        )
-        .map_err(workspace)?;
-
-        if !spec.attachments.is_empty() {
-            let folder = dir.path().join("anexos");
-            std::fs::create_dir(&folder).map_err(workspace)?;
-            for (index, source) in spec.attachments.iter().enumerate() {
-                let name = source
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "arquivo".into());
-                let target = folder.join(format!("{}-{}", index + 1, sanitize(&name)));
-                std::fs::copy(source, target).map_err(|error| {
-                    RunError::Workspace(format!("{}: {error}", sanitize(&name)))
-                })?;
-            }
-        }
-
-        // Files for the CLI itself live outside the run folder, so the agent's file tools
-        // (scoped to it) can't list or cite them. Holds the RemNote token and Claude's
-        // role instructions.
-        let claude_files = spec.agent == Agent::Claude
-            && (!spec.instructions.is_empty() || spec.remnote.is_some());
-        let config_dir = if claude_files {
-            Some(
-                tempfile::Builder::new()
-                    .prefix("gabaritei-config-")
-                    .tempdir()
-                    .map_err(workspace)?,
-            )
-        } else {
-            None
-        };
-        let mut mcp_config = None;
-        let mut instructions = None;
-        if let Some(folder) = &config_dir {
-            if let (Agent::Claude, Some(RemNoteAccess { url, token, .. })) =
-                (&spec.agent, &spec.remnote)
-            {
-                let path = folder.path().join("mcp.json");
-                write_private(&path, &claude::mcp_config(url, token)).map_err(workspace)?;
-                mcp_config = Some(path);
-            }
-            if !spec.instructions.is_empty() {
-                let path = folder.path().join("instrucoes.md");
-                std::fs::write(&path, &spec.instructions).map_err(workspace)?;
-                instructions = Some(path);
-            }
-        }
-
-        Ok(Self {
-            _config_dir: config_dir,
-            output: dir.path().join("saida.json"),
-            schema,
-            instructions,
-            mcp_config,
-            has_attachments: !spec.attachments.is_empty(),
-            dir,
-        })
-    }
-}
-
-/// Writes a file only the current user can read (on Unix; Windows folders under the user's
-/// temp directory are already private to them).
-fn write_private(path: &Path, content: &str) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path)?;
-        file.write_all(content.as_bytes())
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, content)
-    }
-}
-
-/// A file name that is safe inside the run folder on every platform.
-fn sanitize(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    cleaned.trim_start_matches('.').to_owned()
-}
-
-/// Arguments and environment for one spawn.
-pub(super) struct Plan {
-    pub executable: PathBuf,
-    pub args: Vec<OsString>,
-    pub env: Vec<(String, String)>,
-}
-
-/// Reads one agent's output stream.
-pub(super) trait Parser: Send {
-    /// Looks at one stdout line; returns a progress event if it marks a stage.
-    fn feed(&mut self, line: &str) -> Option<Progress>;
-    /// The final JSON and cost, once the process has ended.
-    fn finish(&mut self, work: &Workdir) -> Result<(Value, Option<f64>), RunError>;
-    /// A short error text the CLI reported, for failure messages.
-    fn error_text(&self) -> Option<String>;
-}
-
-fn looks_like_login_problem(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    [
-        "not logged in",
-        "please log in",
-        "please run /login",
-        "login required",
-        "codex login",
-        "unauthorized",
-        "401",
-        "authentication",
-        "invalid api key",
-        "token expired",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
-}
-
-fn spawn(spec: &JobSpec, work: &Workdir) -> Result<(Child, Box<dyn Parser>), RunError> {
-    let (plan, parser): (Plan, Box<dyn Parser>) = match spec.agent {
-        Agent::Claude => (
-            claude::plan(spec, work),
-            Box::new(claude::ClaudeParser::default()),
-        ),
-        Agent::Codex => (
-            codex::plan(spec, work)?,
-            Box::new(codex::CodexParser::default()),
-        ),
-    };
-    let mut command = Command::new(&plan.executable);
-    command
-        .args(&plan.args)
-        .current_dir(work.path())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    for key in SCRUBBED_ENV {
-        command.env_remove(key);
-    }
-    for (key, value) in &plan.env {
-        command.env(key, value);
-    }
-    isolate(&mut command);
-    let child = super::discovery::spawn_retrying(&mut command)
-        .map_err(|error| RunError::Spawn(error.to_string()))?;
-    Ok((child, parser))
-}
-
-/// Puts the CLI in its own process group (Unix) or without a console window (Windows), so the
-/// whole tree can be stopped and no console flashes on screen.
-fn isolate(command: &mut Command) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-}
-
-/// Stops the process and everything it started: SIGINT, then a kill after `grace`.
-/// The kill is sent even if the main process exited on SIGINT, to catch stragglers.
-fn terminate(child: &mut Child, grace: Duration) {
-    #[cfg(unix)]
-    {
-        let group = -(child.id() as i32);
-        // SAFETY: plain signal syscalls on a process group we created.
-        unsafe { libc::kill(group, libc::SIGINT) };
-        let deadline = Instant::now() + grace;
-        while Instant::now() < deadline && matches!(child.try_wait(), Ok(None)) {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        unsafe { libc::kill(group, libc::SIGKILL) };
-    }
-    #[cfg(windows)]
-    {
-        // No SIGINT on Windows: end the tree right away.
-        let _ = grace;
-        let _ = Command::new("taskkill")
-            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-fn read_stderr(mut stderr: impl Read) -> String {
-    let mut text = String::new();
-    let mut buffer = [0u8; 4096];
-    while let Ok(read) = stderr.read(&mut buffer) {
-        if read == 0 {
-            break;
-        }
-        text.push_str(&String::from_utf8_lossy(&buffer[..read]));
-        if text.len() > STDERR_KEEP * 2 {
-            let cut = text.len() - STDERR_KEEP;
-            let cut = (cut..text.len())
-                .find(|i| text.is_char_boundary(*i))
-                .unwrap_or(text.len());
-            text.drain(..cut);
-        }
-    }
-    text
-}
-
-/// A short pt-BR hint for failures we recognize. The CLI's own text is never shown: after a
-/// generation it can contain question text or a key, and it would reach the banner.
-fn known_failure(text: &str) -> String {
-    let lower = text.to_lowercase();
-    let hint = if [
-        "rate limit",
-        "usage limit",
-        "quota",
-        "too many requests",
-        "429",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
-    {
-        " O limite de uso da conta foi atingido; tente mais tarde."
-    } else if ["overloaded", "503", "529", "unavailable"]
-        .iter()
-        .any(|needle| lower.contains(needle))
-    {
-        " O serviço de IA está sobrecarregado; tente mais tarde."
-    } else {
-        ""
-    };
-    hint.to_owned()
-}
-
-/// Runs the job and waits for it. Blocking: call it from a worker thread.
-pub fn run_job(
-    spec: &JobSpec,
-    cancel: &CancelToken,
-    on_progress: &mut dyn FnMut(Progress),
-) -> Result<JobOutput, RunError> {
-    let started = Instant::now();
-    let work = Workdir::prepare(spec)?;
-    let (mut child, mut parser) = spawn(spec, &work)?;
-
-    // The prompt goes on stdin: it stays out of the process list and has no length limit.
-    let mut stdin = child.stdin.take().expect("stdin is piped");
-    let prompt = if spec.agent == Agent::Codex {
-        // Codex has no system-prompt flag, so the instructions lead the prompt.
-        format!("{}\n\n{}", spec.instructions, spec.prompt)
-    } else {
-        spec.prompt.clone()
-    };
-    let writer = std::thread::spawn(move || {
-        let _ = stdin.write_all(prompt.as_bytes());
-    });
-
-    let stdout = child.stdout.take().expect("stdout is piped");
-    let stderr = child.stderr.take().expect("stderr is piped");
-    let (tx, rx) = mpsc::channel::<String>();
-    let reader = std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if tx.send(line).is_err() {
-                break;
-            }
-        }
-    });
-    let stderr_reader = std::thread::spawn(move || read_stderr(stderr));
-
-    let deadline = started + spec.timeout;
-    let mut last_progress: Option<Progress> = None;
-    let interrupted = |child: &mut Child| -> Option<RunError> {
-        if cancel.is_cancelled() {
-            terminate(child, spec.grace);
-            Some(RunError::Cancelled)
-        } else if Instant::now() >= deadline {
-            terminate(child, spec.grace);
-            Some(RunError::TimedOut)
-        } else {
-            None
-        }
-    };
-
-    let mut stopped = None;
-    loop {
-        if let Some(error) = interrupted(&mut child) {
-            stopped = Some(error);
-            break;
-        }
-        match rx.recv_timeout(POLL) {
-            Ok(line) => {
-                if let Some(progress) = parser.feed(&line)
-                    && last_progress.as_ref() != Some(&progress)
-                {
-                    on_progress(progress.clone());
-                    last_progress = Some(progress);
-                }
-            }
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
-        }
-    }
-    let status: Option<ExitStatus> = if stopped.is_none() {
-        loop {
-            if let Some(error) = interrupted(&mut child) {
-                stopped = Some(error);
-                break None;
-            }
-            match child.try_wait() {
-                Ok(Some(status)) => break Some(status),
-                Ok(None) => std::thread::sleep(POLL),
-                Err(_) => break None,
-            }
-        }
-    } else {
-        None
-    };
-    let _ = writer.join();
-    let _ = reader.join();
-    let stderr_text = stderr_reader.join().unwrap_or_default();
-    if let Some(error) = stopped {
-        return Err(error);
-    }
-
-    let status = status.ok_or_else(|| RunError::Failed {
-        code: "?".into(),
-        detail: String::new(),
-    })?;
-    if !status.success() {
-        let reported = parser.error_text().unwrap_or_default();
-        if looks_like_login_problem(&reported) || looks_like_login_problem(&stderr_text) {
-            return Err(RunError::NotLoggedIn);
-        }
-        let detail = known_failure(&format!("{reported}\n{stderr_text}"));
-        return Err(RunError::Failed {
-            code: status
-                .code()
-                .map_or_else(|| "sinal".to_owned(), |code| code.to_string()),
-            detail,
-        });
-    }
-    let (value, cost_usd) = parser.finish(&work)?;
-    Ok(JobOutput {
-        value,
-        cost_usd,
-        duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-    })
 }
 
 #[cfg(test)]

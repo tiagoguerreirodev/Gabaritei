@@ -26,12 +26,9 @@ use crate::bank::question::is_valid_image_name;
 use crate::bank::{
     Provenance, QuestionInput, QuestionOption, QuestionType, TopicPath, apply_import, plan_import,
 };
-use crate::db::{Database, get_setting, set_setting};
+use crate::db::{Database, SettingKey, get_setting, set_setting};
 use crate::error::{AppError, AppResult};
 use crate::ids::{CollectionId, QuestionId};
-
-/// Settings key recording that the migration ran.
-pub const STATUS_KEY: &str = "legacyImport";
 
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_STATE_BYTES: u64 = 80 * 1024 * 1024;
@@ -417,7 +414,7 @@ fn write_images(images_dir: &Path, images: &[(String, Vec<u8>)]) -> AppResult<()
 /// Current migration status, for the first-run screen and settings.
 pub fn status(db: &Database) -> AppResult<LegacyImportStatus> {
     db.with(|conn| {
-        let report = get_setting::<LegacyImportReport>(conn, STATUS_KEY)?;
+        let report = get_setting::<LegacyImportReport>(conn, SettingKey::LegacyImport)?;
         let questions: i64 = conn.query_row("SELECT COUNT(*) FROM questions", [], |r| r.get(0))?;
         Ok(LegacyImportStatus {
             report,
@@ -434,7 +431,7 @@ pub fn import_legacy_bank(
     source: &Path,
     now: &str,
 ) -> AppResult<LegacyImportOutcome> {
-    if let Some(report) = db.with(|conn| get_setting(conn, STATUS_KEY))? {
+    if let Some(report) = db.with(|conn| get_setting(conn, SettingKey::LegacyImport))? {
         return Ok(LegacyImportOutcome {
             report,
             already_imported: true,
@@ -463,7 +460,7 @@ fn write_import(
     now: &str,
 ) -> AppResult<LegacyImportOutcome> {
     db.transaction(|tx| {
-        if let Some(report) = get_setting(tx, STATUS_KEY)? {
+        if let Some(report) = get_setting(tx, SettingKey::LegacyImport)? {
             return Ok(LegacyImportOutcome {
                 report,
                 already_imported: true,
@@ -523,7 +520,7 @@ fn write_import(
         // status setting) rolls back without leaving image files behind. Only a failing commit
         // can still orphan them: harmless, because they are content-addressed and a retry
         // reuses them.
-        set_setting(tx, STATUS_KEY, &report)?;
+        set_setting(tx, SettingKey::LegacyImport, &report)?;
         write_images(images_dir, images)?;
         Ok(LegacyImportOutcome {
             report,

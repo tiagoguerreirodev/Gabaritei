@@ -17,7 +17,7 @@ use crate::error::{AppError, AppResult};
 pub const FILE_NAME: &str = "gabaritei.sqlite";
 
 /// How long a statement waits for a lock held by another connection.
-pub const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Schema migrations, applied in order. `PRAGMA user_version` stores how many have run.
 ///
@@ -50,24 +50,19 @@ impl Database {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let mut conn = Connection::open(path)?;
-        configure(&conn)?;
-        migrate(&mut conn, MIGRATIONS)?;
-        Ok(Self::from_connection(conn))
+        Self::from_connection(Connection::open(path)?)
     }
 
     /// Opens a private in-memory database with the full schema (for tests).
     pub fn open_in_memory() -> AppResult<Self> {
-        let mut conn = Connection::open_in_memory()?;
-        configure(&conn)?;
-        migrate(&mut conn, MIGRATIONS)?;
-        Ok(Self::from_connection(conn))
+        Self::from_connection(Connection::open_in_memory()?)
     }
 
-    fn from_connection(conn: Connection) -> Self {
-        Self {
+    fn from_connection(mut conn: Connection) -> AppResult<Self> {
+        prepare_connection(&mut conn)?;
+        Ok(Self {
             conn: Mutex::new(conn),
-        }
+        })
     }
 
     /// Runs `f` with exclusive access to the connection.
@@ -101,9 +96,8 @@ fn configure(conn: &Connection) -> AppResult<()> {
     Ok(())
 }
 
-/// Sets up a connection whose content was just replaced from another file (a restored backup):
-/// applies the connection settings again and migrates an older schema forward.
-pub fn prepare_restored(conn: &mut Connection) -> AppResult<()> {
+/// Applies connection settings and migrations when opening or replacing the database.
+pub(crate) fn prepare_connection(conn: &mut Connection) -> AppResult<()> {
     configure(conn)?;
     migrate(conn, MIGRATIONS)
 }
@@ -130,22 +124,43 @@ pub fn user_version(conn: &Connection) -> AppResult<u32> {
     Ok(conn.pragma_query_value(None, "user_version", |row| row.get(0))?)
 }
 
+/// Stable keys in the settings table. Their stored spellings also apply to older backups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingKey {
+    Appearance,
+    KeyboardShortcuts,
+    BackupFolder,
+    BackupLeftBehind,
+    AiRoles,
+    CliPaths,
+    RemNote,
+    LegacyImport,
+}
+
+crate::enum_text::stored_enum!(SettingKey {
+    Appearance => "appearance",
+    KeyboardShortcuts => "keyboardShortcuts",
+    BackupFolder => "backup.folder",
+    BackupLeftBehind => "backup.leftBehind",
+    AiRoles => "ai.roles",
+    CliPaths => "ai.cliPaths",
+    RemNote => "ai.remnote",
+    LegacyImport => "legacyImport",
+});
+
 /// Reads a JSON setting. `Ok(None)` when the key was never set.
-pub fn get_setting<T: DeserializeOwned>(conn: &Connection, key: &str) -> AppResult<Option<T>> {
-    let raw: Option<String> = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            params![key],
-            |row| row.get(0),
-        )
-        .optional()?;
-    raw.map(|value| serde_json::from_str(&value))
+pub fn get_setting<T: DeserializeOwned>(
+    conn: &Connection,
+    key: SettingKey,
+) -> AppResult<Option<T>> {
+    get_raw_setting(conn, key)?
+        .map(|value| serde_json::from_str(&value))
         .transpose()
         .map_err(Into::into)
 }
 
 /// A setting's stored JSON text, as is.
-pub fn get_raw_setting(conn: &Connection, key: &str) -> AppResult<Option<String>> {
+pub fn get_raw_setting(conn: &Connection, key: SettingKey) -> AppResult<Option<String>> {
     Ok(conn
         .query_row(
             "SELECT value FROM settings WHERE key = ?1",
@@ -156,7 +171,7 @@ pub fn get_raw_setting(conn: &Connection, key: &str) -> AppResult<Option<String>
 }
 
 /// Writes a setting's JSON text as is, or removes the setting when `None`.
-pub fn put_raw_setting(conn: &Connection, key: &str, value: Option<&str>) -> AppResult<()> {
+pub fn put_raw_setting(conn: &Connection, key: SettingKey, value: Option<&str>) -> AppResult<()> {
     match value {
         Some(value) => {
             conn.execute(
@@ -173,14 +188,8 @@ pub fn put_raw_setting(conn: &Connection, key: &str, value: Option<&str>) -> App
 }
 
 /// Stores a setting as JSON, replacing any previous value.
-pub fn set_setting<T: Serialize>(conn: &Connection, key: &str, value: &T) -> AppResult<()> {
-    let json = serde_json::to_string(value)?;
-    conn.execute(
-        "INSERT INTO settings (key, value) VALUES (?1, ?2)
-         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-        params![key, json],
-    )?;
-    Ok(())
+pub fn set_setting<T: Serialize>(conn: &Connection, key: SettingKey, value: &T) -> AppResult<()> {
+    put_raw_setting(conn, key, Some(&serde_json::to_string(value)?))
 }
 
 #[cfg(test)]
@@ -239,18 +248,26 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_has_every_table_and_the_latest_version() {
+    fn opening_creates_the_nested_database_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = database_path(&dir.path().join("nested").join("app-data"));
-        let db = Database::open(&path).unwrap();
+        let _db = Database::open(&path).unwrap();
+        assert!(path.exists());
+    }
 
-        assert!(path.exists(), "open creates the folder and the file");
-        db.with(|conn| {
-            assert_eq!(tables(conn), TABLES);
-            assert_eq!(user_version(conn)?, SCHEMA_VERSION);
-            Ok(())
-        })
-        .unwrap();
+    #[test]
+    fn a_fresh_database_contains_the_full_schema() {
+        let db = Database::open_in_memory().unwrap();
+        let schema = db
+            .with(|conn| Ok((tables(conn), user_version(conn)?)))
+            .unwrap();
+        assert_eq!(
+            schema,
+            (
+                TABLES.iter().map(|name| name.to_string()).collect(),
+                SCHEMA_VERSION
+            )
+        );
     }
 
     #[test]
@@ -261,7 +278,7 @@ mod tests {
         let first = Database::open(&path).unwrap();
         let before = first.with(|conn| Ok(schema_sql(conn))).unwrap();
         first
-            .with(|conn| set_setting(conn, "probe", &json!({ "kept": true })))
+            .with(|conn| set_setting(conn, SettingKey::Appearance, &json!({ "kept": true })))
             .unwrap();
         drop(first);
 
@@ -271,7 +288,7 @@ mod tests {
                 assert_eq!(schema_sql(conn), before);
                 assert_eq!(user_version(conn)?, SCHEMA_VERSION);
                 assert_eq!(
-                    get_setting::<serde_json::Value>(conn, "probe")?,
+                    get_setting::<serde_json::Value>(conn, SettingKey::Appearance)?,
                     Some(json!({ "kept": true }))
                 );
                 Ok(())
@@ -301,19 +318,31 @@ mod tests {
     }
 
     #[test]
-    fn connection_uses_wal_foreign_keys_and_a_busy_timeout() {
+    fn a_file_database_uses_wal() {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&database_path(dir.path())).unwrap();
-        db.with(|conn| {
-            let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
-            let fk: i64 = conn.pragma_query_value(None, "foreign_keys", |r| r.get(0))?;
-            let timeout: i64 = conn.pragma_query_value(None, "busy_timeout", |r| r.get(0))?;
-            assert_eq!(mode, "wal");
-            assert_eq!(fk, 1);
-            assert_eq!(timeout, BUSY_TIMEOUT.as_millis() as i64);
-            Ok(())
-        })
-        .unwrap();
+        let mode: String = db
+            .with(|conn| Ok(conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(mode, "wal");
+    }
+
+    #[test]
+    fn foreign_keys_are_enabled() {
+        let db = Database::open_in_memory().unwrap();
+        let enabled: bool = db
+            .with(|conn| Ok(conn.pragma_query_value(None, "foreign_keys", |r| r.get(0))?))
+            .unwrap();
+        assert!(enabled);
+    }
+
+    #[test]
+    fn a_busy_connection_waits_for_the_configured_timeout() {
+        let db = Database::open_in_memory().unwrap();
+        let timeout: u32 = db
+            .with(|conn| Ok(conn.pragma_query_value(None, "busy_timeout", |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(Duration::from_millis(timeout.into()), BUSY_TIMEOUT);
     }
 
     #[test]
@@ -427,36 +456,49 @@ mod tests {
     }
 
     #[test]
-    fn transaction_commits_on_ok_and_rolls_back_on_error() {
+    fn a_successful_transaction_commits() {
         let db = Database::open_in_memory().unwrap();
-        db.transaction(|tx| set_setting(tx, "kept", &1)).unwrap();
+        db.transaction(|tx| set_setting(tx, SettingKey::Appearance, &1))
+            .unwrap();
+        assert_eq!(
+            db.with(|conn| get_setting::<i64>(conn, SettingKey::Appearance))
+                .unwrap(),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn a_failed_transaction_rolls_back() {
+        let db = Database::open_in_memory().unwrap();
         let failed: AppResult<()> = db.transaction(|tx| {
-            set_setting(tx, "dropped", &2)?;
+            set_setting(tx, SettingKey::KeyboardShortcuts, &2)?;
             Err(AppError::Invalid("falha".into()))
         });
         assert!(failed.is_err());
-
-        db.with(|conn| {
-            assert_eq!(get_setting::<i64>(conn, "kept")?, Some(1));
-            assert_eq!(get_setting::<i64>(conn, "dropped")?, None);
-            Ok(())
-        })
-        .unwrap();
+        assert_eq!(
+            db.with(|conn| get_setting::<i64>(conn, SettingKey::KeyboardShortcuts))
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
     fn settings_round_trip_as_json() {
         let db = Database::open_in_memory().unwrap();
         db.with(|conn| {
-            assert_eq!(get_setting::<String>(conn, "missing")?, None);
+            assert_eq!(get_setting::<String>(conn, SettingKey::AiRoles)?, None);
             set_setting(
                 conn,
-                "role",
+                SettingKey::AiRoles,
                 &json!({ "agent": "claude", "effort": "high" }),
             )?;
-            set_setting(conn, "role", &json!({ "agent": "codex", "effort": "low" }))?;
+            set_setting(
+                conn,
+                SettingKey::AiRoles,
+                &json!({ "agent": "codex", "effort": "low" }),
+            )?;
             assert_eq!(
-                get_setting::<serde_json::Value>(conn, "role")?,
+                get_setting::<serde_json::Value>(conn, SettingKey::AiRoles)?,
                 Some(json!({ "agent": "codex", "effort": "low" }))
             );
             Ok(())

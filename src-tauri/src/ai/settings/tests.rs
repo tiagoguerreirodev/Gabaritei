@@ -20,7 +20,9 @@ fn first_load_writes_the_defaults() {
     assert_eq!(settings.roles, RoleSettings::default());
     assert!(!settings.has_remnote_token);
     // Stored, so a later change to the built-in defaults doesn't silently alter the user's setup.
-    let stored: Option<RoleSettings> = db.with(|conn| get_setting(conn, KEY_ROLES)).unwrap();
+    let stored: Option<RoleSettings> = db
+        .with(|conn| get_setting(conn, SettingKey::AiRoles))
+        .unwrap();
     assert_eq!(stored, Some(RoleSettings::default()));
 }
 

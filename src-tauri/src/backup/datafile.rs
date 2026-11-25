@@ -192,7 +192,7 @@ pub fn import(
 mod tests {
     use super::*;
     use crate::backup::{BackupKind, default_folder, list};
-    use crate::db::{get_setting, set_setting};
+    use crate::db::{SettingKey, get_setting, set_setting};
     use rusqlite::params;
 
     const IMAGE: &str = "0123456789abcdef01234567.png";
@@ -301,7 +301,7 @@ mod tests {
         add_question(&source.db, "from-source");
         source
             .db
-            .with(|conn| set_setting(conn, crate::appearance::KEY, &"dark and xl"))
+            .with(|conn| set_setting(conn, SettingKey::Appearance, &"dark and xl"))
             .unwrap();
         let out = tempfile::tempdir().unwrap();
         let file = out.path().join("data.gabaritei");
@@ -311,15 +311,15 @@ mod tests {
         add_question(&target.db, "local-only");
         target
             .db
-            .with(|conn| set_setting(conn, crate::appearance::KEY, &"light and m"))
+            .with(|conn| set_setting(conn, SettingKey::Appearance, &"light and m"))
             .unwrap();
         source
             .db
-            .with(|conn| set_setting(conn, "backup.folder", &"/the/other/computer"))
+            .with(|conn| set_setting(conn, SettingKey::BackupFolder, &"/the/other/computer"))
             .unwrap();
         target
             .db
-            .with(|conn| set_setting(conn, "ai.cliPaths", &"local cli paths"))
+            .with(|conn| set_setting(conn, SettingKey::CliPaths, &"local cli paths"))
             .unwrap();
         import_into(&target, &file).unwrap();
 
@@ -338,12 +338,12 @@ mod tests {
             .db
             .with(|conn| {
                 assert_eq!(
-                    get_setting::<String>(conn, "ai.cliPaths")?.as_deref(),
+                    get_setting::<String>(conn, SettingKey::CliPaths)?.as_deref(),
                     Some("local cli paths")
                 );
-                assert_eq!(get_setting::<String>(conn, "backup.folder")?, None);
+                assert_eq!(get_setting::<String>(conn, SettingKey::BackupFolder)?, None);
                 assert_eq!(
-                    get_setting::<String>(conn, crate::appearance::KEY)?.as_deref(),
+                    get_setting::<String>(conn, SettingKey::Appearance)?.as_deref(),
                     Some("light and m")
                 );
                 Ok(())

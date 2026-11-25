@@ -13,11 +13,12 @@ pub mod datafile;
 pub mod relocate;
 pub mod snapshot;
 
+use crate::sync::lock;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
@@ -25,26 +26,21 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use ts_rs::TS;
 
-use crate::ai::settings::{KEY_CLI_PATHS, KEY_REMNOTE, KEY_ROLES};
-use crate::appearance;
-use crate::db::{Database, get_setting, set_setting};
+use crate::db::{Database, SettingKey, get_setting, set_setting};
 use crate::error::{AppError, AppResult};
 use crate::paths::AppPaths;
 
-/// Setting that holds the backup folder chosen by the user.
-const KEY_FOLDER: &str = "backup.folder";
-/// The old folder whose backups were left behind by the last folder change (a local setting).
-const KEY_LEFT_BEHIND: &str = "backup.leftBehind";
 /// Settings that describe this computer. Restoring or importing data from another computer
 /// must not overwrite them.
-pub const LOCAL_SETTINGS: &[&str] = &[
-    KEY_FOLDER,
-    KEY_LEFT_BEHIND,
-    KEY_CLI_PATHS,
-    KEY_REMNOTE,
-    KEY_ROLES,
-    appearance::KEY,
-    crate::shortcuts::KEY,
+pub const LOCAL_SETTINGS: &[SettingKey] = &[
+    SettingKey::BackupFolder,
+    SettingKey::BackupLeftBehind,
+    SettingKey::CliPaths,
+    // Keep the keychain token paired with this computer's server URL.
+    SettingKey::RemNote,
+    SettingKey::AiRoles,
+    SettingKey::Appearance,
+    SettingKey::KeyboardShortcuts,
 ];
 
 /// Daily backups kept.
@@ -479,7 +475,7 @@ pub fn folder_to_open(
 
 /// The folder backups go to: the user's choice, or the default.
 pub fn folder(conn: &Connection, paths: &AppPaths) -> AppResult<PathBuf> {
-    Ok(get_setting::<String>(conn, KEY_FOLDER)?
+    Ok(get_setting::<String>(conn, SettingKey::BackupFolder)?
         .map(PathBuf::from)
         .unwrap_or_else(|| default_folder(paths)))
 }
@@ -487,7 +483,7 @@ pub fn folder(conn: &Connection, paths: &AppPaths) -> AppResult<PathBuf> {
 /// Saves the backup folder (`None` goes back to the default) after checking it can be written.
 pub fn set_folder(conn: &Connection, paths: &AppPaths, chosen: Option<&Path>) -> AppResult<()> {
     let Some(chosen) = chosen else {
-        crate::db::put_raw_setting(conn, KEY_FOLDER, None)?;
+        crate::db::put_raw_setting(conn, SettingKey::BackupFolder, None)?;
         return Ok(());
     };
     let text = chosen
@@ -541,7 +537,7 @@ pub fn set_folder(conn: &Connection, paths: &AppPaths, chosen: Option<&Path>) ->
         return Err(refuse());
     }
     tempfile::tempfile_in(chosen).map_err(|_| not_writable())?;
-    set_setting(conn, KEY_FOLDER, &text)
+    set_setting(conn, SettingKey::BackupFolder, &text)
 }
 
 /// Backups in `folder`, newest first. Folders that aren't complete backups are ignored.
@@ -606,8 +602,12 @@ fn left_behind(old: &Path, left: &[&ParsedName]) -> Option<LeftBehind> {
 /// Stores (or, with `None`, forgets) the old folder whose backups were left behind.
 fn remember_old_folder(conn: &Connection, old: Option<&Path>) -> AppResult<()> {
     match old {
-        Some(old) => set_setting(conn, KEY_LEFT_BEHIND, &old.display().to_string()),
-        None => crate::db::put_raw_setting(conn, KEY_LEFT_BEHIND, None),
+        Some(old) => set_setting(
+            conn,
+            SettingKey::BackupLeftBehind,
+            &old.display().to_string(),
+        ),
+        None => crate::db::put_raw_setting(conn, SettingKey::BackupLeftBehind, None),
     }
 }
 
@@ -822,7 +822,8 @@ fn pending_old_folder(
     probe: &FolderProbe,
     current: &Path,
 ) -> AppResult<Option<(PathBuf, LeftBehind, Vec<ParsedName>)>> {
-    let Some(old) = db.with(|conn| get_setting::<String>(conn, KEY_LEFT_BEHIND))? else {
+    let Some(old) = db.with(|conn| get_setting::<String>(conn, SettingKey::BackupLeftBehind))?
+    else {
         return Ok(None);
     };
     let old = PathBuf::from(old);
@@ -852,7 +853,7 @@ fn pending_old_folder(
 /// lock, so a folder change could have stored a newer one since it was read; that one stays.
 fn forget_old_folder_if(db: &Database, old: &Path) -> AppResult<()> {
     db.with(|conn| {
-        let stored = get_setting::<String>(conn, KEY_LEFT_BEHIND)?;
+        let stored = get_setting::<String>(conn, SettingKey::BackupLeftBehind)?;
         if stored.as_deref() == Some(old.display().to_string().as_str()) {
             remember_old_folder(conn, None)?;
         }
@@ -865,10 +866,6 @@ fn same_folder(a: &Path, b: &Path) -> bool {
     a == b
         || matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
         || same_file::is_same_file(a, b).unwrap_or(false)
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Runs backup, restore and import one at a time, and remembers why the last backup failed.
@@ -937,7 +934,7 @@ impl BackupService {
     /// The *Dados* section's data.
     pub fn status(&self, db: &Database, paths: &AppPaths) -> AppResult<BackupStatus> {
         let (folder, is_default_folder) = db.with(|conn| {
-            let chosen = get_setting::<String>(conn, KEY_FOLDER)?;
+            let chosen = get_setting::<String>(conn, SettingKey::BackupFolder)?;
             Ok((folder(conn, paths)?, chosen.is_none()))
         })?;
         let left_behind =
@@ -1073,7 +1070,7 @@ impl BackupService {
             let current = db.with(|conn| {
                 Ok((
                     folder(conn, paths)?,
-                    get_setting::<String>(conn, KEY_LEFT_BEHIND)?,
+                    get_setting::<String>(conn, SettingKey::BackupLeftBehind)?,
                 ))
             });
             matches!(current, Ok((folder, Some(stored)))
@@ -1978,32 +1975,49 @@ mod tests {
     fn restoring_keeps_this_computers_own_settings() {
         let f = fixture();
         f.db.with(|conn| {
-            set_setting(conn, KEY_CLI_PATHS, &"windows-path")?;
-            set_setting(conn, KEY_REMNOTE, &"http://remote.example/mcp")?;
-            set_setting(conn, KEY_ROLES, &"roles from the other computer")?;
+            set_setting(conn, SettingKey::CliPaths, &"windows-path")?;
+            set_setting(conn, SettingKey::RemNote, &"http://remote.example/mcp")?;
+            set_setting(conn, SettingKey::AiRoles, &"roles from the other computer")?;
             set_setting(
                 conn,
-                appearance::KEY,
+                SettingKey::Appearance,
                 &"dark and xl from the other computer",
             )?;
-            set_setting(conn, "other", &"from the backup")
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('other', ?1)",
+                [r#""from the backup""#],
+            )?;
+            Ok(())
         })
         .unwrap();
         let info = backup(&f, "2026-11-19T10:00:00.000Z");
         f.db.with(|conn| {
-            set_setting(conn, KEY_CLI_PATHS, &"mac-path")?;
-            set_setting(conn, KEY_REMNOTE, &"http://localhost/mcp")?;
-            set_setting(conn, KEY_ROLES, &"roles of this computer")?;
-            set_setting(conn, appearance::KEY, &"light and m of this computer")?;
-            set_setting(conn, "other", &"changed")?;
-            set_setting(conn, KEY_FOLDER, &"/elsewhere")
+            set_setting(conn, SettingKey::CliPaths, &"mac-path")?;
+            set_setting(conn, SettingKey::RemNote, &"http://localhost/mcp")?;
+            set_setting(conn, SettingKey::AiRoles, &"roles of this computer")?;
+            set_setting(
+                conn,
+                SettingKey::Appearance,
+                &"light and m of this computer",
+            )?;
+            conn.execute(
+                "UPDATE settings SET value = ?1 WHERE key = 'other'",
+                [r#""changed""#],
+            )?;
+            set_setting(conn, SettingKey::BackupFolder, &"/elsewhere")
         })
         .unwrap();
 
         // The folder setting points at /elsewhere now, so the backup is found by moving it.
         let elsewhere = tempfile::tempdir().unwrap();
-        f.db.with(|conn| set_setting(conn, KEY_FOLDER, &elsewhere.path().to_str().unwrap()))
-            .unwrap();
+        f.db.with(|conn| {
+            set_setting(
+                conn,
+                SettingKey::BackupFolder,
+                &elsewhere.path().to_str().unwrap(),
+            )
+        })
+        .unwrap();
         fs::rename(
             default_folder(&f.paths).join(&info.name),
             elsewhere.path().join(&info.name),
@@ -2013,27 +2027,31 @@ mod tests {
 
         f.db.with(|conn| {
             assert_eq!(
-                get_setting::<String>(conn, "other")?.as_deref(),
-                Some("from the backup")
+                conn.query_row(
+                    "SELECT value FROM settings WHERE key = 'other'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )?,
+                r#""from the backup""#
             );
             assert_eq!(
-                get_setting::<String>(conn, KEY_CLI_PATHS)?.as_deref(),
+                get_setting::<String>(conn, SettingKey::CliPaths)?.as_deref(),
                 Some("mac-path")
             );
             assert_eq!(
-                get_setting::<String>(conn, KEY_REMNOTE)?.as_deref(),
+                get_setting::<String>(conn, SettingKey::RemNote)?.as_deref(),
                 Some("http://localhost/mcp")
             );
             assert_eq!(
-                get_setting::<String>(conn, KEY_ROLES)?.as_deref(),
+                get_setting::<String>(conn, SettingKey::AiRoles)?.as_deref(),
                 Some("roles of this computer")
             );
             assert_eq!(
-                get_setting::<String>(conn, appearance::KEY)?.as_deref(),
+                get_setting::<String>(conn, SettingKey::Appearance)?.as_deref(),
                 Some("light and m of this computer")
             );
             assert_eq!(
-                get_setting::<String>(conn, KEY_FOLDER)?.as_deref(),
+                get_setting::<String>(conn, SettingKey::BackupFolder)?.as_deref(),
                 elsewhere.path().to_str()
             );
             Ok(())
@@ -2182,7 +2200,7 @@ mod tests {
         // The backup folder is a file: nothing can be created in it.
         let blocker = f.paths.data_dir().join("blocked");
         fs::write(&blocker, b"file").unwrap();
-        f.db.with(|conn| set_setting(conn, KEY_FOLDER, &blocker.to_str().unwrap()))
+        f.db.with(|conn| set_setting(conn, SettingKey::BackupFolder, &blocker.to_str().unwrap()))
             .unwrap();
 
         assert!(
@@ -2196,7 +2214,7 @@ mod tests {
         f.db.with(|conn| {
             set_setting(
                 conn,
-                KEY_FOLDER,
+                SettingKey::BackupFolder,
                 &f.paths.data_dir().join("ok").to_str().unwrap(),
             )
         })
@@ -2778,7 +2796,11 @@ mod tests {
             .unwrap();
         f.db.with(|conn| {
             // Chosen while the link still resolved to nothing; set directly, as a stale setting.
-            set_setting(conn, KEY_FOLDER, &link.join("sub").display().to_string())
+            set_setting(
+                conn,
+                SettingKey::BackupFolder,
+                &link.join("sub").display().to_string(),
+            )
         })
         .unwrap();
 
@@ -3205,8 +3227,14 @@ mod tests {
         let f = fixture();
         let service = service_with_long_probe();
         let set = |folder: &Path| {
-            f.db.with(|conn| set_setting(conn, KEY_FOLDER, &folder.display().to_string()))
-                .unwrap();
+            f.db.with(|conn| {
+                set_setting(
+                    conn,
+                    SettingKey::BackupFolder,
+                    &folder.display().to_string(),
+                )
+            })
+            .unwrap();
         };
         // The parent (the volume) is gone: nothing to create the folder in.
         set(&f._dir.path().join("volume-gone").join("backups"));
@@ -3280,7 +3308,7 @@ mod tests {
         let service = service_with_long_probe();
         f.db.with(|conn| {
             let gone = f._dir.path().join("volume-gone").join("backups");
-            set_setting(conn, KEY_FOLDER, &gone.display().to_string())
+            set_setting(conn, SettingKey::BackupFolder, &gone.display().to_string())
         })
         .unwrap();
 
@@ -3340,13 +3368,13 @@ mod tests {
             .unwrap();
         forget_old_folder_if(&f.db, Path::new("/older")).unwrap();
         let stored =
-            f.db.with(|conn| get_setting::<String>(conn, KEY_LEFT_BEHIND))
+            f.db.with(|conn| get_setting::<String>(conn, SettingKey::BackupLeftBehind))
                 .unwrap();
         assert_eq!(stored.as_deref(), Some("/newer"));
 
         forget_old_folder_if(&f.db, Path::new("/newer")).unwrap();
         let stored =
-            f.db.with(|conn| get_setting::<String>(conn, KEY_LEFT_BEHIND))
+            f.db.with(|conn| get_setting::<String>(conn, SettingKey::BackupLeftBehind))
                 .unwrap();
         assert_eq!(stored, None);
     }

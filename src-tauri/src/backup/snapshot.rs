@@ -368,7 +368,7 @@ pub fn stage(dir: &Path) -> AppResult<Staged> {
     if foreign != 0 {
         return Err(corrupt());
     }
-    db::prepare_restored(&mut conn).map_err(|error| match error {
+    db::prepare_connection(&mut conn).map_err(|error| match error {
         AppError::Invalid(_) => error,
         AppError::Internal(_) => corrupt(),
     })?;
@@ -419,10 +419,14 @@ pub fn copy_images(images_dir: &Path, dir: &Path, staged: &Staged) -> AppResult<
 ///
 /// The caller holds the database lock (see [`Database::with`]) and passes the connection, so a
 /// safety backup of the old data can be made under the same lock.
-pub fn commit(conn: &mut Connection, staged: &Staged, keep_local: &[&str]) -> AppResult<()> {
+pub fn commit(
+    conn: &mut Connection,
+    staged: &Staged,
+    keep_local: &[db::SettingKey],
+) -> AppResult<()> {
     {
         let mut target = Connection::open(staged.database())?;
-        for key in keep_local {
+        for &key in keep_local {
             let local = db::get_raw_setting(conn, key)?;
             db::put_raw_setting(&target, key, local.as_deref())?;
         }
@@ -439,7 +443,7 @@ pub fn commit(conn: &mut Connection, staged: &Staged, keep_local: &[&str]) -> Ap
         }
         Backup::new(&target, conn)?.run_to_completion(256, Duration::ZERO, None)?;
         // The pages came from a file with its own journal mode.
-        db::prepare_restored(conn)
+        db::prepare_connection(conn)
     }
 }
 

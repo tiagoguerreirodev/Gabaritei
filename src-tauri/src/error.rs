@@ -3,7 +3,7 @@
 //! The frontend receives an [`ErrorPayload`] whose `message` is pt-BR text that can be
 //! shown to the user as is. Technical details never reach the frontend.
 
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 use ts_rs::TS;
 
 /// Errors a command can return.
@@ -40,17 +40,6 @@ impl AppError {
         match self {
             Self::Invalid(message) | Self::Internal(message) => message,
         }
-    }
-}
-
-impl Serialize for AppError {
-    /// Every error that reaches the frontend passes through here, so an unexpected one is
-    /// written to the app log first: the user only sees a generic message.
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if let Self::Internal(detail) = self {
-            crate::log::error(format!("unexpected error: {detail}"));
-        }
-        ErrorPayload::from(self).serialize(serializer)
     }
 }
 
@@ -108,7 +97,7 @@ mod tests {
     fn invalid_error_serializes_its_own_message() {
         let error = AppError::Invalid("Informe um assunto.".into());
         assert_eq!(
-            serde_json::to_value(&error).unwrap(),
+            serde_json::to_value(ErrorPayload::from(&error)).unwrap(),
             json!({ "message": "Informe um assunto." })
         );
     }
@@ -157,7 +146,7 @@ mod tests {
     #[test]
     fn internal_error_hides_the_detail() {
         let error = AppError::Internal("disk I/O error at /secret/path".into());
-        let value = serde_json::to_value(&error).unwrap();
+        let value = serde_json::to_value(ErrorPayload::from(&error)).unwrap();
         assert_eq!(
             value,
             json!({ "message": "Ocorreu um erro inesperado. Tente novamente." })

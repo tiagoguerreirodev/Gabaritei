@@ -15,17 +15,8 @@ use super::discovery;
 use super::roles::{Role, RoleConfig, RoleSettings};
 use super::runner::{JobSpec, RemNoteAccess, is_valid_tool_name, is_write_like};
 use super::secrets::Secrets;
-use crate::db::{get_setting, set_setting};
+use crate::db::{SettingKey, get_setting, set_setting};
 use crate::error::{AppError, AppResult};
-
-/// Agent, model and effort per role. Kept when data from another computer is restored: the
-/// models and CLIs available can differ between computers.
-pub const KEY_ROLES: &str = "ai.roles";
-/// Where the CLIs are on this computer. Kept when data from another computer is restored.
-pub const KEY_CLI_PATHS: &str = "ai.cliPaths";
-/// The RemNote connection. Kept when data from another computer is restored: the keychain token
-/// is per computer, and must never be paired with a URL that came from a file.
-pub const KEY_REMNOTE: &str = "ai.remnote";
 
 const MAX_MODEL: usize = 200;
 const MAX_PATH: usize = 1_000;
@@ -97,28 +88,28 @@ pub struct AiSettings {
 
 /// Just the CLI path overrides (no defaults written, no keychain access).
 pub fn load_cli_paths(conn: &Connection) -> AppResult<CliPaths> {
-    Ok(get_setting(conn, KEY_CLI_PATHS)?.unwrap_or_default())
+    Ok(get_setting(conn, SettingKey::CliPaths)?.unwrap_or_default())
 }
 
 /// Just the role configuration (the saved one, or the defaults), with no writes and no keychain.
 pub fn load_roles(conn: &Connection) -> AppResult<RoleSettings> {
-    Ok(get_setting(conn, KEY_ROLES)?.unwrap_or_default())
+    Ok(get_setting(conn, SettingKey::AiRoles)?.unwrap_or_default())
 }
 
 /// Loads the settings, writing the defaults the first time (spec §7: set on first run).
 pub fn load(conn: &Connection, secrets: &Secrets) -> AppResult<AiSettings> {
-    let roles = match get_setting::<RoleSettings>(conn, KEY_ROLES)? {
+    let roles = match get_setting::<RoleSettings>(conn, SettingKey::AiRoles)? {
         Some(roles) => roles,
         None => {
             let defaults = RoleSettings::default();
-            set_setting(conn, KEY_ROLES, &defaults)?;
+            set_setting(conn, SettingKey::AiRoles, &defaults)?;
             defaults
         }
     };
     Ok(AiSettings {
-        cli_paths: get_setting(conn, KEY_CLI_PATHS)?.unwrap_or_default(),
+        cli_paths: get_setting(conn, SettingKey::CliPaths)?.unwrap_or_default(),
         roles,
-        remnote: get_setting(conn, KEY_REMNOTE)?.unwrap_or_default(),
+        remnote: get_setting(conn, SettingKey::RemNote)?.unwrap_or_default(),
         // Best effort: a locked or missing keychain must not break every AI feature.
         has_remnote_token: secrets.remnote_token().ok().flatten().is_some(),
     })
@@ -216,9 +207,9 @@ pub fn save(conn: &Connection, input: AiSettingsInput) -> AppResult<()> {
         url,
         tools,
     };
-    set_setting(conn, KEY_ROLES, &roles)?;
-    set_setting(conn, KEY_CLI_PATHS, &cli_paths)?;
-    set_setting(conn, KEY_REMNOTE, &remnote)?;
+    set_setting(conn, SettingKey::AiRoles, &roles)?;
+    set_setting(conn, SettingKey::CliPaths, &cli_paths)?;
+    set_setting(conn, SettingKey::RemNote, &remnote)?;
     Ok(())
 }
 

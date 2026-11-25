@@ -26,13 +26,23 @@ use crate::attempts::{self, AttemptView, SessionStart};
 use crate::backup::{BackupInfo, BackupService, BackupStatus, OpenableFolder, RelocateOutcome};
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
 use crate::db::Database;
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult, ErrorPayload};
 use crate::ids::{AttemptId, CollectionId, DraftId};
 use crate::learning::{self, LearningOverview};
 use crate::metrics::{self, HomeSummary, Performance, PerformanceQuery};
 use crate::migrate::{self, LegacyImportOutcome, LegacyImportStatus};
 use crate::paths::AppPaths;
 use crate::shortcuts;
+
+/// Tauri calls this conversion once when rejecting an IPC command.
+impl From<AppError> for tauri::ipc::InvokeError {
+    fn from(error: AppError) -> Self {
+        if let AppError::Internal(detail) = &error {
+            crate::log::error(format!("unexpected error: {detail}"));
+        }
+        ErrorPayload::from(&error).into()
+    }
+}
 
 /// Basic information about the running app.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]

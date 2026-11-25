@@ -1,8 +1,9 @@
 //! One generation at a time, running in the background, with cancel and a status the
 //! frontend can read from any page (spec §3.2 "Run behavior").
 
+use crate::sync::lock;
 use std::panic::AssertUnwindSafe;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use ts_rs::TS;
@@ -93,12 +94,6 @@ struct Running {
 #[derive(Clone, Default)]
 pub struct GenerationManager {
     inner: Arc<Mutex<Inner>>,
-}
-
-fn lock(inner: &Mutex<Inner>) -> MutexGuard<'_, Inner> {
-    inner
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl GenerationManager {

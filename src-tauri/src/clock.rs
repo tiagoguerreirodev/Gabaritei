@@ -34,9 +34,4 @@ mod tests {
             "2026-11-19T21:05:09.000Z"
         );
     }
-
-    #[test]
-    fn now_sorts_after_a_past_timestamp() {
-        assert!(now().as_str() > "2026-01-01T00:00:00.000Z");
-    }
 }

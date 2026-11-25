@@ -2,8 +2,9 @@
 //! time, cancellable, and with the re-check proposal kept here until the user confirms it, so a
 //! confirmation can never carry a key the backend didn't get from the AI.
 
+use crate::sync::lock;
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::Mutex;
 
 use super::recheck::Proposal;
 use super::runner::CancelToken;
@@ -14,12 +15,6 @@ use crate::ids::QuestionId;
 pub struct OnDemand {
     current: Mutex<Option<CancelToken>>,
     proposals: Mutex<HashMap<QuestionId, Proposal>>,
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl OnDemand {

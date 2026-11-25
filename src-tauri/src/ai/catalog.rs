@@ -7,6 +7,7 @@
 pub mod claude;
 pub mod codex;
 
+use crate::sync::lock;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -102,7 +103,7 @@ impl CatalogCache {
     }
 
     fn lists(&self) -> std::sync::MutexGuard<'_, Option<Catalog>> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        lock(&self.state)
     }
 
     /// Reads the lists and stores them. Call with `load_lock` held.
@@ -129,7 +130,7 @@ impl CatalogCache {
         if let Some(catalog) = self.cached() {
             return catalog;
         }
-        let _loading = self.load_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _loading = lock(&self.load_lock);
         if let Some(catalog) = self.cached() {
             return catalog;
         }
@@ -139,7 +140,7 @@ impl CatalogCache {
     /// Reloads the lists. Callers that arrive while a reload is running share its result.
     pub fn refresh(&self, cli_paths: &CliPaths) -> Catalog {
         let seen = self.generation.load(Ordering::SeqCst);
-        let _loading = self.load_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _loading = lock(&self.load_lock);
         if self.generation.load(Ordering::SeqCst) != seen
             && let Some(catalog) = self.cached()
         {

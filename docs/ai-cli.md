@@ -185,3 +185,28 @@ Checked by the `rust-test-windows` CI job (`windows-latest`) with batch-file fak
 Still to check by hand on the Windows 11 machine, with the real CLIs:
 
 - A real `claude` / `codex` run end to end from the installed app (login probe, generation, blind check).
+
+## Manual native app pass (#55)
+
+The 2026-11-24 pass used the Gabaritei 0.3.0 native Linux debug build with the frontend embedded,
+Claude Code 2.1.331, Codex CLI 0.172.0 and a temporary app data directory containing synthetic
+questions only. Both CLIs used their existing logins.
+
+1. **Generate and dispute.** Codex generated one Certo/Errado question. The initial Claude check
+   failed before inference because of the schema dialect declaration (#198). With the compatibility
+   build, the check was retried after setting the synthetic draft's key to a known wrong option
+   in the temporary database. Claude disagreed, Codex revised the question, and Claude accepted
+   the revision on the second check. The saved verdict was `fixed` and marked as objected.
+2. **Preview and import.** *Revisar pacote* showed one question and the *corrigida e conferida*
+   verdict, with the question content and answer details hidden. *Importar tudo* added the
+   question to a generated collection and closed the draft.
+3. **Re-check while solving.** A separate synthetic question had a known wrong key and a blank
+   explanation. In Study mode the AI actions appeared after confirming the answer. Codex
+   proposed the correct option. The stored key and audit history changed on applying the proposal,
+   and Resolver re-scored the answer from incorrect to correct.
+4. **Explain while solving.** *Explicar* called Codex, displayed an explanation in Resolver and
+   persisted it to the question.
+
+The initial schema failure appeared as a generic CLI exit code in the preview. The preview
+also used plural labels for counts of one. This live pass covers Linux. RemNote verification
+is tracked separately in #54.

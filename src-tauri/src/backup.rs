@@ -3159,7 +3159,12 @@ mod tests {
         service.probe.timeout = LONG;
 
         let status = service.status(&f.db, &f.paths).unwrap();
-        assert!(!status.folder_unavailable);
+        assert_eq!(
+            status.listing,
+            BackupListing::Ready {
+                backups: Vec::new()
+            }
+        );
         service
             .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 10:00:00 UTC))
             .unwrap()

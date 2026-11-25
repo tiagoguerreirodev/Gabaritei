@@ -19,7 +19,6 @@ use crate::error::{AppError, AppResult};
 const MAX_MODEL: usize = 200;
 const MAX_PATH: usize = 1_000;
 const MAX_URL: usize = 2_000;
-const TEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Optional overrides for where the CLIs are. `None` means "detect automatically".
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]

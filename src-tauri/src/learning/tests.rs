@@ -614,7 +614,7 @@ fn the_overview_lists_the_due_review_first() {
         (
             &first.question_id,
             first.is_error,
-            first.due_at.as_deref(),
+            first.review.as_ref().map(|review| review.at.as_str()),
             &first.last_attempt_id
         ),
         (&b.id("q1"), true, Some(D1), &AttemptId::from("a1"))
@@ -944,4 +944,27 @@ fn overlapping_attempts_rank_by_when_the_answer_was_given() {
     })
     .unwrap();
     assert!(b.errors(WrongOnly).is_empty());
+}
+
+#[test]
+fn review_labels_follow_the_local_calendar_and_refresh_at_the_next_due_time() {
+    let b = overview_bank();
+    let ov = b.db.with(|conn| overview(conn, D1, WrongOnly)).unwrap();
+    assert_eq!(
+        ov.items
+            .iter()
+            .map(|item| item.review.as_ref().unwrap().state)
+            .collect::<Vec<_>>(),
+        [DueState::Today, DueState::Upcoming, DueState::Upcoming]
+    );
+    let later = b.db.with(|conn| overview(conn, D4, WrongOnly)).unwrap();
+    assert_eq!(
+        later.items[0].review.as_ref().unwrap().state,
+        DueState::Overdue
+    );
+    let just_before = "2026-11-02T09:59:59.999Z";
+    let before =
+        b.db.with(|conn| overview(conn, just_before, WrongOnly))
+            .unwrap();
+    assert_eq!(before.refresh_at.as_deref(), Some(D1));
 }

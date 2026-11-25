@@ -104,7 +104,7 @@ fn topic_questions(
     count: u32,
     rng: &mut impl Rng,
 ) -> AppResult<Vec<QuestionId>> {
-    if !(1..=MAX_TOPIC_SESSION).contains(&count) {
+    if !(crate::question_count::MIN_COUNT..=MAX_TOPIC_SESSION).contains(&count) {
         return Err(AppError::Invalid(format!(
             "Escolha de 1 a {MAX_TOPIC_SESSION} questões."
         )));

@@ -75,12 +75,26 @@ function backend(
   status: GenerationStatus = idle,
   aiSettings: AiSettings = settings,
   catalog?: Catalog,
+  counts = { min: 1, max: 30, initial: 10 },
 ) {
   const calls: { command: string; args: Record<string, unknown> }[] = [];
   mockIPC((command, raw) => {
     const args = (raw ?? {}) as Record<string, unknown>;
     calls.push({ command, args });
     switch (command) {
+      case "question_count_limits":
+        return counts;
+      case "topic_choices": {
+        const path = args.path as { area: string; matter: string; topic: string };
+        const match = ["Controle de constitucionalidade", "CONTROLE"].includes(path.topic);
+        return {
+          path,
+          matters: ["Constitucional"],
+          topics: ["Controle de constitucionalidade"],
+          questions: match ? 5 : null,
+          isNew: Boolean(path.area && path.matter && path.topic && !match),
+        };
+      }
       case "topics_tree":
         return tree;
       case "ai_catalog":
@@ -205,6 +219,16 @@ describe("Gerar", () => {
     expect(request.checker?.fast).toBe(false);
   });
 
+  it("uses the count limits supplied by the backend", async () => {
+    backend(idle, settings, undefined, { min: 2, max: 7, initial: 4 });
+    renderPage();
+    const count = await screen.findByLabelText("Quantidade");
+    expect(count).toHaveValue(4);
+    expect(count).toHaveAttribute("min", "2");
+    expect(count).toHaveAttribute("max", "7");
+    expect(screen.getByText(/De 2 a 7/)).toBeVisible();
+  });
+
   it("notes whether the topic is new or already has questions", async () => {
     backend();
     const user = userEvent.setup();
@@ -213,6 +237,18 @@ describe("Gerar", () => {
     expect(await screen.findByText(/Já existem 5 questões neste assunto/)).toBeVisible();
     await user.type(screen.getByLabelText("Assunto"), " novo");
     expect(await screen.findByText(/Assunto novo: será criado/)).toBeVisible();
+  });
+
+  it("renders an existing topic even when the returned name differs from the typed path", async () => {
+    backend();
+    const user = userEvent.setup();
+    renderPage();
+    await fillTopic(user);
+    const topic = screen.getByLabelText("Assunto");
+    await user.clear(topic);
+    await user.type(topic, "CONTROLE");
+    expect(await screen.findByText(/Já existem 5 questões/)).toBeVisible();
+    expect(screen.queryByText(/Assunto novo:/)).toBeNull();
   });
 
   it("lets the web be combined with attachments and RemNote", async () => {

@@ -65,7 +65,7 @@ fn blank(text: &str) -> bool {
 impl GenerateRequest {
     /// Checks the form and tidies it (trimmed names, blank optionals removed).
     pub fn validate(&mut self) -> AppResult<()> {
-        if !(1..=MAX_COUNT).contains(&self.count) {
+        if !(crate::question_count::MIN_COUNT..=MAX_COUNT).contains(&self.count) {
             return Err(AppError::Invalid(format!(
                 "Escolha de 1 a {MAX_COUNT} questões."
             )));
@@ -385,6 +385,7 @@ pub fn generate_draft(
 ) -> AppResult<Draft> {
     request.validate()?;
     let (settings, stems) = db.with(|conn| {
+        request.topic = crate::bank::catalog::topic_choices(conn, &request.topic)?.path;
         Ok((
             settings::load(conn, secrets)?,
             topic_stems(conn, &request.topic)?,

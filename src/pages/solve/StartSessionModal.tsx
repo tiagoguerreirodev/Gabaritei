@@ -1,7 +1,9 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createResource, createSignal } from "solid-js";
 import { api } from "../../api";
 import type { FeedbackMode } from "../../bindings/FeedbackMode";
+import type { TopicId } from "../../bindings/TopicId";
 import type { SessionSource } from "../../bindings/SessionSource";
+import { ErrorState } from "../../components/states";
 import Modal from "../../components/Modal";
 import { showError } from "../../components/toasts";
 import { openAttempt } from "./format";
@@ -15,16 +17,13 @@ const modes: { id: FeedbackMode; label: string; hint: string }[] = [
   { id: "exam", label: "Simulado", hint: "Mostra o gabarito e as explicações só ao finalizar." },
 ];
 
-/** Largest topic session the backend accepts. */
-export const MAX_TOPIC_SESSION = 200;
-
 /**
  * Chooses the feedback mode (and, for a topic, how many questions) and starts a session.
  * `source` with kind `topic` takes its count from the form.
  */
 export default function StartSessionModal(props: {
   title: string;
-  source: SessionSource;
+  source: Exclude<SessionSource, { kind: "topic" }> | { kind: "topic"; topicId: TopicId };
   /** Questions available, for the topic count limit. */
   available?: number;
   /** Cancel: closes this dialog. */
@@ -33,10 +32,17 @@ export default function StartSessionModal(props: {
   onStarted?: () => void;
 }) {
   const [mode, setMode] = createSignal<FeedbackMode>("study");
-  const max = () => Math.min(MAX_TOPIC_SESSION, props.available ?? MAX_TOPIC_SESSION);
-  const [count, setCount] = createSignal(Math.min(10, max()));
+  const [limits, { refetch }] = createResource(
+    () => (props.source.kind === "topic" ? { available: props.available ?? 0 } : false),
+    ({ available }) => api.questionCountLimits({ kind: "topic", available }),
+  );
+  const [enteredCount, setCount] = createSignal<number>();
+  const count = () => enteredCount() ?? limits()?.initial ?? 0;
   const [busy, setBusy] = createSignal(false);
-  const countValid = () => Number.isInteger(count()) && count() >= 1 && count() <= max();
+  const countValid = () => {
+    const range = !limits.error && limits();
+    return range && Number.isInteger(count()) && count() >= range.min && count() <= range.max;
+  };
 
   const start = async () => {
     const source: SessionSource =
@@ -94,22 +100,31 @@ export default function StartSessionModal(props: {
         </For>
       </fieldset>
       <Show when={props.source.kind === "topic"}>
-        <label class="count-field">
-          Quantidade de questões
-          <input
-            type="number"
-            min="1"
-            max={max()}
-            step="1"
-            value={count()}
-            aria-invalid={!countValid()}
-            onInput={(event) => setCount(Number(event.currentTarget.value))}
-          />
-          <span class="muted">
-            Um número inteiro de 1 a {max()}. Primeiro as inéditas, depois as respondidas há mais
-            tempo.
-          </span>
-        </label>
+        <Show
+          when={!limits.error}
+          fallback={<ErrorState error={limits.error as unknown} onRetry={() => refetch()} />}
+        >
+          <Show when={limits()}>
+            {(range) => (
+              <label class="count-field">
+                Quantidade de questões
+                <input
+                  type="number"
+                  min={range().min}
+                  max={range().max}
+                  step="1"
+                  value={count()}
+                  aria-invalid={!countValid()}
+                  onInput={(event) => setCount(Number(event.currentTarget.value))}
+                />
+                <span class="muted">
+                  Um número inteiro de {range().min} a {range().max}. Primeiro as inéditas, depois
+                  as respondidas há mais tempo.
+                </span>
+              </label>
+            )}
+          </Show>
+        </Show>
       </Show>
     </Modal>
   );

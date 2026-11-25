@@ -91,6 +91,21 @@ pub fn save_keyboard_shortcuts(db: State<'_, Database>, enabled: bool) -> AppRes
     db.with(|conn| shortcuts::save(conn, enabled))
 }
 
+#[tauri::command]
+pub fn question_count_limits(
+    context: crate::question_count::CountContext,
+) -> AppResult<crate::question_count::CountLimits> {
+    Ok(context.limits())
+}
+
+#[tauri::command(async)]
+pub fn topic_choices(
+    db: State<'_, Database>,
+    path: crate::bank::TopicPath,
+) -> AppResult<catalog::TopicChoices> {
+    db.with(|conn| catalog::topic_choices(conn, &path))
+}
+
 /// Area › matter › topic with question counts.
 #[tauri::command(async)]
 pub fn topics_tree(db: State<'_, Database>) -> AppResult<TopicTree> {

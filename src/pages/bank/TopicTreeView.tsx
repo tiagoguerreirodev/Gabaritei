@@ -17,7 +17,7 @@ export default function TopicTreeView() {
         {(target) => (
           <StartSessionModal
             title={target().path}
-            source={{ kind: "topic", topicId: target().topic.id, count: 10 }}
+            source={{ kind: "topic", topicId: target().topic.id }}
             available={target().topic.questions}
             onClose={() => setSolving(undefined)}
           />

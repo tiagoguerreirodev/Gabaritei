@@ -37,6 +37,10 @@ import type { PerformanceQuery } from "./bindings/PerformanceQuery";
 import type { RemNoteTest } from "./bindings/RemNoteTest";
 import type { RecheckView } from "./bindings/RecheckView";
 import type { SessionStart } from "./bindings/SessionStart";
+import type { TopicPath } from "./bindings/TopicPath";
+import type { CountLimits } from "./bindings/CountLimits";
+import type { CountContext } from "./bindings/CountContext";
+import type { TopicChoices } from "./bindings/TopicChoices";
 import type { TopicTree } from "./bindings/TopicTree";
 
 const FALLBACK_MESSAGE = "Ocorreu um erro inesperado. Tente novamente.";
@@ -80,6 +84,9 @@ export const api = {
   /** Opens a folder picker and imports the legacy bank. `null` if the user cancels. */
   importLegacyBank: () => call<LegacyImportOutcome | null>("import_legacy_bank"),
   /** Area › matter › topic with question counts. */
+  questionCountLimits: (context: CountContext) =>
+    call<CountLimits>("question_count_limits", { context }),
+  topicChoices: (path: TopicPath) => call<TopicChoices>("topic_choices", { path }),
   topicsTree: () => call<TopicTree>("topics_tree"),
   /** One page of collections matching the search and filters. */
   collections: (query: CollectionQuery) => call<CollectionPage>("collections", { query }),

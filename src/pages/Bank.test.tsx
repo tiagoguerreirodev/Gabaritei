@@ -76,6 +76,10 @@ function backend(
       started.push((args as { request: unknown }).request);
       return { id: "att-1" };
     }
+    if (command === "question_count_limits") {
+      const { available } = (args as { context: { available: number } }).context;
+      return { min: 1, max: Math.min(200, available), initial: Math.min(10, available) };
+    }
     if (command === "topics_tree") return options.tree ?? tree;
     if (command === "collections") {
       if (options.failCollections) {

@@ -16,6 +16,7 @@ import { CatalogNotice } from "../components/ModelOptions";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { GenerateRequest } from "../bindings/GenerateRequest";
 import type { QuestionType } from "../bindings/QuestionType";
+import type { CountLimits } from "../bindings/CountLimits";
 import type { TopicTree } from "../bindings/TopicTree";
 import { ErrorState, Loading } from "../components/states";
 import { showError } from "../components/toasts";
@@ -51,8 +52,12 @@ function clone<T>(value: T): T {
 /** Gerar: the generation form, and progress while it runs. */
 export default function Generate() {
   const [data] = createResource(async () => {
-    const [tree, settings] = await Promise.all([api.topicsTree(), api.aiSettings()]);
-    return { tree, settings };
+    const [tree, settings, counts] = await Promise.all([
+      api.topicsTree(),
+      api.aiSettings(),
+      api.questionCountLimits({ kind: "generation" }),
+    ]);
+    return { tree, settings, counts };
   });
 
   return (
@@ -64,14 +69,20 @@ export default function Generate() {
       </p>
       <Show when={!data.error} fallback={<ErrorState error={data.error as unknown} />}>
         <Show when={data()} fallback={<Loading />}>
-          {(loaded) => <GenerateView tree={loaded().tree} settings={loaded().settings} />}
+          {(loaded) => (
+            <GenerateView
+              tree={loaded().tree}
+              settings={loaded().settings}
+              counts={loaded().counts}
+            />
+          )}
         </Show>
       </Show>
     </section>
   );
 }
 
-function GenerateView(props: { tree: TopicTree; settings: AiSettings }) {
+function GenerateView(props: { tree: TopicTree; settings: AiSettings; counts: CountLimits }) {
   const status = generationStatus;
   return (
     <Switch>
@@ -89,7 +100,7 @@ function GenerateView(props: { tree: TopicTree; settings: AiSettings }) {
       </Match>
       <Match when={true}>
         <Outcome />
-        <Form tree={props.tree} settings={props.settings} />
+        <Form tree={props.tree} settings={props.settings} counts={props.counts} />
       </Match>
     </Switch>
   );
@@ -166,10 +177,10 @@ function Outcome() {
   );
 }
 
-function Form(props: { tree: TopicTree; settings: AiSettings }) {
+function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimits }) {
   const [form, setForm] = createStore<GenerateRequest>({
     topic: { area: "", matter: "", topic: "" },
-    count: 10,
+    count: untrack(() => props.counts.initial),
     board: null,
     format: null,
     instructions: null,
@@ -212,9 +223,9 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
       ? null
       : "Informe a área, a matéria e o assunto.";
   const countError = () =>
-    Number.isInteger(form.count) && form.count >= 1 && form.count <= 30
+    Number.isInteger(form.count) && form.count >= props.counts.min && form.count <= props.counts.max
       ? null
-      : "A quantidade deve ser um número inteiro de 1 a 30.";
+      : `A quantidade deve ser um número inteiro de ${props.counts.min} a ${props.counts.max}.`;
   const shownErrors = () =>
     [shownTopicError(), shownCountError()].flatMap((error) => (error ? [error] : []));
   const validateTopic = () => setShownTopicError(topicError());
@@ -290,8 +301,8 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
         <input
           id="gen-count"
           type="number"
-          min="1"
-          max="30"
+          min={props.counts.min}
+          max={props.counts.max}
           required
           aria-required="true"
           aria-invalid={shownCountError() ? "true" : undefined}
@@ -304,7 +315,8 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
           onBlur={validateCount}
         />
         <p class="hint muted" id="gen-count-hint">
-          Obrigatório. De 1 a 30. Cada questão passa pela conferência às cegas.
+          Obrigatório. De {props.counts.min} a {props.counts.max}. Cada questão passa pela
+          conferência às cegas.
         </p>
         <Show when={shownCountError()}>
           {(message) => (

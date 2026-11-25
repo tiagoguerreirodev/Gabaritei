@@ -300,6 +300,11 @@ function Content(props: {
   refreshing: boolean;
   onRestore: (backup: BackupInfo) => void;
 }) {
+  const folderUnavailable = () => props.status.listing.state === "folderUnavailable";
+  const backups = () => {
+    const listing = props.status.listing;
+    return listing.state === "ready" ? listing.backups : undefined;
+  };
   return (
     <>
       <p>
@@ -312,7 +317,7 @@ function Content(props: {
           Abrir pasta dos backups
         </button>
       </p>
-      <Show when={!props.status.folderUnavailable && props.status.lastError}>
+      <Show when={!folderUnavailable() && props.status.lastError}>
         {(message) => (
           <p class="error" role="alert">
             O último backup falhou: {message()}
@@ -337,11 +342,15 @@ function Content(props: {
           </button>
         </Show>
       </p>
-      <Show when={props.status.folderUnavailable}>
-        <p class="notice" role="status" data-testid="folder-unavailable">
-          A pasta dos backups não está acessível agora (um disco desconectado ou uma pasta de rede
-          fora do ar, por exemplo). Os backups dela não aparecem até ela voltar; nada foi apagado.
-          Conecte-a de novo ou escolha outra pasta.{" "}
+      <Show when={props.status.listing.state !== "ready"}>
+        <p
+          class="notice"
+          role="status"
+          data-testid={folderUnavailable() ? "folder-unavailable" : "backup-list-slow"}
+        >
+          {folderUnavailable()
+            ? "A pasta dos backups não está acessível agora (um disco desconectado ou uma pasta de rede fora do ar, por exemplo). Os backups dela não aparecem até ela voltar; nada foi apagado. Conecte-a de novo ou escolha outra pasta."
+            : "A leitura da lista de backups está demorando. Você ainda pode fazer backups nesta pasta."}{" "}
           <button
             type="button"
             disabled={props.busy || props.refreshing}
@@ -352,15 +361,15 @@ function Content(props: {
         </p>
       </Show>
       <Show
-        when={props.status.backups.length > 0}
+        when={backups()?.length}
         fallback={
-          <Show when={!props.status.folderUnavailable}>
+          <Show when={props.status.listing.state === "ready"}>
             <p class="muted">Nenhum backup nesta pasta ainda.</p>
           </Show>
         }
       >
         <ul class="backup-list">
-          <For each={props.status.backups}>
+          <For each={backups()}>
             {(backup) => (
               <li>
                 <span>

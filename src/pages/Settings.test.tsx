@@ -32,17 +32,19 @@ function backend(
         return {
           folder: "/dados/backups",
           isDefaultFolder: true,
-          backups: [
-            {
-              name: "backup-20261118-100000-000",
-              kind: "backup",
-              createdAt: "2026-11-18T10:00:00.000Z",
-              sizeBytes: 1024,
-            },
-          ],
+          listing: {
+            state: "ready",
+            backups: [
+              {
+                name: "backup-20261118-100000-000",
+                kind: "backup",
+                createdAt: "2026-11-18T10:00:00.000Z",
+                sizeBytes: 1024,
+              },
+            ],
+          },
           lastError: null,
           leftBehind: null,
-          folderUnavailable: false,
         };
       case "data_folder":
         return "/home/dados/gabaritei";

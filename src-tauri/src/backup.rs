@@ -110,8 +110,6 @@ pub struct BackupInfo {
 pub struct BackupStatus {
     pub folder: String,
     pub is_default_folder: bool,
-    /// Newest first.
-    pub backups: Vec<BackupInfo>,
     /// pt-BR reason the last automatic or manual backup failed, until one succeeds.
     pub last_error: Option<String>,
     /// Set while the old folder still holds this computer's backups after a folder change. It is
@@ -119,9 +117,20 @@ pub struct BackupStatus {
     /// failures keeps it), the user dismisses it, the folder is changed again, or the old folder
     /// holds none of this computer's backups.
     pub left_behind: Option<LeftBehind>,
-    /// The backup folder did not answer in time (a disconnected drive, a share that is offline),
-    /// so `backups` is empty because it could not be read, not because there are none.
-    pub folder_unavailable: bool,
+    pub listing: BackupListing,
+}
+
+/// Whether the Dados page can show the backup list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(tag = "state", rename_all = "camelCase")]
+#[ts(export)]
+pub enum BackupListing {
+    /// Backups, newest first.
+    Ready { backups: Vec<BackupInfo> },
+    /// The folder answered, but its manifests are still taking too long to read.
+    Slow,
+    /// The folder could not be opened or did not answer in time.
+    FolderUnavailable,
 }
 
 /// How long reading the manifests of a healthy backup folder may take: a cloud-synced folder may
@@ -132,6 +141,14 @@ const MANIFEST_READ_TIMEOUT: Duration = Duration::from_secs(if cfg!(test) { 60 }
 fn manifest_key(folder: &Path) -> PathBuf {
     let mut key = folder.as_os_str().to_owned();
     key.push("\u{0}manifests");
+    PathBuf::from(key)
+}
+
+/// A stalled write check must leave the configured folder's read probes available.
+fn candidate_key(folder: &Path) -> PathBuf {
+    let mut key = folder.as_os_str().to_owned();
+    // NUL keeps this key distinct from filesystem paths and manifest probe keys.
+    key.push("\u{0}candidate");
     PathBuf::from(key)
 }
 
@@ -480,12 +497,8 @@ pub fn folder(conn: &Connection, paths: &AppPaths) -> AppResult<PathBuf> {
         .unwrap_or_else(|| default_folder(paths)))
 }
 
-/// Saves the backup folder (`None` goes back to the default) after checking it can be written.
-pub fn set_folder(conn: &Connection, paths: &AppPaths, chosen: Option<&Path>) -> AppResult<()> {
-    let Some(chosen) = chosen else {
-        crate::db::put_raw_setting(conn, SettingKey::BackupFolder, None)?;
-        return Ok(());
-    };
+/// Checks that the chosen folder can be used and returns the path to store.
+fn check_chosen_folder(chosen: &Path, images_dir: &Path) -> AppResult<String> {
     let text = chosen
         .to_str()
         .filter(|text| !text.trim().is_empty() && text.chars().count() <= MAX_FOLDER)
@@ -495,7 +508,7 @@ pub fn set_folder(conn: &Connection, paths: &AppPaths, chosen: Option<&Path>) ->
             "Escolha uma pasta válida para os backups.".into(),
         ));
     }
-    if chosen.starts_with(paths.images_dir()) {
+    if chosen.starts_with(images_dir) {
         return Err(AppError::Invalid(
             "Escolha uma pasta fora da pasta de imagens do Gabaritei.".into(),
         ));
@@ -537,16 +550,17 @@ pub fn set_folder(conn: &Connection, paths: &AppPaths, chosen: Option<&Path>) ->
         return Err(refuse());
     }
     tempfile::tempfile_in(chosen).map_err(|_| not_writable())?;
-    set_setting(conn, SettingKey::BackupFolder, &text)
+    Ok(text.to_owned())
 }
 
 /// Backups in `folder`, newest first. Folders that aren't complete backups are ignored.
+#[cfg(test)]
 pub fn list(folder: &Path) -> Vec<BackupInfo> {
     try_list(folder).unwrap_or_default()
 }
 
-/// Like [`list`], but `None` when the folder can't be read at all (a drive that is unplugged, a
-/// share that is offline), which is not the same as a folder with no backups.
+/// Backups in `folder`, newest first, ignoring incomplete backups. Returns `None` if the
+/// directory cannot be opened.
 fn try_list(folder: &Path) -> Option<Vec<BackupInfo>> {
     let entries = fs::read_dir(folder).ok()?;
     let mut found: Vec<BackupInfo> = entries
@@ -571,7 +585,7 @@ fn try_list(folder: &Path) -> Option<Vec<BackupInfo>> {
 
 /// What a folder holds, read from the folder names alone (no manifest is opened), or `None`
 /// when the folder can't be read at all. Cheap enough for [`BackupService::status`], which runs
-/// often and may point at a network share or a drive that is asleep. Unlike [`list`] it also
+/// often and may point at a network share or a drive that is asleep. Unlike [`try_list`] it also
 /// counts a folder whose manifest is unreadable. The move works from the same names, so such a
 /// backup is reported as failed (its copy can't be verified) and keeps the offer open.
 fn try_list_names(folder: &Path) -> Option<Vec<ParsedName>> {
@@ -651,9 +665,8 @@ fn inspect_old_folder(old: &Path, current: &Path) -> OldFolder {
     }
 }
 
-/// Runs the filesystem calls on the old folder with a deadline. A drive that is asleep or a
-/// share that is offline can block `read_dir` for minutes, and the callers hold (or are called
-/// by something that holds) the backup lock. The work runs on its own thread; past the deadline
+/// Runs backup folder checks with a deadline. A drive that is asleep or a share that is offline
+/// can block filesystem calls for minutes. The work runs on its own thread; past the deadline
 /// the caller stops waiting and reports the folder as unavailable (a call can wait for another
 /// healthy one on the same folder and then run, so at most twice the timeout). A thread stuck in
 /// the operating system can't be cancelled, so while one is stuck on a folder, later calls on
@@ -878,7 +891,7 @@ pub struct BackupService {
     /// with everything else, so a second one would interleave with it and report failures that
     /// are not real.
     relocating: AtomicBool,
-    /// Bounds the reads of the old folder, which may be on an offline share.
+    /// Bounds filesystem checks that may touch an offline share.
     probe: FolderProbe,
 }
 
@@ -939,34 +952,38 @@ impl BackupService {
         })?;
         let left_behind =
             pending_old_folder(db, &self.probe, &folder)?.map(|(_, notice, _)| notice);
-        // Bounded like the old folder: a hung or missing current folder shows as unavailable
-        // instead of freezing the page (and `change_folder` calls this under the backup lock).
-        // First a quick look, then the manifests with a longer deadline.
-        let listed = {
-            let path = folder.clone();
-            match self.probe.run(&folder, move || folder_state(&path)) {
-                Some(FolderState::Present) => {
-                    let path = folder.clone();
-                    // Under its own key: a slow (healthy) read of many manifests must not hold
-                    // the folder's slot, or the quick checks of a backup, restore or import
-                    // would give up waiting behind it.
-                    self.probe
-                        .run_for(&manifest_key(&folder), MANIFEST_READ_TIMEOUT, move || {
-                            list(&path)
-                        })
-                }
-                Some(FolderState::Missing) => Some(Vec::new()),
-                Some(FolderState::Unavailable) | None => None,
-            }
-        };
+        let listing = self.listing(&folder);
         Ok(BackupStatus {
-            folder_unavailable: listed.is_none(),
-            backups: listed.unwrap_or_default(),
             folder: folder.display().to_string(),
             is_default_folder,
             last_error: lock(&self.last_error).clone(),
             left_behind,
+            listing,
         })
+    }
+
+    fn listing(&self, folder: &Path) -> BackupListing {
+        let path = folder.to_path_buf();
+        match self.probe.run(folder, move || folder_state(&path)) {
+            Some(FolderState::Present) => {
+                let path = folder.to_path_buf();
+                // Use a separate slot so a slow manifest read cannot hold up the quick checks
+                // for backups, restores or imports.
+                match self
+                    .probe
+                    .run_for(&manifest_key(folder), MANIFEST_READ_TIMEOUT, move || {
+                        try_list(&path)
+                    }) {
+                    Some(Some(backups)) => BackupListing::Ready { backups },
+                    Some(None) => BackupListing::FolderUnavailable,
+                    None => BackupListing::Slow,
+                }
+            }
+            Some(FolderState::Missing) => BackupListing::Ready {
+                backups: Vec::new(),
+            },
+            Some(FolderState::Unavailable) | None => BackupListing::FolderUnavailable,
+        }
     }
 
     /// Forgets the offer to move backups from the old folder. Nothing is moved or deleted.
@@ -982,19 +999,48 @@ impl BackupService {
         paths: &AppPaths,
         chosen: Option<&Path>,
     ) -> AppResult<BackupStatus> {
+        self.change_folder_with(db, paths, chosen, check_chosen_folder)
+    }
+
+    fn change_folder_with(
+        &self,
+        db: &Database,
+        paths: &AppPaths,
+        chosen: Option<&Path>,
+        check: impl FnOnce(&Path, &Path) -> AppResult<String> + Send + 'static,
+    ) -> AppResult<BackupStatus> {
+        let checked = chosen
+            .map(|chosen| {
+                let (candidate, images_dir) = (chosen.to_path_buf(), paths.images_dir());
+                self.probe
+                    .run(&candidate_key(chosen), move || {
+                        check(&candidate, &images_dir)
+                    })
+                    .ok_or_else(folder_unavailable)?
+            })
+            .transpose()?;
+        let new = checked
+            .as_deref()
+            .map_or_else(|| default_folder(paths), PathBuf::from);
+
         // Not while a backup is being written: it could land in the old folder after the
-        // count below.
+        // count below. Read the current folder only after taking the lock, since it may have
+        // changed while the chosen folder was being checked.
         self.exclusive(|| {
             let old = db.with(|conn| folder(conn, paths))?;
-            db.with(|conn| set_folder(conn, paths, chosen))?;
-            let new = db.with(|conn| folder(conn, paths))?;
             let has_backups = match self.probe.inspect(&old, &new) {
                 Some(OldFolder::Listed(found)) => found.iter().any(|b| !leave_alone(b)),
                 Some(OldFolder::Current | OldFolder::Unreadable) => false,
                 // No answer in time (an offline share): remember it, offered as unavailable.
                 None => true,
             };
-            db.with(|conn| remember_old_folder(conn, has_backups.then_some(old.as_path())))?;
+            db.transaction(|tx| {
+                match &checked {
+                    Some(folder) => set_setting(tx, SettingKey::BackupFolder, folder)?,
+                    None => crate::db::put_raw_setting(tx, SettingKey::BackupFolder, None)?,
+                }
+                remember_old_folder(tx, has_backups.then_some(old.as_path()))
+            })?;
             self.status(db, paths)
         })
     }
@@ -1628,7 +1674,8 @@ mod tests {
 
         // After the user picks another folder, that is the one to open.
         let chosen = f._dir.path().join("elsewhere");
-        f.db.with(|conn| set_folder(conn, &f.paths, Some(&chosen)))
+        BackupService::default()
+            .change_folder(&f.db, &f.paths, Some(&chosen))
             .unwrap();
         let backups = folder_to_open(&f.db, &f.paths, OpenableFolder::Backups).unwrap();
         assert_eq!(backups, chosen);
@@ -1673,7 +1720,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(status.folder, elsewhere.display().to_string());
-        assert!(status.backups.is_empty());
+        assert_eq!(
+            status.listing,
+            BackupListing::Ready {
+                backups: Vec::new()
+            }
+        );
         assert_eq!(
             status.left_behind,
             Some(LeftBehind {
@@ -2228,71 +2280,79 @@ mod tests {
     #[test]
     fn the_folder_must_be_absolute_and_writable() {
         let f = fixture();
-        f.db.with(|conn| {
-            assert!(set_folder(conn, &f.paths, Some(Path::new("relative/dir"))).is_err());
-            assert!(set_folder(conn, &f.paths, Some(Path::new(""))).is_err());
-            assert!(set_folder(conn, &f.paths, Some(&f.paths.images_dir())).is_err());
+        let service = BackupService::default();
+        let change = |chosen| service.change_folder(&f.db, &f.paths, chosen);
+        assert!(change(Some(Path::new("relative/dir"))).is_err());
+        assert!(change(Some(Path::new(""))).is_err());
+        let images = f.paths.images_dir();
+        assert!(change(Some(&images)).is_err());
 
-            let chosen = f.paths.data_dir().join("my backups");
-            set_folder(conn, &f.paths, Some(&chosen))?;
-            assert_eq!(folder(conn, &f.paths)?, chosen);
-            assert!(chosen.is_dir());
+        let file = f.paths.data_dir().join("file");
+        fs::write(&file, []).unwrap();
+        let error = change(Some(&file)).unwrap_err();
+        assert!(error.to_string().contains("Não foi possível gravar"));
 
-            set_folder(conn, &f.paths, None)?;
-            assert_eq!(folder(conn, &f.paths)?, default_folder(&f.paths));
-            Ok(())
-        })
-        .unwrap();
+        let chosen = f.paths.data_dir().join("my backups");
+        assert_eq!(
+            change(Some(&chosen)).unwrap().folder,
+            chosen.display().to_string()
+        );
+        assert!(chosen.is_dir());
+
+        let status = change(None).unwrap();
+        assert!(status.is_default_folder);
+        assert_eq!(
+            status.folder,
+            default_folder(&f.paths).display().to_string()
+        );
     }
 
     #[test]
     fn the_folder_cannot_be_inside_a_backup_or_a_temporary_folder() {
         let f = fixture();
+        let service = BackupService::default();
         let root = f.paths.data_dir().join("shared");
-        f.db.with(|conn| {
-            for inside in [
-                root.join("backup-20261119-210000-123").join("sub"),
-                root.join("manual-20261119-210000-123-pc")
-                    .join("a")
-                    .join("b"),
-                root.join("safety-20261119-210000-123"),
-                root.join(".tmp-backup-20261119-210000-123"),
-                root.join(".tmp-whatever").join("sub"),
-            ] {
-                assert!(
-                    set_folder(conn, &f.paths, Some(&inside)).is_err(),
-                    "{}",
-                    inside.display()
-                );
-                assert!(
-                    !inside.exists(),
-                    "nothing was created: {}",
-                    inside.display()
-                );
-            }
-            // A folder merely named like a backup prefix is fine.
-            set_folder(conn, &f.paths, Some(&root.join("backups-do-pc")))?;
-            Ok(())
-        })
-        .unwrap();
+        for inside in [
+            root.join("backup-20261119-210000-123").join("sub"),
+            root.join("manual-20261119-210000-123-pc")
+                .join("a")
+                .join("b"),
+            root.join("safety-20261119-210000-123"),
+            root.join(".tmp-backup-20261119-210000-123"),
+            root.join(".tmp-whatever").join("sub"),
+        ] {
+            let error = service
+                .change_folder(&f.db, &f.paths, Some(&inside))
+                .unwrap_err();
+            assert!(error.to_string().contains("dentro de um backup"));
+            assert!(
+                !inside.exists(),
+                "nothing was created: {}",
+                inside.display()
+            );
+        }
+        // A folder merely named like a backup prefix is fine.
+        service
+            .change_folder(&f.db, &f.paths, Some(&root.join("backups-do-pc")))
+            .unwrap();
     }
 
     #[cfg(unix)]
     #[test]
     fn a_link_into_a_backup_does_not_get_past_the_folder_check() {
         let f = fixture();
+        let service = BackupService::default();
         let root = f.paths.data_dir().join("shared");
         let real = root.join("backup-20261119-210000-123");
         fs::create_dir_all(&real).unwrap();
         let link = f.paths.data_dir().join("innocent");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        f.db.with(|conn| {
-            assert!(set_folder(conn, &f.paths, Some(&link)).is_err());
-            assert!(set_folder(conn, &f.paths, Some(&link.join("sub"))).is_err());
-            assert!(set_folder(conn, &f.paths, Some(&link.join("a").join("b"))).is_err());
-            Ok(())
-        })
-        .unwrap();
+        for inside in [&link, &link.join("sub"), &link.join("a").join("b")] {
+            let error = service
+                .change_folder(&f.db, &f.paths, Some(inside))
+                .unwrap_err();
+            assert!(error.to_string().contains("dentro de um backup"));
+        }
         // Refusing must not leave empty folders inside the backup.
         assert_eq!(fs::read_dir(&real).unwrap().count(), 0);
     }
@@ -2301,17 +2361,17 @@ mod tests {
     #[test]
     fn a_dangling_link_into_a_backup_creates_nothing_either() {
         let f = fixture();
+        let service = BackupService::default();
         let root = f.paths.data_dir().join("shared");
         let real = root.join("backup-20261119-210000-123");
         fs::create_dir_all(&real).unwrap();
         // The link's target does not exist yet.
         let link = f.paths.data_dir().join("dangling");
         std::os::unix::fs::symlink(real.join("missing"), &link).unwrap();
-        f.db.with(|conn| {
-            assert!(set_folder(conn, &f.paths, Some(&link.join("sub"))).is_err());
-            Ok(())
-        })
-        .unwrap();
+        let error = service
+            .change_folder(&f.db, &f.paths, Some(&link.join("sub")))
+            .unwrap_err();
+        assert!(error.to_string().contains("Não foi possível gravar"));
         assert_eq!(fs::read_dir(&real).unwrap().count(), 0);
     }
 
@@ -2329,7 +2389,7 @@ mod tests {
             false,
         )
         .unwrap();
-        // Allowed by `set_folder` (not inside a backup), but a move would delete the copy
+        // Accepted as a backup folder, but a move would delete the copy
         // together with the original, so the relocation refuses it.
         service
             .change_folder(&f.db, &f.paths, Some(&old.join("nested")))
@@ -3081,6 +3141,101 @@ mod tests {
     }
 
     #[test]
+    fn a_chosen_folder_that_does_not_answer_keeps_both_folder_settings() {
+        let f = fixture();
+        let service = service_with_long_probe();
+        let (old, current) = make_left_behind(&f, &service);
+        let chosen = f._dir.path().join("offline");
+        service.probe.mark_stuck(&candidate_key(&chosen));
+
+        let error = service
+            .change_folder(&f.db, &f.paths, Some(&chosen))
+            .unwrap_err();
+
+        assert!(error.to_string().contains("não está acessível"), "{error}");
+        let settings =
+            f.db.with(|conn| {
+                Ok((
+                    folder(conn, &f.paths)?,
+                    get_setting(conn, SettingKey::BackupLeftBehind)?,
+                ))
+            })
+            .unwrap();
+        assert_eq!(settings, (current, Some(old.display().to_string())));
+    }
+
+    #[test]
+    fn a_stalled_candidate_check_leaves_the_current_folder_readable() {
+        let f = fixture();
+        let mut service = service_with_long_probe();
+        let folder = f._dir.path().join("chosen");
+        service
+            .change_folder(&f.db, &f.paths, Some(&folder))
+            .unwrap();
+
+        // Hold the write check past its deadline and until both read probes finish.
+        let (release, work) = blocked();
+        service.probe.timeout = Duration::from_millis(50);
+        let error = service
+            .change_folder_with(&f.db, &f.paths, Some(&folder), move |chosen, _| {
+                work();
+                Ok(chosen.display().to_string())
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("não está acessível"), "{error}");
+        service.probe.timeout = LONG;
+
+        let status = service.status(&f.db, &f.paths).unwrap();
+        assert_eq!(
+            status.listing,
+            BackupListing::Ready {
+                backups: Vec::new()
+            }
+        );
+        service
+            .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 10:00:00 UTC))
+            .unwrap()
+            .expect("the daily backup is due");
+        drop(release);
+    }
+
+    #[test]
+    fn a_backup_can_finish_while_the_chosen_folder_is_being_checked() {
+        let f = fixture();
+        let service = service_with_long_probe();
+        let old = default_folder(&f.paths);
+        let chosen = f._dir.path().join("chosen");
+        let (f, service) = (&f, &service);
+        std::thread::scope(|scope| {
+            let (checking, started) = mpsc::channel();
+            let (release, wait) = mpsc::channel::<()>();
+            let change = scope.spawn(|| {
+                service.change_folder_with(&f.db, &f.paths, Some(&chosen), move |chosen, images| {
+                    checking.send(()).unwrap();
+                    let _ = wait.recv();
+                    check_chosen_folder(chosen, images)
+                })
+            });
+            started.recv_timeout(Duration::from_secs(10)).unwrap();
+
+            let (done, backup) = mpsc::channel();
+            scope.spawn(move || {
+                let result = service.backup_now(&f.db, &f.paths, "2026-11-19T10:00:00.000Z");
+                let _ = done.send(result);
+            });
+            backup
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the backup can acquire both locks")
+                .unwrap();
+            release.send(()).unwrap();
+
+            let status = change.join().unwrap().unwrap();
+            let left = status.left_behind.unwrap();
+            assert_eq!((left.folder, left.backups), (old.display().to_string(), 1));
+        });
+    }
+
+    #[test]
     fn an_old_folder_that_does_not_answer_is_offered_as_unavailable_without_blocking() {
         let f = fixture();
         let (old, new) = make_left_behind(&f, &BackupService::default());
@@ -3136,18 +3291,19 @@ mod tests {
         let f = fixture();
         let service = service_with_long_probe();
         let folder = default_folder(&f.paths);
-        backup(&f, "2026-11-19T10:00:00.000Z");
+        let made = backup(&f, "2026-11-19T10:00:00.000Z");
         let healthy = service.status(&f.db, &f.paths).unwrap();
         assert_eq!(
-            (healthy.backups.len(), healthy.folder_unavailable),
-            (1, false)
+            healthy.listing,
+            BackupListing::Ready {
+                backups: vec![made]
+            }
         );
 
         service.probe.mark_stuck(&folder);
 
         let status = service.status(&f.db, &f.paths).unwrap();
-        assert!(status.folder_unavailable);
-        assert!(status.backups.is_empty(), "unreadable, not empty");
+        assert_eq!(status.listing, BackupListing::FolderUnavailable);
         // Nothing that takes the backup lock waits on the folder: each is refused at once.
         let now = "2026-11-19T12:00:00.000Z";
         let errors = [
@@ -3187,7 +3343,12 @@ mod tests {
         let service = service_with_long_probe();
         // No backup was ever made: the default folder is missing, and that is fine.
         assert!(!default_folder(&f.paths).exists());
-        assert!(!service.status(&f.db, &f.paths).unwrap().folder_unavailable);
+        assert_eq!(
+            service.status(&f.db, &f.paths).unwrap().listing,
+            BackupListing::Ready {
+                backups: Vec::new()
+            }
+        );
         service
             .backup_now(&f.db, &f.paths, "2026-11-19T10:00:00.000Z")
             .unwrap();
@@ -3238,7 +3399,10 @@ mod tests {
         };
         // The parent (the volume) is gone: nothing to create the folder in.
         set(&f._dir.path().join("volume-gone").join("backups"));
-        assert!(service.status(&f.db, &f.paths).unwrap().folder_unavailable);
+        assert_eq!(
+            service.status(&f.db, &f.paths).unwrap().listing,
+            BackupListing::FolderUnavailable
+        );
         assert!(
             service
                 .backup_now(&f.db, &f.paths, "2026-11-19T10:00:00.000Z")
@@ -3247,7 +3411,12 @@ mod tests {
 
         // The parent exists and the folder is only missing: fine, created on first use.
         set(&f._dir.path().join("backups-novos"));
-        assert!(!service.status(&f.db, &f.paths).unwrap().folder_unavailable);
+        assert_eq!(
+            service.status(&f.db, &f.paths).unwrap().listing,
+            BackupListing::Ready {
+                backups: Vec::new()
+            }
+        );
     }
 
     #[test]
@@ -3266,22 +3435,31 @@ mod tests {
     }
 
     #[test]
-    fn status_reads_manifests_under_their_own_key_so_backups_are_not_held_up() {
+    fn stuck_manifests_report_a_slow_list_while_backups_keep_working() {
         let f = fixture();
         let service = service_with_long_probe();
         let folder = default_folder(&f.paths);
         fs::create_dir_all(&folder).unwrap();
-        // A manifest read that never ends: the status gives up on the list at once...
+        // An earlier manifest read has already reached its deadline.
         service.probe.mark_stuck(&manifest_key(&folder));
-        assert!(service.status(&f.db, &f.paths).unwrap().folder_unavailable);
-        // ...but the folder itself answers, so nothing that needs it is refused or waits.
-        service
+        assert_eq!(
+            service.status(&f.db, &f.paths).unwrap().listing,
+            BackupListing::Slow
+        );
+        let daily = service
             .backup_if_due(&f.db, &f.paths, datetime!(2026-11-19 10:00:00 UTC))
             .unwrap()
-            .expect("due, and not refused");
-        service
+            .expect("a daily backup was due");
+        let manual = service
             .backup_now(&f.db, &f.paths, "2026-11-19T11:00:00.000Z")
             .unwrap();
+        assert_eq!(
+            service.status(&f.db, &f.paths).unwrap().listing,
+            BackupListing::Slow
+        );
+        for info in [daily, manual] {
+            snapshot::verify(&folder.join(info.name)).unwrap();
+        }
     }
 
     #[test]
@@ -3451,7 +3629,12 @@ mod tests {
         assert_eq!(outcome.report.failed, 0);
         assert_eq!(list(&old).len(), 2, "copying never deletes");
         assert_eq!(list(&new).len(), 2);
-        assert_eq!(outcome.status.backups.len(), 2);
+        assert_eq!(
+            outcome.status.listing,
+            BackupListing::Ready {
+                backups: list(&new)
+            }
+        );
         assert_eq!(outcome.status.left_behind, None);
         // Verified copies, restorable from the new folder.
         for info in list(&new) {
@@ -3622,7 +3805,7 @@ mod tests {
         )
         .unwrap();
         let inside = old.join(&info.name).join("sub");
-        // Refused up front by `set_folder` (#109), so nothing is left to move into it.
+        // Refused up front by the folder check (#109), so nothing is left to move into it.
         assert!(
             service
                 .change_folder(&f.db, &f.paths, Some(&inside))

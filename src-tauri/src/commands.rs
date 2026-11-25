@@ -1223,21 +1223,25 @@ mod tests {
         let app = MockApp::new(Database::open_in_memory().unwrap());
         let status = app.call("backup_status", json!({})).expect("status");
         assert_eq!(status["isDefaultFolder"], json!(true));
-        assert_eq!(status["backups"], json!([]));
+        assert_eq!(
+            status["listing"],
+            json!({ "state": "ready", "backups": [] })
+        );
 
         // The in-memory database has no file to back up from, but the online backup copies it.
         let made = app.call("backup_now", json!({})).expect("backs up");
         let name = made["name"].as_str().unwrap().to_owned();
         assert_eq!(made["kind"], json!("manual"));
         let status = app.call("backup_status", json!({})).expect("status");
-        assert_eq!(status["backups"][0]["name"], json!(name));
+        assert_eq!(status["listing"]["backups"][0]["name"], json!(name));
         assert_eq!(status["lastError"], json!(null));
 
         app.call("backup_restore", json!({ "name": name }))
             .expect("restores");
         let status = app.call("backup_status", json!({})).expect("status");
-        assert_eq!(status["backups"].as_array().unwrap().len(), 2);
-        assert_eq!(status["backups"][0]["kind"], json!("safety"));
+        let backups = status["listing"]["backups"].as_array().unwrap();
+        assert_eq!(backups.len(), 2);
+        assert_eq!(backups[0]["kind"], json!("safety"));
 
         let error = app
             .call("backup_restore", json!({ "name": "../escape" }))

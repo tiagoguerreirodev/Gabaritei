@@ -11,7 +11,7 @@ use ts_rs::TS;
 use unicode_normalization::UnicodeNormalization;
 use unicode_normalization::char::is_combining_mark;
 
-use crate::attempts::FeedbackMode;
+use crate::attempts::{ANSWERED_RESPONSE_SQL, FeedbackMode};
 use crate::error::{AppError, AppResult};
 
 /// Default and maximum page sizes for the collections list.
@@ -381,15 +381,16 @@ pub fn collection(conn: &Connection, id: &str) -> AppResult<CollectionDetail> {
     let Some((title, kind, contest, board, created_at, questions)) = row else {
         return Err(AppError::Invalid("Caderno não encontrado.".into()));
     };
-    let mut stmt = conn.prepare(
+    let sql = format!(
         "SELECT a.id, a.feedback_mode, a.started_at, a.finished_at,
                 (SELECT COUNT(*) FROM responses r WHERE r.attempt_id = a.id
-                   AND r.answered_at IS NOT NULL),
+                   AND {ANSWERED_RESPONSE_SQL}),
                 (SELECT COUNT(*) FROM responses r WHERE r.attempt_id = a.id)
          FROM attempts a
          WHERE a.source_kind = 'collection' AND a.source_ref = ?1
          ORDER BY a.started_at DESC, a.id DESC",
-    )?;
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let attempts = stmt
         .query_map(params![id], |r| {
             Ok((
@@ -609,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn contest_and_board_filters_combine() {
+    fn contest_filter_selects_matching_collections() {
         let db = sample_collections();
         let page = db
             .with(|c| {
@@ -626,6 +627,11 @@ mod tests {
             titles(&page),
             ["Direito › Ação direta", "Direito › Administração"]
         );
+    }
+
+    #[test]
+    fn contest_and_board_filters_combine() {
+        let db = sample_collections();
         let page = db
             .with(|c| {
                 collections(
@@ -639,6 +645,23 @@ mod tests {
             })
             .unwrap();
         assert_eq!(titles(&page), ["Direito › Ação direta"]);
+    }
+
+    #[test]
+    fn filter_options_include_tags_outside_the_current_filter() {
+        let db = sample_collections();
+        let page = db
+            .with(|c| {
+                collections(
+                    c,
+                    &CollectionQuery {
+                        contest: "ALEPA".into(),
+                        board: "Cebraspe".into(),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
         assert_eq!(
             page.contests,
             ["ALEPA", "Perito"],
@@ -647,7 +670,7 @@ mod tests {
     }
 
     #[test]
-    fn pagination_slices_and_reports_the_total() {
+    fn pagination_slices_collections() {
         let db = sample_collections();
         let page = |n: u32| {
             db.with(|c| {
@@ -665,7 +688,29 @@ mod tests {
         assert_eq!(titles(&page(0)).len(), 2);
         assert_eq!(titles(&page(1)), ["Informática › SQL"]);
         assert!(page(2).items.is_empty());
-        assert_eq!(page(1).total, 3);
+    }
+
+    #[test]
+    fn pagination_reports_the_total_before_slicing() {
+        let db = sample_collections();
+        let page = db
+            .with(|c| {
+                collections(
+                    c,
+                    &CollectionQuery {
+                        page: 1,
+                        page_size: 2,
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        assert_eq!(page.total, 3);
+    }
+
+    #[test]
+    fn pagination_caps_the_requested_page_size() {
+        let db = sample_collections();
         let huge = db
             .with(|c| {
                 collections(

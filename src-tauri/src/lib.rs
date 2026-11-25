@@ -13,6 +13,7 @@ pub mod clock;
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod ids;
 pub mod images;
 pub mod learning;
 pub mod log;

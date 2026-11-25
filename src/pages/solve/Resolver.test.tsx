@@ -8,6 +8,7 @@ import type { ResponseView } from "../../bindings/ResponseView";
 import type { RecheckView } from "../../bindings/RecheckView";
 import type { Reveal } from "../../bindings/Reveal";
 import { loadShortcuts } from "../../shortcuts";
+import { mergeExplanation } from "./mergeExplanation";
 import Navigator from "./Navigator";
 import Resolver from "./Resolver";
 
@@ -71,9 +72,8 @@ let answerGate: Promise<void> = Promise.resolve();
 /** What the fake backend answers to "keyboard_shortcuts". */
 let shortcutsSaved = true;
 
-/** A fake backend that applies the same rules as `attempts.rs`, recording each command. */
-function backend(mode: FeedbackMode) {
-  let view: AttemptView = {
+function attemptView(mode: FeedbackMode): AttemptView {
+  return {
     id: "att",
     sourceKind: "collection",
     sourceRef: "c1",
@@ -85,6 +85,11 @@ function backend(mode: FeedbackMode) {
     questions: [multiple(0), boolean(1), multiple(2)],
     score: null,
   };
+}
+
+/** A fake backend that applies the same rules as `attempts.rs`, recording each command. */
+function backend(mode: FeedbackMode, load: (view: AttemptView) => AttemptView = (view) => view) {
+  let view = attemptView(mode);
   const calls: { command: string; args: Record<string, unknown> }[] = [];
   const update = (position: number, change: (q: ResponseView) => ResponseView) => {
     view = {
@@ -102,7 +107,7 @@ function backend(mode: FeedbackMode) {
     const position = args.position as number;
     switch (command) {
       case "attempt":
-        return view;
+        return load(view);
       case "answer":
         return answerGate.then(() =>
           update(position, (q) => {
@@ -201,7 +206,7 @@ function expectNoKey() {
 }
 
 describe("Resolver", () => {
-  it("renders no key before reveal, and reveals inline after answering in Estudo", async () => {
+  it("reveals the key, explanation and references when an Estudo answer is confirmed", async () => {
     const { user } = await open("study");
     expectNoKey();
 
@@ -214,8 +219,14 @@ describe("Resolver", () => {
     expect(reveal).toHaveTextContent("Lei 8.112/1990, art. 5º");
     // A revealed choice is locked.
     expect(option("C")).toBeDisabled();
+  });
 
-    // The next question is still hidden.
+  it("keeps the next Estudo question hidden after revealing the previous answer", async () => {
+    const { user } = await open("study");
+    await user.click(option("A"));
+    await user.click(screen.getByRole("button", { name: /Confirmar resposta/ }));
+    await screen.findByRole("region", { name: "Gabarito e explicação" });
+
     await user.keyboard("{ArrowRight}");
     await screen.findByRole("article", { name: "Questão 2 de 3" });
     expectNoKey();
@@ -356,18 +367,25 @@ describe("Resolver", () => {
     delete explanations.q2;
   });
 
-  it("keeps everything hidden in Simulado until finishing, then shows the result", async () => {
-    const { user, calls } = await open("exam");
+  it("keeps Simulado feedback hidden while toggling an answer", async () => {
+    const { user } = await open("exam");
 
     await user.keyboard("b");
     await waitFor(() => expect(option("B")).toHaveAttribute("aria-pressed", "true"));
     expectNoKey();
-    // Choosing the selected option again clears it; choose it back.
     await user.keyboard("b");
     await waitFor(() => expect(option("B")).toHaveAttribute("aria-pressed", "false"));
     await user.keyboard("b");
     await waitFor(() => expect(option("B")).toHaveAttribute("aria-pressed", "true"));
     expectNoKey();
+  });
+
+  it("reveals Simulado feedback and the recap on finish", async () => {
+    const { user, calls } = await open("exam");
+    for (const pressed of ["true", "false", "true"]) {
+      await user.keyboard("b");
+      await waitFor(() => expect(option("B")).toHaveAttribute("aria-pressed", pressed));
+    }
 
     await user.click(screen.getByRole("button", { name: "Finalizar" }));
     const dialog = await screen.findByRole("dialog", { name: "Finalizar tentativa?" });
@@ -382,11 +400,24 @@ describe("Resolver", () => {
     expect(screen.getByRole("region", { name: "Gabarito e explicação" })).toHaveTextContent(
       "Você acertou. Gabarito: B.",
     );
-    const finish = calls.find((c) => c.command === "finish")!;
-    expect(finish.args).toEqual({ attemptId: "att", revision: 3 });
-    // Finished: shortcuts no longer answer.
+    expect(calls.find((c) => c.command === "finish")?.args).toEqual({
+      attemptId: "att",
+      revision: 3,
+    });
+  });
+
+  it("ignores answer shortcuts after finishing Simulado", async () => {
+    const { user, calls } = await open("exam");
+    await user.keyboard("b");
+    await waitFor(() => expect(option("B")).toHaveAttribute("aria-pressed", "true"));
+    await user.click(screen.getByRole("button", { name: "Finalizar" }));
+    const dialog = await screen.findByRole("dialog", { name: "Finalizar tentativa?" });
+    await user.click(within(dialog).getByRole("button", { name: "Finalizar" }));
+    await screen.findByRole("region", { name: "Resultado" });
+
     await user.keyboard("a");
-    expect(calls.filter((c) => c.command === "answer")).toHaveLength(3);
+
+    expect(calls.filter((c) => c.command === "answer")).toHaveLength(1);
   });
 
   it("only selects an option in Estudo; Enter or the button confirms it", async () => {
@@ -507,32 +538,53 @@ describe("Resolver", () => {
     expect(option("B")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("answers, eliminates, flags and moves with the keyboard", async () => {
+  it("eliminates an option with X and its letter", async () => {
     const { user, calls } = await open("exam");
 
     await user.keyboard("x");
     expect(screen.getByRole("status")).toHaveTextContent("Escolha a letra");
     await user.keyboard("c");
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Restaurar alternativa C" })).toBeVisible(),
-    );
+
+    expect(await screen.findByRole("button", { name: "Restaurar alternativa C" })).toBeVisible();
+    expect(calls.filter((c) => c.command !== "attempt")).toEqual([
+      { command: "eliminate", args: { attemptId: "att", position: 0, optionId: "q0-o2" } },
+    ]);
+  });
+
+  it("marks a question with F", async () => {
+    const { user, calls } = await open("exam");
+
     await user.keyboard("f");
-    await waitFor(() => expect(screen.getByRole("button", { name: /Marcada/ })).toBeVisible());
+
+    expect(await screen.findByRole("button", { name: /Questão 1, marcada/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Marcada" })).toBeVisible();
+    expect(calls.filter((c) => c.command !== "attempt")).toEqual([
+      { command: "flag", args: { attemptId: "att", position: 0, flagged: true } },
+    ]);
+  });
+
+  it("moves between questions with the arrows", async () => {
+    const { user, calls } = await open("exam");
 
     await user.keyboard("{ArrowRight}");
     await screen.findByRole("article", { name: "Questão 2 de 3" });
-    // Certo/Errado: C and E.
-    await user.keyboard("e");
-    await waitFor(() => expect(option("E")).toHaveAttribute("aria-pressed", "true"));
     await user.keyboard("{ArrowLeft}");
-    await screen.findByRole("article", { name: "Questão 1 de 3" });
 
+    await screen.findByRole("article", { name: "Questão 1 de 3" });
+    expect(calls.filter((c) => c.command !== "attempt")).toEqual([]);
+  });
+
+  it("answers a Certo/Errado question with its option letter", async () => {
+    const { user, calls } = await open("exam");
+    await user.keyboard("{ArrowRight}");
+    await screen.findByRole("article", { name: "Questão 2 de 3" });
+
+    await user.keyboard("e");
+
+    await waitFor(() => expect(option("E")).toHaveAttribute("aria-pressed", "true"));
     expect(calls.filter((c) => c.command !== "attempt")).toEqual([
-      { command: "eliminate", args: { attemptId: "att", position: 0, optionId: "q0-o2" } },
-      { command: "flag", args: { attemptId: "att", position: 0, flagged: true } },
       { command: "answer", args: { attemptId: "att", position: 1, optionId: "q1-e" } },
     ]);
-    expect(screen.getByRole("button", { name: /Questão 1, marcada/ })).toBeVisible();
     expect(screen.getByRole("button", { name: /Questão 2, respondida/ })).toBeVisible();
     expect(screen.getByTestId("progress")).toHaveTextContent("1 de 3 respondidas");
   });
@@ -862,6 +914,52 @@ describe("Resolver: headings", () => {
     await screen.findByText(/Tentativa não encontrada/);
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Resolver");
+  });
+});
+
+it("retries an attempt load and resumes at the first unanswered question", async () => {
+  let loads = 0;
+  backend("exam", (view) => {
+    if (loads++ === 0) throw new Error("Falha temporária.");
+    return {
+      ...view,
+      questions: [{ ...multiple(0), choice: "q0-o1" }, boolean(1), multiple(2)],
+    };
+  });
+  const user = userEvent.setup();
+  render(() => <Resolver attemptId="att" onLeave={() => {}} />);
+
+  await user.click(await screen.findByRole("button", { name: "Tentar novamente" }));
+
+  expect(await screen.findByRole("article", { name: "Questão 2 de 3" })).toBeVisible();
+  expect(loads).toBe(2);
+});
+
+it("merges an explanation while preserving newer answers and key changes", () => {
+  const first = multiple(0);
+  const outdatedReveal = revealOf(first);
+  const currentReveal = { ...outdatedReveal, answerId: "q0-o3", explanation: "", refs: [] };
+  const answeredFirst = { ...first, choice: "q0-o0", reveal: currentReveal };
+  const answeredSecond = { ...boolean(1), choice: "q1-e" };
+  const current: AttemptView = {
+    ...attemptView("study"),
+    revision: 4,
+    questions: [answeredFirst, answeredSecond],
+  };
+  const explanation = "Explicação escrita pela IA.";
+  const refs = ["Fonte nova"];
+  const explained: AttemptView = {
+    ...current,
+    revision: 2,
+    questions: [{ ...first, reveal: { ...outdatedReveal, explanation, refs } }, boolean(1)],
+  };
+
+  expect(mergeExplanation(current, explained, first.position)).toEqual({
+    ...current,
+    questions: [
+      { ...answeredFirst, reveal: { ...currentReveal, explanation, refs } },
+      answeredSecond,
+    ],
   });
 });
 

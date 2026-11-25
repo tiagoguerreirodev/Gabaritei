@@ -1,4 +1,13 @@
-import { Match, Show, Switch, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
+import {
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+  on,
+} from "solid-js";
 import { api } from "../../api";
 import type { AttemptView } from "../../bindings/AttemptView";
 import { ErrorState, Loading } from "../../components/states";
@@ -8,49 +17,40 @@ import QuestionCard from "./QuestionCard";
 import ResolverDialogs, { type ResolverDialog } from "./ResolverDialogs";
 import ScoreSummary from "./ScoreSummary";
 import ShortcutHelp from "./ShortcutHelp";
-import { loadShortcuts, shortcutsEnabled } from "../../shortcuts";
-import { optionLetters } from "../../format";
+import { mergeExplanation } from "./mergeExplanation";
+import useResolverShortcuts from "./useResolverShortcuts";
 
 const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
 
-/** Whether a key press belongs to a text field, where shortcuts must not fire. */
-const typing = (target: EventTarget | null) =>
-  target instanceof HTMLElement &&
-  (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
-
 /** The solve screen for one attempt (spec §3.3). */
 export default function Resolver(props: { attemptId: string; onLeave: () => void }) {
-  const [view, setView] = createSignal<AttemptView>();
-  const [loadError, setLoadError] = createSignal<unknown>();
+  const [attempt, { mutate, refetch }] = createResource(
+    () => props.attemptId,
+    (id) => api.attempt(id),
+  );
+  const loadError = () => attempt.error as unknown;
+  const view = () => {
+    if (attempt.loading || loadError()) return undefined;
+    const loaded = attempt.latest;
+    return loaded?.id === props.attemptId ? loaded : undefined;
+  };
   const [index, setIndex] = createSignal(0);
   const [dialog, setDialog] = createSignal<ResolverDialog>(null);
-  const [eliminating, setEliminating] = createSignal(false);
   // Estudo: the option marked on this question but not yet confirmed with Enter.
   const [pending, setPending] = createSignal<string | null>(null);
   // The confirmed answer is on its way to the backend: no new mark or confirmation until it lands.
   const [sending, setSending] = createSignal(false);
   // Text for the polite live region: the question number on navigation, the outcome on answers.
   const [announcement, setAnnouncement] = createSignal("");
-  const [helpOpen, setHelpOpen] = createSignal(false);
-  let shortcutsBox: HTMLDivElement | undefined;
-  let shortcutsToggle: HTMLButtonElement | undefined;
-
+  // A newly loaded attempt resumes at the first unanswered question.
+  const loadedId = createMemo(() => view()?.id);
   createEffect(
-    on(
-      () => props.attemptId,
-      (id) => {
-        setView(undefined);
-        setLoadError(undefined);
-        setIndex(0);
-        setPending(null);
-        api.attempt(id).then((loaded) => {
-          setView(loaded);
-          // Resume at the first unanswered question.
-          const next = loaded.questions.findIndex((q) => q.choice === null);
-          setIndex(loaded.finishedAt === null && next >= 0 ? next : 0);
-        }, setLoadError);
-      },
-    ),
+    on(loadedId, () => {
+      const loaded = view();
+      const next = loaded?.questions.findIndex((q) => q.choice === null) ?? -1;
+      setIndex(loaded?.finishedAt === null && next >= 0 ? next : 0);
+      setPending(null);
+    }),
   );
 
   // Changes run one after another, so `finish` always quotes the latest revision.
@@ -58,7 +58,11 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
   const enqueue = (change: (id: string) => Promise<AttemptView>) => {
     const id = view()?.id;
     if (!id) return;
-    queue = queue.then(() => change(id).then(setView, showError));
+    queue = queue.then(() =>
+      change(id).then((next) => {
+        if (next.id === props.attemptId) mutate(next);
+      }, showError),
+    );
   };
 
   const finished = () => view()?.finishedAt != null;
@@ -82,7 +86,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
 
   // Any action other than the letter after `X` cancels the pending elimination.
   const select = (i: number) => {
-    setEliminating(false);
+    shortcuts.resetOptionAction();
     setPending(null);
     setIndex(i);
   };
@@ -91,7 +95,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
 
   const answer = (optionId: string) => {
     const q = current();
-    setEliminating(false);
+    shortcuts.resetOptionAction();
     if (!q || locked()) return;
     // In Simulado, choosing the selected option again clears it.
     const choice = q.choice === optionId && view()?.feedbackMode === "exam" ? null : optionId;
@@ -101,7 +105,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
    * confirms it. Simulado saves it straight away: it can still be changed or cleared. */
   const choose = (optionId: string) => {
     const q = current();
-    setEliminating(false);
+    shortcuts.resetOptionAction();
     if (!q || locked() || sending()) return;
     if (view()?.feedbackMode === "study") setPending(optionId);
     else answer(optionId);
@@ -116,14 +120,14 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
   };
   const eliminate = (optionId: string) => {
     const q = current();
-    setEliminating(false);
+    shortcuts.resetOptionAction();
     if (!q || locked()) return;
     if (pending() === optionId) setPending(null);
     enqueue((id) => api.eliminate(id, q.position, optionId));
   };
   const flag = () => {
     const q = current();
-    setEliminating(false);
+    shortcuts.resetOptionAction();
     if (!q || finished()) return;
     enqueue((id) => api.flag(id, q.position, !q.flagged));
   };
@@ -162,23 +166,10 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     const latest = view();
     if (!q?.reveal || !latest) return;
     const next = await api.explainAsk(latest.id, q.position);
-    const reveal = next.questions.find((item) => item.position === q.position)?.reveal;
-    if (!reveal) return;
-    setView((now) =>
-      now
-        ? {
-            ...now,
-            questions: now.questions.map((item) =>
-              item.position === q.position && item.reveal
-                ? {
-                    ...item,
-                    reveal: { ...item.reveal, explanation: reveal.explanation, refs: reveal.refs },
-                  }
-                : item,
-            ),
-          }
-        : now,
-    );
+    const currentView = view();
+    const merged = mergeExplanation(currentView, next, q.position);
+    if (merged === currentView) return;
+    mutate(merged);
     showToast("Explicação adicionada à questão.");
   };
 
@@ -193,7 +184,9 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     const latest = view();
     if (!latest) return;
     try {
-      setView(await api.finish(latest.id, latest.revision));
+      const next = await api.finish(latest.id, latest.revision);
+      if (next.id !== props.attemptId) return;
+      mutate(next);
       setDialog(null);
       setPending(null);
       setIndex(0);
@@ -215,79 +208,18 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     }
   };
 
-  const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key === "Escape" && helpOpen() && !dialog()) {
-      const inside = shortcutsBox?.contains(document.activeElement);
-      setHelpOpen(false);
-      if (inside) shortcutsToggle?.focus();
-      return;
-    }
-    if (dialog() || event.ctrlKey || event.metaKey || event.altKey || typing(event.target)) return;
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      event.preventDefault();
-      move(event.key === "ArrowLeft" ? -1 : 1);
-      return;
-    }
-    // A held key would answer, toggle or flag over and over.
-    if (event.repeat) return;
-    const q = current();
-    if (!q || finished()) return;
-    if (event.key === "Enter") {
-      // Enter keeps working on a focused button, except on the marked option itself, where it
-      // confirms (the click that marked it left the focus there).
-      const target = event.target;
-      const onOtherButton =
-        target instanceof HTMLButtonElement && !target.matches(".option-choose[aria-pressed=true]");
-      if (pending() === null || onOtherButton) return;
-      event.preventDefault();
-      confirm();
-      return;
-    }
-    // Single letters are a convenience that can be turned off, and never fire with Shift.
-    if (!shortcutsEnabled() || event.shiftKey) return;
-    const key = event.key.toUpperCase();
-    const optionAt = (letter: string) => q.options[optionLetters(q).indexOf(letter)];
-    if (eliminating()) {
-      setEliminating(false);
-      const option = optionAt(key);
-      if (option) {
-        event.preventDefault();
-        eliminate(option.id);
-      }
-      return;
-    }
-    if (key === "X") {
-      if (!locked()) setEliminating(true);
-    } else if (key === "F") {
-      flag();
-    } else {
-      const option = optionAt(key);
-      if (!option) return;
-      choose(option.id);
-      // Estudo: keep the focus on the marked option, so Enter confirms it.
-      if (view()?.feedbackMode === "study") {
-        document
-          .querySelectorAll<HTMLElement>(".option-choose")
-          .forEach((button) => button.dataset.optionId === option.id && button.focus());
-      }
-    }
-    event.preventDefault();
-  };
-  onMount(() => {
-    void loadShortcuts();
-    window.addEventListener("keydown", onKeyDown);
-  });
-  onCleanup(() => window.removeEventListener("keydown", onKeyDown));
-  // Closes the shortcut help when the pointer goes down anywhere outside it.
-  createEffect(() => {
-    if (!helpOpen()) return;
-    const close = (event: PointerEvent) => {
-      if (!(event.target instanceof Node && shortcutsBox?.contains(event.target))) {
-        setHelpOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", close);
-    onCleanup(() => document.removeEventListener("pointerdown", close));
+  const shortcuts = useResolverShortcuts({
+    dialogOpen: () => dialog() !== null,
+    question: current,
+    finished,
+    locked,
+    feedbackMode: () => view()?.feedbackMode,
+    pending,
+    move,
+    choose,
+    confirm,
+    eliminate,
+    flag,
   });
 
   return (
@@ -297,12 +229,8 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
       </div>
       <Switch>
         <Match when={loadError()}>
-          {(error) => (
-            <>
-              <h1>Resolver</h1>
-              <ErrorState error={error()} />
-            </>
-          )}
+          <h1>Resolver</h1>
+          <ErrorState error={loadError()} onRetry={() => refetch()} busy={attempt.loading} />
         </Match>
         <Match when={!view()}>
           <h1>Resolver</h1>
@@ -362,11 +290,10 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                     question={q()}
                     number={index() + 1}
                     total={total()}
-                    locked={locked()}
-                    finished={finished()}
-                    eliminating={eliminating()}
+                    feedbackMode={attempt().feedbackMode}
+                    finishedAt={attempt().finishedAt}
+                    optionAction={shortcuts.optionAction()}
                     pending={pending()}
-                    confirmRequired={attempt().feedbackMode === "study"}
                     onAnswer={choose}
                     onConfirm={confirm}
                     onEliminate={eliminate}
@@ -386,10 +313,10 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                 </button>
                 <ShortcutHelp
                   feedbackMode={attempt().feedbackMode}
-                  open={helpOpen()}
-                  panelRef={(element) => (shortcutsBox = element)}
-                  toggleRef={(element) => (shortcutsToggle = element)}
-                  onToggle={() => setHelpOpen(!helpOpen())}
+                  open={shortcuts.helpOpen()}
+                  panelRef={shortcuts.panelRef}
+                  toggleRef={shortcuts.toggleRef}
+                  onToggle={shortcuts.toggleHelp}
                 />
                 <button type="button" disabled={index() >= total() - 1} onClick={() => move(1)}>
                   Próxima →

@@ -1,5 +1,5 @@
 import { Show } from "solid-js";
-import Modal from "../../components/Modal";
+import ConfirmModal from "../../components/ConfirmModal";
 
 export type ResolverDialog = "finish" | "abandon" | null;
 
@@ -14,43 +14,30 @@ export default function ResolverDialogs(props: {
   return (
     <>
       <Show when={props.dialog === "finish"}>
-        <Modal
+        <ConfirmModal
           title="Finalizar tentativa?"
+          cancelLabel="Continuar resolvendo"
+          confirmLabel="Finalizar"
           onClose={() => props.onClose()}
-          footer={
-            <>
-              <button type="button" onClick={() => props.onClose()}>
-                Continuar resolvendo
-              </button>
-              <button type="button" class="primary" onClick={() => props.onFinish()}>
-                Finalizar
-              </button>
-            </>
-          }
+          onConfirm={() => props.onFinish()}
         >
           <p data-testid="finish-summary">
             {props.answered} respondidas e {props.total - props.answered} em branco.
           </p>
           <p class="muted">Depois de finalizar, as respostas não podem mais mudar.</p>
-        </Modal>
+        </ConfirmModal>
       </Show>
       <Show when={props.dialog === "abandon"}>
-        <Modal
+        <ConfirmModal
           title="Abandonar tentativa?"
+          cancelLabel="Voltar"
+          confirmLabel="Abandonar"
+          danger
           onClose={() => props.onClose()}
-          footer={
-            <>
-              <button type="button" onClick={() => props.onClose()}>
-                Voltar
-              </button>
-              <button type="button" class="primary danger" onClick={() => props.onAbandon()}>
-                Abandonar
-              </button>
-            </>
-          }
+          onConfirm={() => props.onAbandon()}
         >
           <p>A tentativa e suas respostas serão apagadas e não entram no histórico.</p>
-        </Modal>
+        </ConfirmModal>
       </Show>
     </>
   );

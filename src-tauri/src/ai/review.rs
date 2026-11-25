@@ -6,6 +6,8 @@
 //! disputes it, or it has a validation problem) also carries its stem and options, so the user can
 //! judge it. No key, explanation, reference or checker reason ever appears.
 
+use std::path::Path;
+
 use rusqlite::{Connection, Transaction, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -13,10 +15,12 @@ use ts_rs::TS;
 use super::agent::{Agent, Effort};
 use super::blind_check::{self, VerdictState};
 use super::draft::{self, Draft, DraftStatus};
+use super::draft_files;
 use super::generate::{DraftCheck, DraftProblem, check_draft, draft_inputs};
 use crate::bank::catalog::CollectionKind;
 use crate::bank::store::{ImportOutcome, import_questions};
 use crate::bank::{PackageQuestion, QuestionType, TopicPath};
+use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use crate::ids::{self, CollectionId, DraftId, QuestionId};
 
@@ -305,9 +309,21 @@ fn not_waiting() -> AppError {
     AppError::Invalid("Este pacote já foi importado ou descartado.".into())
 }
 
-/// Imports a draft's questions into the bank as a new `generated` collection. Call inside a
-/// transaction. Nothing is written if it fails.
+/// Imports a draft's questions as a new generated collection and removes its kept attachments
+/// after the transaction commits.
 pub fn import(
+    db: &Database,
+    files_dir: &Path,
+    id: &DraftId,
+    mode: ImportMode,
+    now: &str,
+) -> AppResult<ImportResult> {
+    let result = db.transaction(|tx| import_into_bank(tx, id, mode, now))?;
+    draft_files::remove(files_dir, id);
+    Ok(result)
+}
+
+fn import_into_bank(
     conn: &Transaction<'_>,
     id: &DraftId,
     mode: ImportMode,
@@ -463,8 +479,14 @@ fn place_questions(
     Ok(())
 }
 
-/// Discards a draft that is still waiting.
-pub fn discard(conn: &Connection, id: &DraftId) -> AppResult<()> {
+/// Discards a waiting draft and removes its attachments after the transaction commits.
+pub fn discard(db: &Database, files_dir: &Path, id: &DraftId) -> AppResult<()> {
+    db.transaction(|tx| mark_discarded(tx, id))?;
+    draft_files::remove(files_dir, id);
+    Ok(())
+}
+
+fn mark_discarded(conn: &Transaction<'_>, id: &DraftId) -> AppResult<()> {
     let draft = draft::load(conn, id)?;
     if draft.status != DraftStatus::Review {
         return Err(not_waiting());

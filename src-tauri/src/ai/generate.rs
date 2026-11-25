@@ -9,7 +9,7 @@ use ts_rs::TS;
 
 use super::draft::{self, Draft, DraftRequest, DraftStatus, GenerationInfo};
 use super::prompts;
-use super::roles::RoleConfig;
+use super::roles::{Role, RoleConfig};
 use super::runner::{CancelToken, Progress, run_job};
 use super::secrets::Secrets;
 use super::settings::{self, RemNoteMode, Sources};
@@ -395,14 +395,14 @@ pub fn generate_draft(
             "O RemNote está desligado. Ligue-o em Configurações ou desmarque a fonte.".into(),
         ));
     }
-    let generator = request
-        .generator
-        .clone()
-        .unwrap_or_else(|| settings.roles.generate.clone());
-    let checker = request
-        .checker
-        .clone()
-        .unwrap_or_else(|| settings.roles.blind_check.clone());
+    let generator = settings
+        .roles
+        .resolve(Role::Generate, request.generator.as_ref())
+        .clone();
+    let checker = settings
+        .roles
+        .resolve(Role::BlindCheck, request.checker.as_ref())
+        .clone();
 
     let mut spec = settings::job_spec(
         &settings,

@@ -88,11 +88,12 @@ impl Secrets {
         self.0.get(REMNOTE_TOKEN)
     }
 
-    /// Saves the token, or removes it when `token` is `None` or blank.
-    pub fn set_remnote_token(&self, token: Option<&str>) -> AppResult<()> {
+    /// Saves or clears the token and returns whether it is stored.
+    pub fn set_remnote_token(&self, token: Option<&str>) -> AppResult<bool> {
         match token.map(str::trim).filter(|t| !t.is_empty()) {
             Some(token) => self.0.set(REMNOTE_TOKEN, token),
             None => self.0.delete(REMNOTE_TOKEN),
-        }
+        }?;
+        Ok(self.remnote_token()?.is_some())
     }
 }

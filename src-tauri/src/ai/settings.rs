@@ -10,11 +10,12 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::agent::{Agent, Effort};
-use super::discovery;
+use super::catalog::CatalogCache;
+use super::discovery::{self, CliStatus};
 use super::roles::{Role, RoleConfig, RoleSettings};
 use super::runner::{JobSpec, RemNoteAccess, is_valid_tool_name, is_write_like};
 use super::secrets::Secrets;
-use crate::db::{SettingKey, get_setting, set_setting};
+use crate::db::{Database, SettingKey, get_setting, set_setting};
 use crate::error::{AppError, AppResult};
 
 const MAX_MODEL: usize = 200;
@@ -110,6 +111,31 @@ pub fn load(conn: &Connection, secrets: &Secrets) -> AppResult<AiSettings> {
         // Best effort: a locked or missing keychain must not break every AI feature.
         has_remnote_token: secrets.remnote_token().ok().flatten().is_some(),
     })
+}
+
+/// Saves settings and reads back the persisted values in one transaction.
+pub(crate) fn save_and_reload(
+    db: &Database,
+    secrets: &Secrets,
+    catalog: &CatalogCache,
+    input: AiSettingsInput,
+) -> AppResult<AiSettings> {
+    let saved = db.transaction(|tx| {
+        save(tx, input)?;
+        load(tx, secrets)
+    })?;
+    // The CLI paths may have changed, so the model lists are read again on next use.
+    catalog.clear();
+    Ok(saved)
+}
+
+/// Tests the configured executable, or the discovered one if there is no override.
+pub(crate) fn test_cli(db: &Database, secrets: &Secrets, agent: Agent) -> AppResult<CliStatus> {
+    let settings = db.with(|conn| load(conn, secrets))?;
+    Ok(discovery::cli_test(
+        agent,
+        settings.cli_paths.get(agent).map(Path::new),
+    ))
 }
 
 fn load_remnote(conn: &Connection) -> AppResult<RemNoteSettings> {

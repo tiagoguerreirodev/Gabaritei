@@ -1,16 +1,22 @@
 //! One generation at a time, running in the background, with cancel and a status the
 //! frontend can read from any page (spec §3.2 "Run behavior").
 
-use crate::sync::lock;
 use std::panic::AssertUnwindSafe;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
+use time::OffsetDateTime;
 use ts_rs::TS;
 
+use super::ondemand::OnDemand;
 use super::runner::{CancelToken, Progress};
+use crate::backup::BackupService;
+use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use crate::ids::DraftId;
+use crate::paths::AppPaths;
+use crate::sync::lock;
 
 /// How a finished generation ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -162,6 +168,10 @@ impl GenerationManager {
         Ok(())
     }
 
+    fn is_running(&self) -> bool {
+        lock(&self.inner).running.is_some()
+    }
+
     /// Asks the running generation to stop. Returns whether one was running.
     pub fn cancel(&self) -> bool {
         lock(&self.inner)
@@ -193,6 +203,47 @@ impl GenerationManager {
         inner.outcome = None;
         inner.outcome_kind = None;
     }
+}
+
+pub(crate) enum DataReplacement<'a> {
+    Restore(&'a str),
+    Import(&'a Path),
+}
+
+impl DataReplacement<'_> {
+    fn action(&self) -> &'static str {
+        match self {
+            Self::Restore(_) => "restaurar",
+            Self::Import(_) => "importar",
+        }
+    }
+}
+
+/// Replaces the study data once the backup service has a turn and no AI work is running.
+pub(crate) fn replace_study_data(
+    service: &BackupService,
+    db: &Database,
+    paths: &AppPaths,
+    generation: &GenerationManager,
+    on_demand: &OnDemand,
+    replacement: DataReplacement<'_>,
+    now: OffsetDateTime,
+) -> AppResult<()> {
+    let ready = || {
+        if generation.is_running() || on_demand.is_running() {
+            let action = replacement.action();
+            return Err(AppError::Invalid(format!(
+                "Há uma consulta à IA em andamento. Espere ou cancele antes de {action}."
+            )));
+        }
+        Ok(())
+    };
+    match replacement {
+        DataReplacement::Restore(name) => service.restore(db, paths, name, now, ready)?,
+        DataReplacement::Import(file) => service.import(db, paths, file, now, ready)?,
+    }
+    on_demand.clear_proposals();
+    Ok(())
 }
 
 #[cfg(test)]

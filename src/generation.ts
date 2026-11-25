@@ -11,6 +11,7 @@ import type { GenerationStatus } from "./bindings/GenerationStatus";
 const [status, setStatusRaw] = createSignal<GenerationStatus | null>(null);
 const [waiting, setWaiting] = createSignal<DraftListItem[]>([]);
 let watching = false;
+let waitingRequest = 0;
 
 /** The ordered stages the backend reports for the current run. */
 export const generationStages = () => status()?.stages ?? [];
@@ -71,13 +72,18 @@ export function applyGenerationStatus(next: GenerationStatus) {
 /** The latest known status (`null` until the first read). */
 export const generationStatus = status;
 
+/** Changes when a run starts or finishes, including across an unseen completion. */
+export const generationRunRevision = () => status()?.runRevision ?? 0;
+
 /** The drafts waiting for review. They stay until imported or discarded, unlike `outcome`. */
 export const waitingDrafts = waiting;
 
 /** Reads the drafts waiting for review again. Call after anything that adds or removes one. */
 export async function refreshWaitingDrafts() {
+  const request = ++waitingRequest;
   try {
-    setWaiting(await api.draftsWaiting());
+    const drafts = await api.draftsWaiting();
+    if (request === waitingRequest) setWaiting(drafts);
   } catch {
     // Keep what we had: the banner is a convenience, and the Revisar pacote page reports errors.
   }
@@ -88,18 +94,23 @@ export function watchGeneration() {
   if (watching) return;
   watching = true;
   // Listen first to cover transitions during the read. Snapshots may arrive in either order.
-  void refreshWaitingDrafts();
-  const listening = api.onGenerationStatus((next) => {
+  const update = (next: GenerationStatus) => {
     const before = untrack(status);
-    const changed =
-      before?.running !== next.running || before?.outcome?.kind !== next.outcome?.kind;
-    if (applyGenerationStatus(next) && changed) void refreshWaitingDrafts();
-  });
-  void listening
+    if (
+      applyGenerationStatus(next) &&
+      (before === null || before.runRevision !== next.runRevision)
+    ) {
+      void refreshWaitingDrafts();
+    }
+  };
+  void api
+    .onGenerationStatus(update)
     .catch(() => undefined)
     .then(() => api.generationStatus())
-    .then(applyGenerationStatus)
-    .catch(() => undefined);
+    .then(update)
+    .catch(() => {
+      if (untrack(status) === null) void refreshWaitingDrafts();
+    });
 }
 
 /** Forgets how the last generation ended, here and in the backend. */
@@ -112,6 +123,7 @@ export async function dismissGeneration() {
 /** For tests: forget everything and allow `watchGeneration` to run again. */
 export function resetGenerationWatch() {
   watching = false;
+  waitingRequest++;
   setStatusRaw(null);
   setWaiting([]);
 }

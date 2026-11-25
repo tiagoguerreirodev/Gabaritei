@@ -12,7 +12,11 @@ export type GenerationStatus = {
 /**
  * Orders snapshots from IPC reads and events even when they arrive out of order.
  */
-revision: number, running: boolean, startedAt: string | null, 
+revision: number, 
+/**
+ * Revision of the most recent run start or finish, so readers can refresh draft data.
+ */
+runRevision: number, running: boolean, startedAt: string | null, 
 /**
  * What kind of run is going, while running.
  */

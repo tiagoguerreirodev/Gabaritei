@@ -1,5 +1,5 @@
 import { A, useNavigate, useSearchParams } from "@solidjs/router";
-import { For, Show, createEffect, createResource, createSignal, on } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal } from "solid-js";
 import { api } from "../api";
 import type { DraftSummary } from "../bindings/DraftSummary";
 import type { ImportResult } from "../bindings/ImportResult";
@@ -8,7 +8,7 @@ import Modal from "../components/Modal";
 import RichText from "../components/RichText";
 import { ErrorState, Loading } from "../components/states";
 import { showError, showToast } from "../components/toasts";
-import { generationStatus, refreshWaitingDrafts } from "../generation";
+import { generationRunRevision, refreshWaitingDrafts } from "../generation";
 import { agentLabels, effortLabels } from "./settings/labels";
 import { optionLetters } from "./solve/format";
 
@@ -40,7 +40,8 @@ export default function ReviewPackage() {
 }
 
 function WaitingList() {
-  const [drafts] = createResource(() => api.draftsWaiting());
+  const runRevision = createMemo(generationRunRevision);
+  const [drafts] = createResource(runRevision, () => api.draftsWaiting());
   return (
     <Show when={!drafts.error} fallback={<ErrorState error={drafts.error as unknown} />}>
       <Show when={drafts()} fallback={<Loading />}>
@@ -78,17 +79,10 @@ function WaitingList() {
 }
 
 function Package(props: { id: string }) {
+  const runRevision = createMemo(generationRunRevision);
   const [summary, { refetch }] = createResource(
-    () => props.id,
-    (id) => api.draftSummary(id),
-  );
-  // A check that was running ends (or a retry finishes): show the new verdicts.
-  createEffect(
-    on(
-      () => generationStatus()?.running,
-      () => void refetch(),
-      { defer: true },
-    ),
+    () => ({ id: props.id, runRevision: runRevision() }),
+    ({ id }) => api.draftSummary(id),
   );
   return (
     <Show when={!summary.error} fallback={<ErrorState error={summary.error as unknown} />}>

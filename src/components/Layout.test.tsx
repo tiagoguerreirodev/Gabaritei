@@ -7,22 +7,32 @@ import { resetGenerationWatch } from "../generation";
 import { routeDefinitions, routes } from "../routes";
 import Layout from "./Layout";
 
-const idle = { running: false, startedAt: null, progress: null, outcome: null };
+const idle = {
+  revision: 0,
+  runRevision: 0,
+  running: false,
+  startedAt: null,
+  progress: null,
+  outcome: null,
+};
 
 function backend(waiting: unknown[] = []) {
-  mockIPC((command) => {
-    switch (command) {
-      case "generation_status":
-        return idle;
-      case "drafts_waiting":
-        return waiting;
-      case "app_info":
-        return { name: "Gabaritei", version: "0.2.0" };
-      default:
-        // Page data is not under test here: a request that never answers keeps pages loading.
-        return new Promise(() => {});
-    }
-  });
+  mockIPC(
+    (command) => {
+      switch (command) {
+        case "generation_status":
+          return idle;
+        case "drafts_waiting":
+          return waiting;
+        case "app_info":
+          return { name: "Gabaritei", version: "0.2.0" };
+        default:
+          // Page data is not under test here: a request that never answers keeps pages loading.
+          return new Promise(() => {});
+      }
+    },
+    { shouldMockEvents: true },
+  );
 }
 
 function renderAt(path: string) {

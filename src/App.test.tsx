@@ -24,6 +24,7 @@ describe("App shell", () => {
       if (command === "generation_status")
         return {
           revision: 0,
+          runRevision: 0,
           running: false,
           startedAt: null,
           kind: null,

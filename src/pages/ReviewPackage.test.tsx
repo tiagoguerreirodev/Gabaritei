@@ -4,7 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DraftSummary } from "../bindings/DraftSummary";
+import type { GenerationStatus } from "../bindings/GenerationStatus";
 import { Toaster } from "../components/toasts";
+import { applyGenerationStatus, resetGenerationWatch } from "../generation";
 import ReviewPackage from "./ReviewPackage";
 
 const summary: DraftSummary = {
@@ -108,9 +110,89 @@ function renderAt(path: string) {
 
 beforeEach(() => {
   window.location.hash = "";
+  resetGenerationWatch();
 });
 
 describe("Revisar pacote", () => {
+  describe("when a new check reports progress before the previous finish", () => {
+    const checking: GenerationStatus = {
+      revision: 2,
+      runRevision: 1,
+      running: true,
+      startedAt: summary.createdAt,
+      kind: "recheck",
+      stage: "checking",
+      stages: [],
+      canCancel: true,
+      cancelDiscardsDraft: false,
+      progress: null,
+      outcome: null,
+      outcomeKind: null,
+    };
+
+    function reportNextCheck() {
+      applyGenerationStatus({ ...checking, revision: 5, runRevision: 4 });
+      applyGenerationStatus({
+        ...checking,
+        revision: 3,
+        runRevision: 3,
+        running: false,
+        startedAt: null,
+        kind: null,
+        stage: "preparing",
+        canCancel: false,
+        outcome: { kind: "draft", draftId: summary.id },
+        outcomeKind: "recheck",
+      });
+    }
+
+    it("refreshes the open package with the completed check's verdicts", async () => {
+      let current: DraftSummary = {
+        ...summary,
+        checking: true,
+        lines: [{ position: 1, state: "unchecked", hasProblem: false, content: null }],
+      };
+      mockIPC((command) => {
+        if (command === "draft_summary") return current;
+        throw new Error(`Unexpected command: ${command}`);
+      });
+      applyGenerationStatus(checking);
+      renderAt("/revisar-pacote?id=d1");
+      expect(await screen.findByText(/ainda está em andamento/)).toBeVisible();
+
+      current = summary;
+      reportNextCheck();
+
+      expect(await screen.findByText("Q1 · conferida")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Importar tudo" })).toBeEnabled();
+    });
+
+    it("refreshes checking indicators for packages in the waiting list", async () => {
+      let isChecking = true;
+      mockIPC((command) => {
+        if (command !== "drafts_waiting") throw new Error(`Unexpected command: ${command}`);
+        return [
+          {
+            id: summary.id,
+            topic: summary.topic,
+            count: summary.count,
+            createdAt: summary.createdAt,
+            disputed: summary.disputed,
+            checking: isChecking,
+          },
+        ];
+      });
+      applyGenerationStatus(checking);
+      renderAt("/revisar-pacote");
+      expect(await screen.findByText(/conferindo…/)).toBeVisible();
+
+      isChecking = false;
+      reportNextCheck();
+
+      await waitFor(() => expect(screen.queryByText(/conferindo…/)).not.toBeInTheDocument());
+    });
+  });
+
   it("shows counts and one line per question, with content only for the flagged one", async () => {
     backend();
     renderAt("/revisar-pacote?id=d1");

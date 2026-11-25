@@ -97,6 +97,9 @@ pub struct GenerationStatus {
     /// Orders snapshots from IPC reads and events even when they arrive out of order.
     #[ts(type = "number")]
     pub revision: u64,
+    /// Revision of the most recent run start or finish, so readers can refresh draft data.
+    #[ts(type = "number")]
+    pub run_revision: u64,
     pub running: bool,
     pub started_at: Option<String>,
     /// What kind of run is going, while running.
@@ -118,6 +121,7 @@ pub struct GenerationStatus {
 #[derive(Default)]
 struct Inner {
     revision: u64,
+    run_revision: u64,
     running: Option<Running>,
     outcome: Option<GenerationOutcome>,
     outcome_kind: Option<GenerationKind>,
@@ -196,6 +200,7 @@ impl GenerationManager {
         }
         let cancel = CancelToken::new();
         inner.revision += 1;
+        inner.run_revision = inner.revision;
         inner.outcome = None;
         inner.outcome_kind = None;
         inner.running = Some(Running {
@@ -245,6 +250,7 @@ impl GenerationManager {
             inner.outcome_kind = outcome.as_ref().and(kind);
             inner.outcome = outcome;
             inner.revision += 1;
+            inner.run_revision = inner.revision;
             inner.status()
         };
         let _ = std::panic::catch_unwind(AssertUnwindSafe(|| on_event(&status)));
@@ -286,6 +292,7 @@ impl Inner {
         let can_cancel = running.is_some_and(|run| run.cancel.is_some());
         GenerationStatus {
             revision: self.revision,
+            run_revision: self.run_revision,
             running: running.is_some(),
             started_at: running.map(|r| r.started_at.clone()),
             kind,
@@ -457,26 +464,36 @@ mod tests {
         let manager = GenerationManager::default();
         let (finishing, finish_started) = mpsc::channel();
         let (release_finish, wait_to_finish) = mpsc::channel();
-        let (finished, delayed) = mpsc::channel();
+        let (emit_first, first_event) = mpsc::channel();
         manager
             .start(
                 GenerationKind::Generate,
                 STARTED_AT.into(),
-                |_, _| Ok("first".into()),
+                |_, progress| {
+                    progress(Progress::starting(
+                        GenerationStage::Checking,
+                        ProgressKind::Started,
+                        "x",
+                    ));
+                    Ok("first".into())
+                },
                 move |status| {
-                    finishing.send(()).unwrap();
-                    wait_to_finish.recv().unwrap();
-                    finished.send(status.clone()).unwrap();
+                    if !status.running {
+                        finishing.send(()).unwrap();
+                        wait_to_finish.recv().unwrap();
+                    }
+                    emit_first.send(status.clone()).unwrap();
                 },
             )
             .unwrap();
+        let first = first_event.recv_timeout(Duration::from_secs(5)).unwrap();
         finish_started.recv_timeout(Duration::from_secs(5)).unwrap();
 
         let (emit, next_event) = mpsc::channel();
         let (release_next, wait_for_release) = mpsc::channel();
         manager
             .start(
-                GenerationKind::Recheck,
+                GenerationKind::Generate,
                 STARTED_AT.into(),
                 move |_, progress| {
                     progress(Progress::starting(
@@ -494,10 +511,14 @@ mod tests {
         assert_eq!(manager.status(), next);
 
         release_finish.send(()).unwrap();
-        let completion = delayed.recv_timeout(Duration::from_secs(5)).unwrap();
+        let completion = first_event.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(!completion.running);
         assert!(next.running);
+        assert_eq!(first.started_at, next.started_at);
         assert!(completion.revision < next.revision);
+        assert!(first.run_revision < completion.run_revision);
+        assert!(completion.run_revision < next.run_revision);
+        assert!(next.run_revision < next.revision);
         release_next.send(()).unwrap();
         assert!(
             !next_event

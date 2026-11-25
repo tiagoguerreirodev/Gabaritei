@@ -891,6 +891,23 @@ mod tests {
     }
 
     #[test]
+    fn a_database_failure_returns_the_generic_ipc_error() {
+        let db = Database::open_in_memory().unwrap();
+        db.with(|conn| {
+            conn.execute("DROP TABLE collections", [])?;
+            Ok(())
+        })
+        .unwrap();
+
+        let result = MockApp::new(db).call("collections", json!({ "query": {} }));
+
+        assert_eq!(
+            result,
+            Err(json!({ "message": "Ocorreu um erro inesperado. Tente novamente." }))
+        );
+    }
+
+    #[test]
     fn browsing_commands_decode_camel_case_arguments() {
         let db = Database::open_in_memory().unwrap();
         db.with(|c| {

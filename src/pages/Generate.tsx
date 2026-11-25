@@ -1,3 +1,5 @@
+import SourcesFields from "./generate/SourcesFields";
+import CountField from "./generate/CountField";
 import { A } from "@solidjs/router";
 import {
   For,
@@ -41,8 +43,6 @@ const BOARDS = [
   "Instituto AOCP",
   "Consulplan",
 ];
-
-const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
 /** A deep copy where no two places share an object. */
 function clone<T>(value: T): T {
@@ -195,7 +195,6 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
   const [shownCountError, setShownCountError] = createSignal<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = createSignal(false);
   const [optionsTouched, setOptionsTouched] = createSignal(false);
-  const remnoteOn = () => props.settings.remnote.mode !== "off";
   const generator = () => form.generator ?? props.settings.roles.generate;
   const checker = () => form.checker ?? props.settings.roles.blindCheck;
   const generatorEditor = createRoleEditor(generator, (config) => setForm("generator", config));
@@ -210,16 +209,6 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
   createEffect(() => {
     if (problems().length > 0) setAdvancedOpen(true);
   });
-
-  const attach = async () => {
-    try {
-      const picked = await api.pickAttachments();
-      const current = form.sources.attachments;
-      setForm("sources", "attachments", [...new Set([...current, ...picked])]);
-    } catch (error) {
-      showError(error);
-    }
-  };
 
   const topicError = () =>
     form.topic.area.trim() && form.topic.matter.trim() && form.topic.topic.trim()
@@ -301,35 +290,16 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
           )}
         </Show>
 
-        <label for="gen-count">Quantidade</label>
-        <input
-          id="gen-count"
-          type="number"
-          min={props.counts.min}
-          max={props.counts.max}
-          required
-          aria-required="true"
-          aria-invalid={shownCountError() ? "true" : undefined}
-          aria-describedby={shownCountError() ? "gen-count-hint gen-count-error" : "gen-count-hint"}
+        <CountField
           value={form.count}
-          onInput={(event) => {
-            setOptionsTouched(true);
-            setForm("count", Number(event.currentTarget.value));
-          }}
+          counts={props.counts}
+          error={shownCountError()}
           onBlur={validateCount}
+          onInput={(value) => {
+            setOptionsTouched(true);
+            setForm("count", value);
+          }}
         />
-        <p class="hint muted" id="gen-count-hint">
-          Obrigatório. De {props.counts.min} a {props.counts.max}. Cada questão passa pela
-          conferência às cegas.
-        </p>
-        <Show when={shownCountError()}>
-          {(message) => (
-            <p class="field-error" id="gen-count-error">
-              <span aria-hidden="true">✕ </span>
-              {message()}
-            </p>
-          )}
-        </Show>
 
         <label for="gen-format">Formato</label>
         <select
@@ -378,58 +348,11 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
             onInput={(event) => setForm("instructions", event.currentTarget.value || null)}
           />
 
-          <span class="label">Fontes</span>
-          <div>
-            <label>
-              <input
-                type="checkbox"
-                checked={form.sources.remnote}
-                disabled={!remnoteOn()}
-                onChange={(event) => setForm("sources", "remnote", event.currentTarget.checked)}
-              />{" "}
-              RemNote
-            </label>
-            <Show when={!remnoteOn()}>
-              <span class="muted"> (ligue em Configurações)</span>
-            </Show>
-            <br />
-            <label>
-              <input
-                type="checkbox"
-                checked={form.sources.web}
-                onChange={(event) => setForm("sources", "web", event.currentTarget.checked)}
-              />{" "}
-              Pesquisar na web
-            </label>
-            <button type="button" onClick={() => void attach()}>
-              Anexar arquivos
-            </button>
-            <Show when={form.sources.attachments.length > 0}>
-              <ul class="attachments" aria-label="Anexos">
-                <For each={form.sources.attachments}>
-                  {(path) => (
-                    <li>
-                      {fileName(path)}{" "}
-                      <button
-                        type="button"
-                        class="link-button"
-                        aria-label={`Remover ${fileName(path)}`}
-                        onClick={() =>
-                          setForm(
-                            "sources",
-                            "attachments",
-                            form.sources.attachments.filter((p) => p !== path),
-                          )
-                        }
-                      >
-                        remover
-                      </button>
-                    </li>
-                  )}
-                </For>
-              </ul>
-            </Show>
-          </div>
+          <SourcesFields
+            value={form.sources}
+            remnoteOn={props.settings.remnote.mode !== "off"}
+            onChange={(sources) => setForm("sources", sources)}
+          />
 
           <span class="label">Gerador</span>
           <RolePicker label="Gerador" editor={generatorEditor} />

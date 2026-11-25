@@ -1,3 +1,4 @@
+import { InlineError } from "../../components/states";
 import { For, Show } from "solid-js";
 import type { Agent } from "../../bindings/Agent";
 import type { RoleConfig } from "../../bindings/RoleConfig";
@@ -84,9 +85,9 @@ export default function RolesSection(props: {
         {({ role, key }) => (
           <Show when={roleProblem(catalogState(), props.roles[key])}>
             {(problem) => (
-              <p role="alert" class="error">
+              <InlineError>
                 {roleLabels[role].name}: {problem()}
-              </p>
+              </InlineError>
             )}
           </Show>
         )}

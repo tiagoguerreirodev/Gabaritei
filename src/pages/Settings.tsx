@@ -1,4 +1,4 @@
-import { Show, createResource, createSignal } from "solid-js";
+import { createResource, createSignal } from "solid-js";
 import { createStore, reconcile, unwrap } from "solid-js/store";
 import { api } from "../api";
 import { loadCatalog } from "../catalog";
@@ -8,7 +8,7 @@ import type { RoleConfig } from "../bindings/RoleConfig";
 import type { RoleSettings } from "../bindings/RoleSettings";
 import { cloneJson } from "../json";
 import LegacyImport from "../components/LegacyImport";
-import { ErrorState, Loading } from "../components/states";
+import { ResourceView } from "../components/states";
 import { showError, showToast } from "../components/toasts";
 import AppearanceSection from "./settings/AppearanceSection";
 import BackupSection from "./settings/BackupSection";
@@ -23,7 +23,7 @@ import ShortcutsSection from "./settings/ShortcutsSection";
 /** Configurações: CLIs, roles, RemNote and data. */
 export default function Settings() {
   const [loaded, { refetch }] = createResource(() => api.aiSettings());
-  const [legacy] = createResource(() => api.legacyImportStatus());
+  const [legacy, { refetch: refetchLegacy }] = createResource(() => api.legacyImportStatus());
   // One flag for every section of Dados: a restore and an import must never overlap.
   const busy = createBusy();
 
@@ -32,28 +32,30 @@ export default function Settings() {
       <h1 id="settings-title">Configurações</h1>
       <AppearanceSection />
       <ShortcutsSection />
-      <Show
-        when={!loaded.error}
-        fallback={
-          <ErrorState
-            error={loaded.error as unknown}
-            onRetry={() => refetch()}
-            busy={loaded.loading}
-            describedBy="settings-title"
-          />
-        }
+      <ResourceView
+        value={loaded()}
+        error={() => loaded.error}
+        pending={loaded.state === "pending"}
+        retrying={loaded.loading}
+        onRetry={() => refetch()}
+        describedBy="settings-title"
       >
-        <Show when={loaded()} fallback={<Loading />}>
-          {(settings) => <Form initial={settings()} onReload={() => void refetch()} />}
-        </Show>
-      </Show>
-      <h2>Dados</h2>
+        {(settings) => <Form initial={settings()} onReload={() => void refetch()} />}
+      </ResourceView>
+      <h2 id="settings-data-title">Dados</h2>
       <BackupSection busy={busy} />
       <DataFileSection busy={busy} />
       <DataFolderSection />
-      <Show when={legacy()} fallback={<Loading />}>
+      <ResourceView
+        value={legacy()}
+        error={() => legacy.error}
+        pending={legacy.state === "pending"}
+        retrying={legacy.loading}
+        onRetry={() => refetchLegacy()}
+        describedBy="settings-data-title"
+      >
         {(current) => <LegacyImport initialReport={current().report} busy={busy} />}
-      </Show>
+      </ResourceView>
     </section>
   );
 }

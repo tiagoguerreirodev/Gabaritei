@@ -6,7 +6,7 @@ import type { ImportMode } from "../bindings/ImportMode";
 import type { LineState } from "../bindings/LineState";
 import ConfirmModal from "../components/ConfirmModal";
 import RichText from "../components/RichText";
-import { ErrorState, Loading } from "../components/states";
+import { InlineError, ResourceView } from "../components/states";
 import { showError, showToast } from "../components/toasts";
 import { dismissGeneration, generationStatus, refreshWaitingDrafts } from "../generation";
 import { agentLabels, effortLabels } from "../labels";
@@ -37,40 +37,42 @@ export default function ReviewPackage() {
 }
 
 function WaitingList() {
-  const [drafts] = createResource(() => api.draftsWaiting());
+  const [drafts, { refetch }] = createResource(() => api.draftsWaiting());
   return (
-    <Show when={!drafts.error} fallback={<ErrorState error={drafts.error as unknown} />}>
-      <Show when={drafts()} fallback={<Loading />}>
-        {(list) => (
-          <Show
-            when={list().length > 0}
-            fallback={
-              <p class="muted">
-                Nenhum pacote esperando revisão. <A href="/gerar">Gerar um pacote</A>.
-              </p>
-            }
-          >
-            <p class="muted">Pacotes esperando revisão:</p>
-            <ul>
-              <For each={list()}>
-                {(draft) => (
-                  <li>
-                    <A href={`/revisar-pacote?id=${encodeURIComponent(draft.id)}`}>
-                      {draft.topic.area} › {draft.topic.matter} › {draft.topic.topic}
-                    </A>{" "}
-                    <span class="muted">
-                      ({formatNumber(draft.count)} questões
-                      {draft.disputed > 0 ? `, ${formatNumber(draft.disputed)} contestadas` : ""}
-                      {draft.checking ? ", conferindo…" : ""})
-                    </span>
-                  </li>
-                )}
-              </For>
-            </ul>
-          </Show>
-        )}
-      </Show>
-    </Show>
+    <ResourceView
+      value={drafts()?.length ? drafts() : undefined}
+      error={() => drafts.error}
+      pending={drafts.state === "pending"}
+      retrying={drafts.loading}
+      onRetry={() => refetch()}
+      empty={
+        <p class="muted">
+          Nenhum pacote esperando revisão. <A href="/gerar">Gerar um pacote</A>.
+        </p>
+      }
+    >
+      {(list) => (
+        <>
+          <p class="muted">Pacotes esperando revisão:</p>
+          <ul>
+            <For each={list()}>
+              {(draft) => (
+                <li>
+                  <A href={`/revisar-pacote?id=${encodeURIComponent(draft.id)}`}>
+                    {draft.topic.area} › {draft.topic.matter} › {draft.topic.topic}
+                  </A>{" "}
+                  <span class="muted">
+                    ({formatNumber(draft.count)} questões
+                    {draft.disputed > 0 ? `, ${formatNumber(draft.disputed)} contestadas` : ""}
+                    {draft.checking ? ", conferindo…" : ""})
+                  </span>
+                </li>
+              )}
+            </For>
+          </ul>
+        </>
+      )}
+    </ResourceView>
   );
 }
 
@@ -88,11 +90,15 @@ function Package(props: { id: string }) {
     ),
   );
   return (
-    <Show when={!summary.error} fallback={<ErrorState error={summary.error as unknown} />}>
-      <Show when={summary()} fallback={<Loading />}>
-        {(current) => <Summary summary={current()} onChanged={() => void refetch()} />}
-      </Show>
-    </Show>
+    <ResourceView
+      value={summary()}
+      error={() => summary.error}
+      pending={summary.state === "pending"}
+      retrying={summary.loading}
+      onRetry={() => refetch()}
+    >
+      {(current) => <Summary summary={current()} onChanged={() => void refetch()} />}
+    </ResourceView>
   );
 }
 
@@ -261,9 +267,7 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
         </Show>
         <Show when={s().checkFailed}>
           {(message) => (
-            <p class="error" role="alert">
-              A conferência às cegas não foi concluída: {message()}
-            </p>
+            <InlineError>A conferência às cegas não foi concluída: {message()}</InlineError>
           )}
         </Show>
         <Show when={s().duplicates > 0}>

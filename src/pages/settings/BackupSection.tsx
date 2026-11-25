@@ -5,7 +5,7 @@ import type { BackupInfo } from "../../bindings/BackupInfo";
 import type { BackupStatus } from "../../bindings/BackupStatus";
 import type { LeftBehind } from "../../bindings/LeftBehind";
 import ConfirmModal from "../../components/ConfirmModal";
-import { ErrorState, Loading } from "../../components/states";
+import { InlineError, ResourceView } from "../../components/states";
 import { showError, showToast } from "../../components/toasts";
 import type { Busy } from "./busy";
 import { openFolder } from "./openFolder";
@@ -198,32 +198,27 @@ export default function BackupSection(props: {
           </div>
         )}
       </Show>
-      <Show
-        when={!status.error}
-        fallback={
-          <ErrorState
-            error={status.error as unknown}
-            onRetry={() => refetch()}
-            busy={status.loading}
-            describedBy="backup-title"
-          />
-        }
+      <ResourceView
+        value={status()}
+        error={() => status.error}
+        pending={status.state === "pending"}
+        retrying={status.loading}
+        onRetry={() => refetch()}
+        describedBy="backup-title"
       >
-        <Show when={status()} fallback={<Loading />}>
-          {(current) => (
-            <Content
-              status={current()}
-              busy={busy.active()}
-              onBackupNow={() => void backupNow()}
-              onChooseFolder={() => void chooseFolder()}
-              onUseDefaultFolder={() => void useDefaultFolder()}
-              onRefresh={() => void refetch()}
-              refreshing={status.loading}
-              onRestore={setRestoring}
-            />
-          )}
-        </Show>
-      </Show>
+        {(current) => (
+          <Content
+            status={current()}
+            busy={busy.active()}
+            onBackupNow={() => void backupNow()}
+            onChooseFolder={() => void chooseFolder()}
+            onUseDefaultFolder={() => void useDefaultFolder()}
+            onRefresh={() => void refetch()}
+            refreshing={status.loading}
+            onRestore={setRestoring}
+          />
+        )}
+      </ResourceView>
       <Show when={confirmingMove()}>
         <ConfirmModal
           title="Mover os backups para a pasta nova?"
@@ -303,11 +298,7 @@ function Content(props: {
         </button>
       </p>
       <Show when={!folderUnavailable() && props.status.lastError}>
-        {(message) => (
-          <p class="error" role="alert">
-            O último backup falhou: {message()}
-          </p>
-        )}
+        {(message) => <InlineError>O último backup falhou: {message()}</InlineError>}
       </Show>
       <p class="actions">
         <button

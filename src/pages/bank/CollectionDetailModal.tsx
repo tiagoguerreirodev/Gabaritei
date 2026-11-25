@@ -1,7 +1,7 @@
-import { For, Match, Show, Switch, createResource, createSignal } from "solid-js";
+import { For, Show, createResource, createSignal } from "solid-js";
 import { api } from "../../api";
 import Modal from "../../components/Modal";
-import { EmptyState, ErrorState, Loading } from "../../components/states";
+import { EmptyState, ResourceView } from "../../components/states";
 import StartSessionModal from "../solve/StartSessionModal";
 import { openAttempt } from "../../navigation";
 import { formatDate, questionCount } from "../../format";
@@ -20,7 +20,8 @@ export default function CollectionDetailModal(props: {
   );
 
   const [starting, setStarting] = createSignal(false);
-  const active = () => detail()?.attempts.find((a) => a.finishedAt === null);
+  const current = () => (detail.error ? undefined : detail());
+  const active = () => current()?.attempts.find((a) => a.finishedAt === null);
   const open = (id: string) => {
     props.onClose();
     openAttempt(id);
@@ -48,7 +49,7 @@ export default function CollectionDetailModal(props: {
               <button
                 type="button"
                 class="primary"
-                disabled={!detail() || detail()?.questions === 0}
+                disabled={!current()?.questions}
                 onClick={() => setStarting(true)}
               >
                 Iniciar
@@ -66,61 +67,53 @@ export default function CollectionDetailModal(props: {
           </Show>
         }
       >
-        <Switch>
-          <Match when={detail.error as unknown}>
-            {(error) => (
-              <ErrorState error={error()} onRetry={() => refetch()} busy={detail.loading} />
-            )}
-          </Match>
-          <Match when={detail.loading}>
-            <Loading />
-          </Match>
-          <Match when={detail()}>
-            {(loaded) => (
-              <>
-                <dl class="facts">
-                  <dt>Questões</dt>
-                  <dd data-testid="collection-questions">{questionCount(loaded().questions)}</dd>
-                  <Show when={loaded().contest}>
-                    <dt>Concurso</dt>
-                    <dd>{loaded().contest}</dd>
-                  </Show>
-                  <Show when={loaded().board}>
-                    <dt>Banca</dt>
-                    <dd>{loaded().board}</dd>
-                  </Show>
-                  <dt>Criado em</dt>
-                  <dd>{formatDate(loaded().createdAt)}</dd>
-                </dl>
-                <h3>Tentativas</h3>
-                <Show
-                  when={loaded().attempts.length > 0}
-                  fallback={<EmptyState title="Nenhuma tentativa ainda." />}
-                >
-                  <ul class="attempts">
-                    <For each={loaded().attempts}>
-                      {(attempt) => (
-                        <li>
-                          <button
-                            type="button"
-                            class="link-button"
-                            onClick={() => open(attempt.id)}
-                          >
-                            {attempt.finishedAt ? "Ver resultado" : "Continuar"}
-                          </button>{" "}
-                          {formatDate(attempt.startedAt)} · {modeLabel[attempt.feedbackMode]} ·{" "}
-                          {attempt.finishedAt
-                            ? `concluída, ${attempt.answered} de ${attempt.total} respondidas`
-                            : `em andamento, ${attempt.answered} de ${attempt.total} respondidas`}
-                        </li>
-                      )}
-                    </For>
-                  </ul>
+        <ResourceView
+          value={detail()}
+          error={() => detail.error}
+          pending={detail.loading}
+          retrying={detail.loading}
+          onRetry={() => refetch()}
+        >
+          {(loaded) => (
+            <>
+              <dl class="facts">
+                <dt>Questões</dt>
+                <dd data-testid="collection-questions">{questionCount(loaded().questions)}</dd>
+                <Show when={loaded().contest}>
+                  <dt>Concurso</dt>
+                  <dd>{loaded().contest}</dd>
                 </Show>
-              </>
-            )}
-          </Match>
-        </Switch>
+                <Show when={loaded().board}>
+                  <dt>Banca</dt>
+                  <dd>{loaded().board}</dd>
+                </Show>
+                <dt>Criado em</dt>
+                <dd>{formatDate(loaded().createdAt)}</dd>
+              </dl>
+              <h3>Tentativas</h3>
+              <Show
+                when={loaded().attempts.length > 0}
+                fallback={<EmptyState title="Nenhuma tentativa ainda." />}
+              >
+                <ul class="attempts">
+                  <For each={loaded().attempts}>
+                    {(attempt) => (
+                      <li>
+                        <button type="button" class="link-button" onClick={() => open(attempt.id)}>
+                          {attempt.finishedAt ? "Ver resultado" : "Continuar"}
+                        </button>{" "}
+                        {formatDate(attempt.startedAt)} · {modeLabel[attempt.feedbackMode]} ·{" "}
+                        {attempt.finishedAt
+                          ? `concluída, ${attempt.answered} de ${attempt.total} respondidas`
+                          : `em andamento, ${attempt.answered} de ${attempt.total} respondidas`}
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
+            </>
+          )}
+        </ResourceView>
       </Modal>
     </Show>
   );

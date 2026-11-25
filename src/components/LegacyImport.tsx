@@ -3,6 +3,7 @@ import { Match, Show, Switch, createSignal } from "solid-js";
 import { api } from "../api";
 import type { LegacyImportReport } from "../bindings/LegacyImportReport";
 import type { Busy } from "../pages/settings/busy";
+import { errorMessage, InlineError } from "./states";
 import { showToast } from "./toasts";
 
 export function reportSummary(report: LegacyImportReport) {
@@ -43,7 +44,7 @@ export default function LegacyImport(props: {
         props.onImported?.(outcome.report);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setImporting(false);
     }
@@ -77,9 +78,7 @@ export default function LegacyImport(props: {
         </Match>
       </Switch>
       <Show when={error()}>
-        <p class="error" role="alert">
-          {error()}
-        </p>
+        <InlineError>{error()}</InlineError>
       </Show>
     </section>
   );

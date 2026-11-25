@@ -1,7 +1,7 @@
-import { For, Match, Show, Switch, createResource, createSignal } from "solid-js";
+import { For, Show, createResource, createSignal } from "solid-js";
 import { api } from "../../api";
 import type { CollectionSummary } from "../../bindings/CollectionSummary";
-import { EmptyState, ErrorState, Loading } from "../../components/states";
+import { EmptyState, Loading, ResourceView } from "../../components/states";
 import CollectionDetailModal from "./CollectionDetailModal";
 import { formatDate, formatNumber, questionCount } from "../../format";
 
@@ -81,72 +81,69 @@ export default function CollectionsView() {
         </Show>
       </div>
 
-      <Switch>
-        <Match when={result.error as unknown}>
-          {(error) => (
-            <ErrorState error={error()} onRetry={() => refetch()} busy={result.loading} />
-          )}
-        </Match>
-        <Match when={!current()}>
-          <Loading variant="skeleton" label="Carregando cadernos…" />
-        </Match>
-        <Match when={current()?.total === 0}>
+      <ResourceView
+        value={current()?.total ? current() : undefined}
+        error={() => result.error}
+        pending={!current()}
+        retrying={result.loading}
+        onRetry={() => refetch()}
+        placeholder={<Loading variant="skeleton" label="Carregando cadernos…" />}
+        empty={
           <EmptyState title={filtering() ? "Nenhum caderno encontrado." : "Nenhum caderno ainda."}>
             <Show when={filtering()}>
               <p class="muted">Tente outra busca ou limpe os filtros.</p>
             </Show>
           </EmptyState>
-        </Match>
-        <Match when={current()}>
-          {(loaded) => (
-            <>
-              <p class="muted" aria-live="polite">
-                {formatNumber(loaded().total)} {loaded().total === 1 ? "caderno" : "cadernos"}
-              </p>
-              <ul class="collection-list" aria-label="Cadernos">
-                <For each={loaded().items}>
-                  {(collection) => (
-                    <li>
-                      <button
-                        type="button"
-                        class="collection-row"
-                        onClick={() => setSelected(collection)}
-                      >
-                        <span class="collection-title">{collection.title}</span>
-                        <span class="collection-meta">
-                          <Show when={collection.contest}>
-                            <span class="tag">{collection.contest}</span>
-                          </Show>
-                          <Show when={collection.board}>
-                            <span class="tag">{collection.board}</span>
-                          </Show>
-                          <span>{questionCount(collection.questions)}</span>
-                          <span class="muted">{status(collection)}</span>
-                        </span>
-                      </button>
-                    </li>
-                  )}
-                </For>
-              </ul>
-              <nav class="pager" aria-label="Páginas">
-                <button type="button" disabled={page() === 0} onClick={() => setPage(page() - 1)}>
-                  Anterior
-                </button>
-                <span>
-                  Página {page() + 1} de {pages()}
-                </span>
-                <button
-                  type="button"
-                  disabled={page() + 1 >= pages()}
-                  onClick={() => setPage(page() + 1)}
-                >
-                  Próxima
-                </button>
-              </nav>
-            </>
-          )}
-        </Match>
-      </Switch>
+        }
+      >
+        {(loaded) => (
+          <>
+            <p class="muted" aria-live="polite">
+              {formatNumber(loaded().total)} {loaded().total === 1 ? "caderno" : "cadernos"}
+            </p>
+            <ul class="collection-list" aria-label="Cadernos">
+              <For each={loaded().items}>
+                {(collection) => (
+                  <li>
+                    <button
+                      type="button"
+                      class="collection-row"
+                      onClick={() => setSelected(collection)}
+                    >
+                      <span class="collection-title">{collection.title}</span>
+                      <span class="collection-meta">
+                        <Show when={collection.contest}>
+                          <span class="tag">{collection.contest}</span>
+                        </Show>
+                        <Show when={collection.board}>
+                          <span class="tag">{collection.board}</span>
+                        </Show>
+                        <span>{questionCount(collection.questions)}</span>
+                        <span class="muted">{status(collection)}</span>
+                      </span>
+                    </button>
+                  </li>
+                )}
+              </For>
+            </ul>
+            <nav class="pager" aria-label="Páginas">
+              <button type="button" disabled={page() === 0} onClick={() => setPage(page() - 1)}>
+                Anterior
+              </button>
+              <span>
+                Página {page() + 1} de {pages()}
+              </span>
+              <button
+                type="button"
+                disabled={page() + 1 >= pages()}
+                onClick={() => setPage(page() + 1)}
+              >
+                Próxima
+              </button>
+            </nav>
+          </>
+        )}
+      </ResourceView>
 
       <Show when={selected()}>
         {(collection) => (

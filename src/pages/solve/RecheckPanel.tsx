@@ -1,7 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createSignal, on } from "solid-js";
 import type { RecheckView } from "../../bindings/RecheckView";
 import type { ResponseView } from "../../bindings/ResponseView";
-import { errorMessage } from "../../components/states";
+import { errorMessage, InlineError } from "../../components/states";
 import { optionLetters } from "../../format";
 
 type State =
@@ -25,6 +25,14 @@ export default function RecheckPanel(props: {
   onCancel: () => void;
 }) {
   const [state, setState] = createSignal<State>({ step: "idle" });
+  const error = () => {
+    const current = state();
+    return current.step === "error" ? current.message : undefined;
+  };
+  const proposal = () => {
+    const current = state();
+    return current.step === "done" ? current.result : undefined;
+  };
   // A new question starts clean.
   createEffect(
     on(
@@ -67,11 +75,7 @@ export default function RecheckPanel(props: {
           <button type="button" onClick={() => void ask()}>
             Pedir revisão à IA
           </button>
-          <Show when={state().step === "error"}>
-            <p class="error" role="alert">
-              {(state() as { step: "error"; message: string }).message}
-            </p>
-          </Show>
+          <Show when={error()}>{(message) => <InlineError>{message()}</InlineError>}</Show>
         </Match>
         <Match when={state().step === "asking"}>
           <p role="status">Consultando a IA… isto pode levar alguns minutos.</p>
@@ -79,79 +83,74 @@ export default function RecheckPanel(props: {
             Cancelar
           </button>
         </Match>
-        <Match when={state().step === "done"}>
-          {(() => {
-            const result = () => (state() as { step: "done"; result: RecheckView }).result;
-            return (
-              <section aria-label="Revisão da IA">
-                <p>
-                  <strong>{verdictText[result().verdict]}</strong>
-                </p>
-                <Show when={result().correctedKey}>
-                  {(key) => (
-                    <p>
-                      Gabarito sugerido: <strong>{letter(key())}</strong>.
-                    </p>
-                  )}
-                </Show>
-                <p>{result().reasoning}</p>
-                <Show when={result().sources.length > 0}>
-                  <h4>Fontes</h4>
-                  <ul class="refs">
-                    <For each={result().sources}>{(source) => <li>{source}</li>}</For>
-                  </ul>
-                </Show>
-                <Show
-                  when={result().correctedKey}
-                  fallback={
-                    <>
-                      <Show when={result().verdict === "ambiguous"}>
-                        <p class="muted">
-                          Se a questão estiver mal formulada, use “Anular questão”.
-                        </p>
-                      </Show>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          props.onDismiss();
-                          setState({ step: "idle" });
-                        }}
-                      >
-                        Fechar
-                      </button>
-                    </>
-                  }
-                >
-                  {(key) => (
-                    <div class="reveal-actions">
-                      <button
-                        type="button"
-                        class="primary"
-                        onClick={() => {
-                          props.onApply();
-                          setState({ step: "idle" });
-                        }}
-                      >
-                        Aplicar novo gabarito ({letter(key())})
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          props.onDismiss();
-                          setState({ step: "idle" });
-                        }}
-                      >
-                        Manter o gabarito atual
-                      </button>
-                      <span class="muted">
-                        A troca vale para todas as tentativas, inclusive as anteriores.
-                      </span>
-                    </div>
-                  )}
-                </Show>
-              </section>
-            );
-          })()}
+        <Match when={proposal()}>
+          {(result) => (
+            <section aria-label="Revisão da IA">
+              <p>
+                <strong>{verdictText[result().verdict]}</strong>
+              </p>
+              <Show when={result().correctedKey}>
+                {(key) => (
+                  <p>
+                    Gabarito sugerido: <strong>{letter(key())}</strong>.
+                  </p>
+                )}
+              </Show>
+              <p>{result().reasoning}</p>
+              <Show when={result().sources.length > 0}>
+                <h4>Fontes</h4>
+                <ul class="refs">
+                  <For each={result().sources}>{(source) => <li>{source}</li>}</For>
+                </ul>
+              </Show>
+              <Show
+                when={result().correctedKey}
+                fallback={
+                  <>
+                    <Show when={result().verdict === "ambiguous"}>
+                      <p class="muted">Se a questão estiver mal formulada, use “Anular questão”.</p>
+                    </Show>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        props.onDismiss();
+                        setState({ step: "idle" });
+                      }}
+                    >
+                      Fechar
+                    </button>
+                  </>
+                }
+              >
+                {(key) => (
+                  <div class="reveal-actions">
+                    <button
+                      type="button"
+                      class="primary"
+                      onClick={() => {
+                        props.onApply();
+                        setState({ step: "idle" });
+                      }}
+                    >
+                      Aplicar novo gabarito ({letter(key())})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        props.onDismiss();
+                        setState({ step: "idle" });
+                      }}
+                    >
+                      Manter o gabarito atual
+                    </button>
+                    <span class="muted">
+                      A troca vale para todas as tentativas, inclusive as anteriores.
+                    </span>
+                  </div>
+                )}
+              </Show>
+            </section>
+          )}
         </Match>
       </Switch>
     </div>

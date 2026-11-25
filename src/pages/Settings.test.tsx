@@ -22,6 +22,7 @@ function backend(
   importing?: Promise<boolean>,
   backingUp?: Promise<unknown>,
   catalog?: Catalog,
+  loadLegacyStatus = () => ({ report: null, bankEmpty: false }),
 ) {
   const calls: { command: string; args: unknown }[] = [];
   let stored = initial;
@@ -53,7 +54,7 @@ function backend(
       case "import_data":
         return importing ?? false;
       case "legacy_import_status":
-        return { report: null, bankEmpty: false };
+        return loadLegacyStatus();
       case "ai_catalog":
         if (!catalog) throw new Error("no catalog");
         return catalog;
@@ -118,6 +119,25 @@ beforeEach(() => {
 });
 
 describe("Configurações", () => {
+  it("lets the user retry loading the legacy import status", async () => {
+    const loadLegacyStatus = vi.fn(() => ({ report: null, bankEmpty: false }));
+    loadLegacyStatus.mockImplementationOnce(() => {
+      throw new Error("Falhou ao consultar o banco antigo.");
+    });
+    backend(defaults, undefined, undefined, undefined, loadLegacyStatus);
+    const user = userEvent.setup();
+    render(() => <Settings />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Falhou ao consultar o banco antigo.",
+    );
+    await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
+
+    expect(await screen.findByRole("heading", { name: "Banco do Caderno Local" })).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(loadLegacyStatus).toHaveBeenCalledTimes(2);
+  });
+
   it("shows the four roles with the defaults", async () => {
     backend();
     render(() => <Settings />);

@@ -1,65 +1,17 @@
 import { Match, Show, Switch, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { api } from "../../api";
 import type { AttemptView } from "../../bindings/AttemptView";
-import type { Score } from "../../bindings/Score";
-import Modal from "../../components/Modal";
 import { ErrorState, Loading } from "../../components/states";
 import { showError, showToast } from "../../components/toasts";
 import Navigator from "./Navigator";
 import QuestionCard from "./QuestionCard";
+import ResolverDialogs, { type ResolverDialog } from "./ResolverDialogs";
+import ScoreSummary from "./ScoreSummary";
+import ShortcutHelp from "./ShortcutHelp";
 import { loadShortcuts, shortcutsEnabled } from "../../shortcuts";
-import { formatPercent, optionLetters } from "../../format";
+import { optionLetters } from "../../format";
 
 const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
-
-/** End-of-attempt recap: points over evaluated questions, achievement and the four counts. The
- * counts carry a shape as well as a colour. Comparing with the previous attempt is left out:
- * no existing command returns the scores of earlier attempts. */
-function ScoreSummary(props: { score: Score }) {
-  let section: HTMLElement | undefined;
-  onMount(() => section?.focus());
-  return (
-    <section class="card score recap" aria-label="Resultado" tabindex="-1" ref={section}>
-      <h2>Resultado</h2>
-      <p class="recap-headline" data-testid="recap-points">
-        <strong>
-          {props.score.correct} de {props.score.evaluated}
-        </strong>{" "}
-        pontos · {formatPercent(props.score.achievement)} de aproveitamento
-      </p>
-      <ul class="recap-counts" aria-label="Contagem por resultado">
-        <li class="recap-correct">
-          <span class="recap-glyph" aria-hidden="true">
-            ✓
-          </span>
-          {props.score.correct} {props.score.correct === 1 ? "certa" : "certas"}
-        </li>
-        <li class="recap-wrong">
-          <span class="recap-glyph" aria-hidden="true">
-            ✕
-          </span>
-          {props.score.wrong} {props.score.wrong === 1 ? "errada" : "erradas"}
-        </li>
-        <li class="recap-blank">
-          <span class="recap-glyph" aria-hidden="true">
-            ○
-          </span>
-          {props.score.blank} em branco
-        </li>
-        <li class="recap-annulled">
-          <span class="recap-glyph recap-struck" aria-hidden="true">
-            –
-          </span>
-          {props.score.annulled} {props.score.annulled === 1 ? "anulada" : "anuladas"}
-        </li>
-      </ul>
-      <dl class="facts">
-        <dt>Acerto entre respondidas</dt>
-        <dd>{formatPercent(props.score.accuracy)}</dd>
-      </dl>
-    </section>
-  );
-}
 
 /** Whether a key press belongs to a text field, where shortcuts must not fire. */
 const typing = (target: EventTarget | null) =>
@@ -71,7 +23,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
   const [view, setView] = createSignal<AttemptView>();
   const [loadError, setLoadError] = createSignal<unknown>();
   const [index, setIndex] = createSignal(0);
-  const [dialog, setDialog] = createSignal<"finish" | "abandon" | null>(null);
+  const [dialog, setDialog] = createSignal<ResolverDialog>(null);
   const [eliminating, setEliminating] = createSignal(false);
   // Estudo: the option marked on this question but not yet confirmed with Enter.
   const [pending, setPending] = createSignal<string | null>(null);
@@ -432,94 +384,25 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                 <button type="button" disabled={index() === 0} onClick={() => move(-1)}>
                   ← Anterior
                 </button>
-                <div class="shortcuts" ref={shortcutsBox}>
-                  <button
-                    type="button"
-                    class="shortcuts-toggle"
-                    ref={shortcutsToggle}
-                    aria-expanded={helpOpen()}
-                    aria-controls="shortcuts-help"
-                    onClick={() => setHelpOpen(!helpOpen())}
-                  >
-                    Atalhos
-                  </button>
-                  <div
-                    id="shortcuts-help"
-                    class="shortcuts-panel"
-                    role="group"
-                    aria-label="Atalhos de teclado"
-                    hidden={!helpOpen()}
-                  >
-                    <Show
-                      when={shortcutsEnabled()}
-                      fallback={<p>Os atalhos de uma tecla estão desativados em Configurações.</p>}
-                    >
-                      <ul>
-                        <li>
-                          <kbd>A</kbd>–<kbd>E</kbd> (ou <kbd>C</kbd>/<kbd>E</kbd>){" "}
-                          {attempt().feedbackMode === "study" ? "escolhe" : "responde"}
-                        </li>
-                        <Show when={attempt().feedbackMode === "study"}>
-                          <li>
-                            <kbd>Enter</kbd> confirma
-                          </li>
-                        </Show>
-                        <li>
-                          <kbd>X</kbd> e uma letra elimina
-                        </li>
-                        <li>
-                          <kbd>F</kbd> marca para revisar
-                        </li>
-                      </ul>
-                    </Show>
-                    <p>
-                      <kbd>←</kbd> <kbd>→</kbd> navegam entre as questões.
-                    </p>
-                  </div>
-                </div>
+                <ShortcutHelp
+                  feedbackMode={attempt().feedbackMode}
+                  open={helpOpen()}
+                  panelRef={(element) => (shortcutsBox = element)}
+                  toggleRef={(element) => (shortcutsToggle = element)}
+                  onToggle={() => setHelpOpen(!helpOpen())}
+                />
                 <button type="button" disabled={index() >= total() - 1} onClick={() => move(1)}>
                   Próxima →
                 </button>
               </footer>
-              <Show when={dialog() === "finish"}>
-                <Modal
-                  title="Finalizar tentativa?"
-                  onClose={() => setDialog(null)}
-                  footer={
-                    <>
-                      <button type="button" onClick={() => setDialog(null)}>
-                        Continuar resolvendo
-                      </button>
-                      <button type="button" class="primary" onClick={() => void finish()}>
-                        Finalizar
-                      </button>
-                    </>
-                  }
-                >
-                  <p data-testid="finish-summary">
-                    {answered()} respondidas e {total() - answered()} em branco.
-                  </p>
-                  <p class="muted">Depois de finalizar, as respostas não podem mais mudar.</p>
-                </Modal>
-              </Show>
-              <Show when={dialog() === "abandon"}>
-                <Modal
-                  title="Abandonar tentativa?"
-                  onClose={() => setDialog(null)}
-                  footer={
-                    <>
-                      <button type="button" onClick={() => setDialog(null)}>
-                        Voltar
-                      </button>
-                      <button type="button" class="primary danger" onClick={() => void abandon()}>
-                        Abandonar
-                      </button>
-                    </>
-                  }
-                >
-                  <p>A tentativa e suas respostas serão apagadas e não entram no histórico.</p>
-                </Modal>
-              </Show>
+              <ResolverDialogs
+                dialog={dialog()}
+                answered={answered()}
+                total={total()}
+                onClose={() => setDialog(null)}
+                onFinish={() => void finish()}
+                onAbandon={() => void abandon()}
+              />
             </div>
           )}
         </Match>

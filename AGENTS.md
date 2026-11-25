@@ -66,6 +66,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src/navigation.ts` | Navigation helpers usable outside router components. |
 | `src/bindings/` | TypeScript types **generated** from Rust by `cargo test` (ts-rs). Committed; never edit by hand. |
 | `src/routes.ts`, `src/pages/` | Route table (pt-BR labels, menu placement) and one component per page. |
+| `src/pages/solve/` | Attempt presentation, including the question card, navigator, score recap, keyboard help and confirmation dialogs. |
 | `src/components/` | Shared UI: `Modal`, toasts (`showToast`, `showError`; `Toaster` lives in the layout), `Loading` / `EmptyState` / `ErrorState`, and `errorMessage()` for anything thrown. Reuse these instead of writing new ones. |
 | `docs/` | Spec, legacy analysis, and notes such as `docs/ai-cli.md` (verified CLI flags). |
 

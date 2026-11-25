@@ -55,8 +55,8 @@ fn world(
             let outcome = import_questions(tx, vec![input], T0)?;
             let id = outcome.ids_by_local_id["q1"].clone();
             tx.execute(
-                "INSERT INTO collections (id, title, kind, created_at) VALUES ('c1', 'Caderno', 'imported', ?1)",
-                params![T0],
+                "INSERT INTO collections (id, title, kind, created_at) VALUES ('c1', 'Caderno', ?1, ?2)",
+                params![crate::bank::catalog::CollectionKind::Imported, T0],
             )?;
             tx.execute(
                 "INSERT INTO collection_items (collection_id, position, question_id) VALUES ('c1', 0, ?1)",

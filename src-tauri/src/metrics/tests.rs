@@ -1,4 +1,6 @@
 use super::*;
+use crate::attempts::SourceKind;
+use crate::bank::catalog::CollectionKind;
 use crate::bank::question::tests::multiple;
 use crate::bank::{TopicPath, import_questions};
 use crate::db::Database;
@@ -73,8 +75,8 @@ impl Fixture {
             .transaction(|tx| {
                 tx.execute(
                     "INSERT INTO collections (id, title, kind, contest, board, created_at)
-                     VALUES (?1, ?1, 'imported', ?2, ?3, ?4)",
-                    params![id, contest, board, T0],
+                     VALUES (?1, ?1, ?2, ?3, ?4, ?5)",
+                    params![id, CollectionKind::Imported, contest, board, T0],
                 )?;
                 for (i, local) in locals.iter().enumerate() {
                     tx.execute(
@@ -93,7 +95,7 @@ impl Fixture {
     fn attempt(
         &self,
         id: &str,
-        mode: &str,
+        mode: FeedbackMode,
         finished_at: Option<&str>,
         responses: &[(&str, Option<&str>)],
     ) {
@@ -111,7 +113,7 @@ impl Fixture {
     fn attempt_at(
         &self,
         id: &str,
-        mode: &str,
+        mode: FeedbackMode,
         finished_at: Option<&str>,
         responses: &[(&str, Option<&str>, &str)],
     ) {
@@ -131,8 +133,8 @@ impl Fixture {
             .transaction(|tx| {
                 tx.execute(
                     "INSERT INTO attempts (id, source_kind, feedback_mode, started_at, finished_at)
-                     VALUES (?1, 'collection', ?2, ?3, ?4)",
-                    params![id, mode, T0, finished_at],
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![id, SourceKind::Collection, mode, T0, finished_at],
                 )?;
                 for (i, (question_id, choice, answered_at)) in resolved.iter().enumerate() {
                     tx.execute(
@@ -174,13 +176,13 @@ fn latest_answer_per_question_wins() {
     let f = fixture(&[("q1", &[D])]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o1"))],
     );
     f.attempt(
         "a2",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-03T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
@@ -198,13 +200,13 @@ fn the_latest_answer_is_the_one_given_last_even_when_attempts_overlap() {
     // a1 finishes last but its answer was given first; a2 finishes first with the later answer.
     f.attempt_at(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-05T10:00:00.000Z"),
         &[("q1", Some("o1"), "2026-11-02T10:00:00.000Z")],
     );
     f.attempt_at(
         "a2",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-03T10:00:00.000Z"),
         &[("q1", Some("o0"), "2026-11-03T09:00:00.000Z")],
     );
@@ -216,7 +218,7 @@ fn the_latest_answer_is_the_one_given_last_even_when_attempts_overlap() {
 #[test]
 fn unfinished_attempts_are_ignored() {
     let f = fixture(&[("q1", &[D])]);
-    f.attempt("a1", "study", None, &[("q1", Some("o0"))]);
+    f.attempt("a1", FeedbackMode::Study, None, &[("q1", Some("o0"))]);
     let p = f.all();
     assert_eq!(p.overall.score.evaluated, 0);
     assert_eq!(p.overall.available, 1);
@@ -230,7 +232,7 @@ fn a_question_counts_once_per_group_even_with_several_topics() {
     let f = fixture(&[("q1", &[D, D2]), ("q2", &[D2]), ("q3", &[P])]);
     f.attempt(
         "a1",
-        "exam",
+        FeedbackMode::Exam,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0")), ("q2", Some("o1")), ("q3", Some("o0"))],
     );
@@ -260,13 +262,13 @@ fn filters_apply_before_the_latest_answer_is_picked() {
     // Study attempt answered wrong, then a later Simulado answered right.
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o1"))],
     );
     f.attempt(
         "a2",
-        "exam",
+        FeedbackMode::Exam,
         Some("2026-11-03T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
@@ -293,7 +295,7 @@ fn bank_with_tagged_collections() -> Fixture {
     f.collection("c3", None, None, &["q3"]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0")), ("q2", Some("o1")), ("q3", Some("o0"))],
     );
@@ -372,7 +374,7 @@ fn an_answer_key_correction_rescores_results() {
     let f = fixture(&[("q1", &[D])]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o1"))],
     );
@@ -393,7 +395,7 @@ fn annulment_changes_the_denominator() {
     let f = fixture(&[("q1", &[D]), ("q2", &[D])]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0")), ("q2", Some("o1"))],
     );
@@ -418,7 +420,7 @@ fn blanks_count_as_evaluated_but_not_as_answered() {
     let f = fixture(&[("q1", &[D]), ("q2", &[D]), ("q3", &[D]), ("q4", &[D])]);
     f.attempt(
         "a1",
-        "exam",
+        FeedbackMode::Exam,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0")), ("q2", Some("o1")), ("q3", None)],
     );
@@ -444,7 +446,12 @@ fn performance_with_strong_weak_and_unseen_groups() -> Performance {
         strong.iter().map(|k| (k.as_str(), Some("o0"))).collect();
     responses.push(("w1", Some("o1")));
     responses.push(("w2", Some("o0")));
-    f.attempt("a1", "study", Some("2026-11-02T10:00:00.000Z"), &responses);
+    f.attempt(
+        "a1",
+        FeedbackMode::Study,
+        Some("2026-11-02T10:00:00.000Z"),
+        &responses,
+    );
     f.all()
 }
 
@@ -484,7 +491,12 @@ fn weekly_trend_uses_iso_weeks_in_local_time() {
         ("q1", Some("o0"), "2026-11-23T02:30:00.000Z"), // Sun 23:30 local → week of 16
         ("q1", Some("o0"), "2026-11-23T03:00:00.000Z"), // Mon 00:00 local → week of 23
     ];
-    f.attempt_at("a1", "study", Some("2026-11-24T10:00:00.000Z"), &answers);
+    f.attempt_at(
+        "a1",
+        FeedbackMode::Study,
+        Some("2026-11-24T10:00:00.000Z"),
+        &answers,
+    );
     let local = f.query(&PerformanceQuery {
         utc_offset_minutes: -180,
         ..Default::default()
@@ -522,7 +534,7 @@ fn weeks_cross_the_year_boundary() {
     // Thursday 1 Jan 2026 belongs to the ISO week starting Monday 29 Dec 2025.
     f.attempt_at(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-01-05T10:00:00.000Z"),
         &[("q1", Some("o0"), "2026-01-01T12:00:00.000Z")],
     );
@@ -533,7 +545,7 @@ fn export_with_special_characters() -> String {
     let f = fixture(&[("q1", &[("=HYPERLINK(\"x\")", "Mat;éria", "-Assunto")])]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
@@ -614,9 +626,11 @@ fn metrics_timing() {
             for a in 0..50 {
                 tx.execute(
                     "INSERT INTO attempts (id, source_kind, feedback_mode, started_at, finished_at)
-                     VALUES (?1, 'collection', 'study', ?2, ?3)",
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
                     params![
                         format!("a{a}"),
+                        SourceKind::Collection,
+                        FeedbackMode::Study,
                         T0,
                         format!("2026-{:02}-{:02}T10:00:00.000Z", 1 + a / 28, 1 + a % 28)
                     ],
@@ -656,7 +670,7 @@ fn topic_accuracy_feeds_the_bank_tree() {
     let f = fixture(&[("q1", &[D]), ("q2", &[D]), ("q3", &[P])]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0")), ("q2", Some("o1"))],
     );
@@ -679,14 +693,14 @@ fn a_blank_in_a_newer_attempt_does_not_hide_an_earlier_answer() {
     let f = fixture(&[("q1", &[D]), ("q2", &[D])]);
     f.attempt(
         "a1",
-        "exam",
+        FeedbackMode::Exam,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0")), ("q2", None)],
     );
     // A later Simulado leaves both blank.
     f.attempt(
         "a2",
-        "exam",
+        FeedbackMode::Exam,
         Some("2026-11-03T10:00:00.000Z"),
         &[("q1", None), ("q2", None)],
     );
@@ -706,7 +720,7 @@ fn tags_are_compared_without_surrounding_whitespace() {
     f.collection("c1", Some("TRT "), Some(" FGV"), &["q1"]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
@@ -725,7 +739,7 @@ fn absurd_time_zone_offsets_are_clamped() {
     let f = fixture(&[("q1", &[D])]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
@@ -751,13 +765,13 @@ fn home_counts_as_held_only_the_due_reviews_that_sit_in_an_open_attempt() {
     // q1: open attempt. q2: only a finished attempt. q3: no attempt. q4: open attempt, not due.
     f.attempt(
         "open",
-        "study",
+        FeedbackMode::Study,
         None,
         &[("q1", Some("o0")), ("q4", Some("o0"))],
     );
     f.attempt(
         "done",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q2", Some("o0"))],
     );
@@ -791,15 +805,15 @@ fn home_with_bank_activity() -> HomeSummary {
     f.collection("c1", None, None, &["q1", "q2"]);
     f.attempt(
         "done",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
     f.db.transaction(|tx| {
         tx.execute(
             "INSERT INTO attempts (id, source_kind, source_ref, feedback_mode, started_at)
-             VALUES ('open', 'collection', 'c1', 'exam', '2026-11-05T09:00:00.000Z')",
-            [],
+             VALUES ('open', ?1, 'c1', ?2, '2026-11-05T09:00:00.000Z')",
+            params![SourceKind::Collection, FeedbackMode::Exam],
         )?;
         for (i, local) in ["q1", "q2"].iter().enumerate() {
             tx.execute(
@@ -815,8 +829,8 @@ fn home_with_bank_activity() -> HomeSummary {
         )?;
         tx.execute(
             "INSERT INTO drafts (id, created_at, status, request, package) VALUES
-               ('d1', ?1, 'review', '{}', '{}'), ('d2', ?1, 'discarded', '{}', '{}')",
-            params![T0],
+               ('d1', ?1, ?2, '{}', '{}'), ('d2', ?1, ?3, '{}', '{}')",
+            params![T0, DraftStatus::Review, DraftStatus::Discarded],
         )?;
         Ok(())
     })

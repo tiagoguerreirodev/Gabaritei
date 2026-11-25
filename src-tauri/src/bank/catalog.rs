@@ -465,8 +465,8 @@ mod tests {
         db.transaction(|tx| {
             tx.execute(
                 "INSERT INTO collections (id, title, kind, contest, board, created_at)
-                 VALUES (?1, ?2, 'imported', ?3, ?4, ?5)",
-                params![id, title, contest, board, NOW],
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![id, title, CollectionKind::Imported, contest, board, NOW],
             )?;
             for (i, q) in questions.iter().enumerate() {
                 tx.execute(
@@ -757,11 +757,12 @@ mod tests {
     fn collection_detail_lists_attempts_newest_first() {
         let db = sample_collections();
         db.with(|c| {
-            c.execute_batch(
+            c.execute(
                 "INSERT INTO attempts (id, source_kind, source_ref, feedback_mode, started_at, finished_at)
-                 VALUES ('a1', 'collection', 'c1', 'exam', '2026-11-01T10:00:00.000Z', '2026-11-01T11:00:00.000Z'),
-                        ('a2', 'collection', 'c1', 'study', '2026-11-02T10:00:00.000Z', NULL),
-                        ('a3', 'collection', 'c2', 'study', '2026-11-03T10:00:00.000Z', NULL);",
+                 VALUES ('a1', ?1, 'c1', ?2, '2026-11-01T10:00:00.000Z', '2026-11-01T11:00:00.000Z'),
+                        ('a2', ?1, 'c1', ?3, '2026-11-02T10:00:00.000Z', NULL),
+                        ('a3', ?1, 'c2', ?3, '2026-11-03T10:00:00.000Z', NULL)",
+                params![SourceKind::Collection, FeedbackMode::Exam, FeedbackMode::Study],
             )?;
             Ok(())
         })

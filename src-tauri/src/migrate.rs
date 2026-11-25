@@ -681,8 +681,8 @@ mod tests {
         f.db.with(|c| {
             c.execute(
                 "INSERT INTO collections (id, title, kind, created_at)
-                 VALUES ('c-alepa', 'Já existe', 'practice', ?1)",
-                [NOW],
+                 VALUES ('c-alepa', 'Já existe', ?1, ?2)",
+                params![CollectionKind::Practice, NOW],
             )?;
             Ok(())
         })

@@ -395,6 +395,26 @@ mod arguments {
     }
 
     #[test]
+    fn claude_gets_the_checker_schema_without_its_dialect_declaration() {
+        let mut job = spec(Agent::Claude, "claude".into());
+        job.schema =
+            serde_json::from_str(include_str!("../../../schemas/checker.schema.json")).unwrap();
+        let (args, _) = plan_for(&job);
+        let sent = args
+            .windows(2)
+            .find(|pair| pair[0] == "--json-schema")
+            .map(|pair| serde_json::from_str::<Value>(&pair[1]).unwrap())
+            .expect("the JSON schema argument");
+
+        let mut expected = job.schema;
+        assert_eq!(
+            expected.as_object_mut().unwrap().remove("$schema"),
+            Some(json!("https://json-schema.org/draft/2020-12/schema"))
+        );
+        assert_eq!(sent, expected);
+    }
+
+    #[test]
     fn claude_fast_adds_the_fast_mode_setting() {
         let mut job = spec(Agent::Claude, "claude".into());
         job.fast = true;

@@ -39,6 +39,10 @@ claude -p --output-format stream-json --verbose --json-schema '<schema>'
 
 - **Structured output:** the last `{"type":"result"}` event has `structured_output` (the answer),
   `is_error`, `total_cost_usd` and `result` (the text). No `structured_output` means invalid.
+- **Schema dialect:** Claude Code 2.1.331 rejects an explicit Draft 2020-12 declaration.
+  The Claude runner omits the top-level `$schema` from its CLI argument. The same checker schema
+  with its local `$defs` references returned structured output with this version. Codex's schema
+  file keeps the declaration.
 - **Isolation (verified):** the `system`/`init` event lists `tools` as only `Glob`, `Grep`, `Read`
   and `StructuredOutput`, no user plugins (only built-in ones) and no MCP servers. `--setting-sources ""`
   stops `~/.claude` and the project's settings and hooks from loading. Run in the temp folder, so no

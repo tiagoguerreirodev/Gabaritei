@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor, within } from "@solidjs/testing-libra
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { describe, expect, it, vi } from "vitest";
+import { api } from "../../api";
 import type { AttemptView } from "../../bindings/AttemptView";
 import type { FeedbackMode } from "../../bindings/FeedbackMode";
 import type { ResponseView } from "../../bindings/ResponseView";
@@ -647,24 +648,37 @@ describe("Resolver", () => {
     expect(calls.at(-1)).toEqual({ command: "abandon", args: { attemptId: "att" } });
   });
 
-  it("annuls a revealed question and undoes it", async () => {
-    const { user, calls } = await open("study");
+  it("hides annulment before reveal", async () => {
+    await open("study");
     expect(screen.queryByRole("button", { name: "Anular questão" })).not.toBeInTheDocument();
+  });
 
+  async function annulFirstQuestion(user: ReturnType<typeof userEvent.setup>) {
     await user.click(option("B"));
     await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("button", { name: "Anular questão" }));
+    await screen.findByRole("button", { name: "Desfazer anulação" });
+  }
 
-    const reveal = await screen.findByRole("region", { name: "Gabarito e explicação" });
-    await waitFor(() => expect(reveal).toHaveTextContent("Questão anulada"));
+  it("annuls a revealed question", async () => {
+    const { user, calls } = await open("study");
+    await annulFirstQuestion(user);
+
+    expect(screen.getByRole("region", { name: "Gabarito e explicação" })).toHaveTextContent(
+      "Questão anulada",
+    );
     expect(screen.getByRole("button", { name: /Questão 1, respondida, anulada/ })).toBeVisible();
+    expect(calls.at(-1)).toEqual({ command: "annul", args: { attemptId: "att", position: 0 } });
+  });
+
+  it("restores an annulled question", async () => {
+    const { user, calls } = await open("study");
+    await annulFirstQuestion(user);
+
+    const reveal = screen.getByRole("region", { name: "Gabarito e explicação" });
     await user.click(screen.getByRole("button", { name: "Desfazer anulação" }));
     await waitFor(() => expect(reveal).toHaveTextContent("Você acertou."));
-
-    expect(calls.filter((c) => ["annul", "unannul"].includes(c.command))).toEqual([
-      { command: "annul", args: { attemptId: "att", position: 0 } },
-      { command: "unannul", args: { attemptId: "att", position: 0 } },
-    ]);
+    expect(calls.at(-1)).toEqual({ command: "unannul", args: { attemptId: "att", position: 0 } });
   });
 });
 
@@ -895,11 +909,16 @@ describe("Resolver: answer-sheet UI", () => {
 });
 
 describe("Resolver: headings", () => {
-  it("has exactly one h1 while loading, on a load error and once loaded", async () => {
+  it("has one h1 while loading", () => {
     backend("study");
     render(() => <Resolver attemptId="att" onLeave={() => {}} />);
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Resolver");
+  });
+
+  it("has one h1 when loaded", async () => {
+    backend("study");
+    render(() => <Resolver attemptId="att" onLeave={() => {}} />);
     await screen.findByRole("article", { name: "Questão 1 de 3" });
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Caderno de teste");
@@ -961,6 +980,23 @@ it("merges an explanation while preserving newer answers and key changes", () =>
       answeredSecond,
     ],
   });
+});
+
+it("retries the attempt after a load failure with unrevealed questions still hidden", async () => {
+  backend("study");
+  const fetchAttempt = vi.spyOn(api, "attempt").mockRejectedValueOnce(new Error("Falhou."));
+  const user = userEvent.setup();
+  render(() => <Resolver attemptId="att" onLeave={() => {}} />);
+
+  try {
+    expect(await screen.findByRole("alert")).toHaveTextContent("Falhou.");
+    await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    await screen.findByRole("article", { name: "Questão 1 de 3" });
+    expect(fetchAttempt).toHaveBeenCalledTimes(2);
+    expectNoKey();
+  } finally {
+    fetchAttempt.mockRestore();
+  }
 });
 
 describe("Navigator", () => {

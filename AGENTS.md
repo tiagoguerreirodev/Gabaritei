@@ -70,7 +70,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src/pages/review/` | Package verdict counts, question preview lines and import or discard actions. |
 | `src/pages/settings/` | Settings sections, including backup controls and the backup relocation notice. |
 | `src/pages/solve/` | Attempt presentation, including the question card, navigator, score recap, keyboard shortcuts and confirmation dialogs. |
-| `src/components/` | Shared UI: `Modal`, toasts (`showToast`, `showError`; `Toaster` lives in the layout), `Loading` / `EmptyState` / `ErrorState`, and `errorMessage()` for anything thrown. Reuse these instead of writing new ones. |
+| `src/components/` | Shared UI: `Modal` and `ConfirmModal`, toasts (`showToast`, `showError`; `Toaster` lives in the layout), `ResourceView` for loading and retry states, `InlineError` for alerts, and `errorMessage()` for anything thrown. |
 | `docs/` | Spec, legacy analysis, and notes such as `docs/ai-cli.md` (verified CLI flags). |
 
 Rust modules (spec §5): `db`, `bank`, `attempts`, `metrics`, `learning`, `ai` (runner, `claude`, `codex`, prompts, roles, jobs, plus one submodule per task: generate, blind check, explain, recheck, review), `backup`, `migrate`, `clock`.

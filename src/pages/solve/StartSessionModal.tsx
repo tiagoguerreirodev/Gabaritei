@@ -3,7 +3,7 @@ import { api } from "../../api";
 import type { FeedbackMode } from "../../bindings/FeedbackMode";
 import type { TopicId } from "../../bindings/TopicId";
 import type { SessionSource } from "../../bindings/SessionSource";
-import { ErrorState } from "../../components/states";
+import { ResourceView } from "../../components/states";
 import Modal from "../../components/Modal";
 import { showError } from "../../components/toasts";
 import { feedbackModes, modeHint, modeLabel } from "../../labels";
@@ -92,31 +92,32 @@ export default function StartSessionModal(props: {
         </For>
       </fieldset>
       <Show when={props.source.kind === "topic"}>
-        <Show
-          when={!limits.error}
-          fallback={<ErrorState error={limits.error as unknown} onRetry={() => refetch()} />}
+        <ResourceView
+          value={limits()}
+          error={() => limits.error}
+          pending={limits.loading}
+          retrying={limits.loading}
+          onRetry={() => refetch()}
         >
-          <Show when={limits()}>
-            {(range) => (
-              <label class="count-field">
-                Quantidade de questões
-                <input
-                  type="number"
-                  min={range().min}
-                  max={range().max}
-                  step="1"
-                  value={count()}
-                  aria-invalid={!countValid()}
-                  onInput={(event) => setCount(Number(event.currentTarget.value))}
-                />
-                <span class="muted">
-                  Um número inteiro de {range().min} a {range().max}. Primeiro as inéditas, depois
-                  as respondidas há mais tempo.
-                </span>
-              </label>
-            )}
-          </Show>
-        </Show>
+          {(range) => (
+            <label class="count-field">
+              Quantidade de questões
+              <input
+                type="number"
+                min={range().min}
+                max={range().max}
+                step="1"
+                value={count()}
+                aria-invalid={!countValid()}
+                onInput={(event) => setCount(Number(event.currentTarget.value))}
+              />
+              <span class="muted">
+                Um número inteiro de {range().min} a {range().max}. Primeiro as inéditas, depois as
+                respondidas há mais tempo.
+              </span>
+            </label>
+          )}
+        </ResourceView>
       </Show>
     </Modal>
   );

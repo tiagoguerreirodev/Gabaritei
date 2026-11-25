@@ -6,6 +6,7 @@ import type { GenerationStatus } from "./bindings/GenerationStatus";
 import {
   applyGenerationStatus,
   cancelledMessage,
+  cancelledShortMessage,
   failedPrefix,
   generationStatus,
   cancelDiscardsDraft,
@@ -87,7 +88,7 @@ describe("generation stage state", () => {
     expect(generationStages()).toHaveLength(3);
   });
 
-  it("lists two stages for a re-check and never discards on cancel", () => {
+  it("lists two stages for a re-check", () => {
     applyGenerationStatus(running("recheck", "preparing"));
     expect(generationStage()).toBeNull();
     applyGenerationStatus(running("recheck", "checking"));
@@ -97,6 +98,10 @@ describe("generation stage state", () => {
     applyGenerationStatus(running("recheck", "resolving"));
     expect(generationStage()).toBe(1);
     expect(generationStageSentence()).toBe("Etapa 2 de 2: Resolvendo as contestações");
+  });
+
+  it("keeps the package when cancelling a re-check", () => {
+    applyGenerationStatus(running("recheck", "resolving"));
     expect(cancelDiscardsDraft()).toBe(false);
   });
 });
@@ -108,15 +113,30 @@ describe("outcome wording", () => {
     outcomeKind,
   });
 
-  it("tells a cancelled re-check from a cancelled generation", () => {
+  it("explains that cancelling a re-check keeps the package", () => {
     applyGenerationStatus(ended("recheck"));
     expect(cancelledMessage()).toBe("Conferência cancelada. O pacote foi mantido.");
-    expect(cancelledMessage(true)).toBe("Conferência cancelada.");
-    expect(failedPrefix()).toBe("A conferência falhou:");
+  });
+
+  it("explains that cancelling a generation saves nothing", () => {
     applyGenerationStatus(ended("generate"));
     expect(cancelledMessage()).toBe("Geração cancelada. Nada foi salvo.");
-    expect(cancelledMessage(true)).toBe("Geração cancelada.");
-    expect(failedPrefix()).toBe("A geração falhou:");
+  });
+
+  it.each([
+    ["recheck", "Conferência cancelada."],
+    ["generate", "Geração cancelada."],
+  ] as const)("uses a short cancellation message in the %s banner", (kind, message) => {
+    applyGenerationStatus(ended(kind));
+    expect(cancelledShortMessage()).toBe(message);
+  });
+
+  it.each([
+    ["recheck", "A conferência falhou:"],
+    ["generate", "A geração falhou:"],
+  ] as const)("uses the %s failure prefix", (kind, message) => {
+    applyGenerationStatus({ ...ended(kind), outcome: { kind: "failed", message: "Falhou." } });
+    expect(failedPrefix()).toBe(message);
   });
 });
 

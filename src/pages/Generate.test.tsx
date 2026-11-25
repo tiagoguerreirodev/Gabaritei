@@ -496,7 +496,7 @@ describe("Gerar", () => {
     expect(screen.getByLabelText("Estilo da banca")).toBeVisible();
   });
 
-  it("links to the finished package and lets the user dismiss the result", async () => {
+  it("links to the finished package", async () => {
     const calls = backend({
       ...idle,
       outcome: { kind: "draft", draftId: "d7" },
@@ -506,6 +506,22 @@ describe("Gerar", () => {
     const link = await screen.findByRole("link", { name: "Revisar pacote" });
     expect(link.getAttribute("href")).toContain("/revisar-pacote?id=d7");
     expect(calls.length).toBeGreaterThan(0);
+  });
+
+  it("lets the user dismiss the result", async () => {
+    const calls = backend({
+      ...idle,
+      outcome: { kind: "draft", draftId: "d7" },
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Dispensar" }));
+
+    expect(calls.some((call) => call.command === "generation_dismiss")).toBe(true);
+    await waitFor(() =>
+      expect(screen.queryByText("O pacote ficou pronto.")).not.toBeInTheDocument(),
+    );
   });
 
   it("shows why a generation failed", async () => {
@@ -546,7 +562,7 @@ describe("Aviso de geração", () => {
     expect(screen.getByRole("button", { name: "Cancelar" })).toBeVisible();
   });
 
-  it("renders stage labels and cancellation availability from the backend", async () => {
+  it("renders stage labels from the backend", async () => {
     backend({
       ...idle,
       running: true,
@@ -557,6 +573,19 @@ describe("Aviso de geração", () => {
     renderPage("/outra");
 
     expect(await screen.findByText(/Etapa 1 de 1: Conferindo este pacote/)).toBeVisible();
+  });
+
+  it("hides the cancel button when the backend disallows it", async () => {
+    backend({
+      ...idle,
+      running: true,
+      kind: "recheck",
+      stage: "checking",
+      canCancel: false,
+    });
+    renderPage("/outra");
+
+    expect(await screen.findByText(/Conferindo o pacote/)).toBeVisible();
     expect(screen.queryByRole("button", { name: "Cancelar" })).not.toBeInTheDocument();
   });
 

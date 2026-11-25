@@ -6,11 +6,11 @@ import QuestionImage from "../../components/QuestionImage";
 import RichText from "../../components/RichText";
 import { optionLetters } from "../../format";
 import { outcomeText } from "../../labels";
-
-const ANSWER_POP_MS = 600;
 import RecheckPanel from "./RecheckPanel";
 import type { OptionAction } from "./useResolverShortcuts";
 import { showError } from "../../components/toasts";
+
+const ANSWER_POP_MS = 600;
 
 /**
  * One question: stem, image, options with eliminate, flag, and, once revealed, the key and

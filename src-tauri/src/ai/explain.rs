@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::ondemand::OnDemand;
 use super::prompts;
 use super::secrets::Secrets;
-use super::settings::{self, Sources};
+use super::settings::{self, ResolvedClis, Sources};
 use super::task::{Task, ask};
 use crate::attempts::{self, AttemptView};
 use crate::bank::question::{MAX_EXPLANATION, MAX_REF, MAX_REFS};
@@ -36,9 +36,11 @@ fn invalid(message: &str) -> AppError {
 pub fn ask_explain(
     db: &Database,
     secrets: &Secrets,
+    clis: &ResolvedClis,
     jobs: &OnDemand,
     attempt_id: &AttemptId,
     position: u32,
+    now: impl FnOnce() -> String,
 ) -> AppResult<AttemptView> {
     let (settings, question) = db.with(|conn| {
         let id = attempts::revealed_question(conn, attempt_id, position)?;
@@ -54,6 +56,7 @@ pub fn ask_explain(
         let (answer, _) = ask(
             &settings,
             secrets,
+            clis,
             &role,
             Task {
                 schema: super::blind_check::schema_of::<ExplainAnswer>(),
@@ -106,7 +109,7 @@ pub fn ask_explain(
                 question.id,
                 explanation,
                 serde_json::to_string(&refs)?,
-                crate::clock::now(),
+                now(),
                 question.explanation
             ],
         )?;

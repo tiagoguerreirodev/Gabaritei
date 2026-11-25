@@ -1,7 +1,6 @@
 #![cfg_attr(not(unix), allow(dead_code, unused_imports))] // fake CLIs need `sh`
 
 use super::*;
-use crate::ai::settings::{self, AiSettingsInput};
 use crate::bank::question::tests::topic;
 use crate::bank::store::import_questions;
 use serde_json::json;
@@ -49,24 +48,28 @@ cp '{}' "$out""#,
     )
 }
 
-/// A database whose Codex path points at `cli`.
-fn setup(cli: &Path) -> (Database, Secrets) {
-    let db = Database::open_in_memory().unwrap();
-    let secrets = Secrets::memory();
-    db.with(|conn| {
-        let mut current = settings::load(conn, &secrets)?;
-        current.cli_paths.codex = Some(cli.to_string_lossy().into_owned());
-        settings::save(
-            conn,
-            AiSettingsInput {
-                cli_paths: current.cli_paths,
-                roles: current.roles,
-                remnote: current.remnote,
-            },
-        )
-    })
-    .unwrap();
-    (db, secrets)
+const NOW: &str = "2026-11-20T00:00:00.000Z";
+
+fn setup(cli: &Path) -> (Database, Secrets, ResolvedClis) {
+    (
+        Database::open_in_memory().unwrap(),
+        Secrets::memory(),
+        ResolvedClis::new(None, Some(cli.to_path_buf())),
+    )
+}
+
+fn runtime(clis: &ResolvedClis) -> GenerationRuntime<'_> {
+    fn now() -> String {
+        NOW.into()
+    }
+    fn monotonic_time() -> Duration {
+        Duration::ZERO
+    }
+    GenerationRuntime {
+        clis,
+        now: &now,
+        monotonic_time: &monotonic_time,
+    }
 }
 
 fn request(count: u32) -> GenerateRequest {
@@ -82,8 +85,20 @@ fn request(count: u32) -> GenerateRequest {
     }
 }
 
-fn run(db: &Database, secrets: &Secrets, request: GenerateRequest) -> AppResult<Draft> {
-    generate_draft(db, secrets, request, &CancelToken::new(), &mut |_| {})
+fn run(
+    db: &Database,
+    secrets: &Secrets,
+    clis: &ResolvedClis,
+    request: GenerateRequest,
+) -> AppResult<Draft> {
+    generate_draft(
+        db,
+        secrets,
+        &runtime(clis),
+        request,
+        &CancelToken::new(),
+        &mut |_| {},
+    )
 }
 
 fn draft_count(db: &Database) -> i64 {
@@ -105,11 +120,16 @@ mod pipeline {
                 boolean("q2", "Segunda questão."),
             ]),
         );
-        let (db, secrets) = setup(&cli);
+        let (db, secrets, clis) = setup(&cli);
         let mut events = Vec::new();
-        let draft = generate_draft(&db, &secrets, request(2), &CancelToken::new(), &mut |p| {
-            events.push(p)
-        })
+        let draft = generate_draft(
+            &db,
+            &secrets,
+            &runtime(&clis),
+            request(2),
+            &CancelToken::new(),
+            &mut |p| events.push(p),
+        )
         .unwrap();
 
         assert_eq!(draft.status, DraftStatus::Review);
@@ -118,7 +138,8 @@ mod pipeline {
         assert_eq!(info.model, "gpt-6.2-sol");
         assert_eq!(info.effort, crate::ai::agent::Effort::Xhigh);
         assert_eq!(info.agent, crate::ai::agent::Agent::Codex);
-        assert!(info.started_at.starts_with("20"));
+        assert_eq!(info.started_at, NOW);
+        assert_eq!(draft.created_at, NOW);
         assert_eq!(info.cost_usd, None);
         assert!(!events.is_empty());
 
@@ -133,8 +154,8 @@ mod pipeline {
     fn invalid_output_is_an_error_and_saves_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_codex(dir.path(), "isto não é json");
-        let (db, secrets) = setup(&cli);
-        let error = run(&db, &secrets, request(1)).unwrap_err();
+        let (db, secrets, clis) = setup(&cli);
+        let error = run(&db, &secrets, &clis, request(1)).unwrap_err();
         assert!(error.to_string().contains("formato inválido"));
         assert_eq!(draft_count(&db), 0);
     }
@@ -145,8 +166,8 @@ mod pipeline {
         let mut bad = multiple("q1", "Questão?");
         bad["difficulty"] = json!("média");
         let cli = fake_codex(dir.path(), &package(vec![bad]));
-        let (db, secrets) = setup(&cli);
-        assert!(run(&db, &secrets, request(1)).is_err());
+        let (db, secrets, clis) = setup(&cli);
+        assert!(run(&db, &secrets, &clis, request(1)).is_err());
         assert_eq!(draft_count(&db), 0);
     }
 
@@ -157,8 +178,8 @@ mod pipeline {
             dir.path(),
             &package(vec![multiple("q1", "A?"), multiple("q2", "B?")]),
         );
-        let (db, secrets) = setup(&cli);
-        let error = run(&db, &secrets, request(3)).unwrap_err();
+        let (db, secrets, clis) = setup(&cli);
+        let error = run(&db, &secrets, &clis, request(3)).unwrap_err();
         assert!(
             error
                 .to_string()
@@ -178,7 +199,7 @@ mod pipeline {
                 multiple("q2", "Questão nova?"),
             ]),
         );
-        let (db, secrets) = setup(&cli);
+        let (db, secrets, clis) = setup(&cli);
         // Put the first question in the bank, as an earlier import would have.
         let existing = Package::parse(&package(vec![multiple("q1", "Questão repetida?")])).unwrap();
         db.transaction(|tx| {
@@ -190,7 +211,7 @@ mod pipeline {
         })
         .unwrap();
 
-        let draft = run(&db, &secrets, request(2)).unwrap();
+        let draft = run(&db, &secrets, &clis, request(2)).unwrap();
         let check = db.with(|conn| check_draft(conn, &draft)).unwrap();
         assert_eq!(check.duplicates, 1);
         assert!(
@@ -205,8 +226,8 @@ mod pipeline {
         let mut four_options = multiple("q1", "Questão com defeito?");
         four_options["options"].as_array_mut().unwrap().pop();
         let cli = fake_codex(dir.path(), &package(vec![four_options]));
-        let (db, secrets) = setup(&cli);
-        let draft = run(&db, &secrets, request(1)).unwrap();
+        let (db, secrets, clis) = setup(&cli);
+        let draft = run(&db, &secrets, &clis, request(1)).unwrap();
         let check = db.with(|conn| check_draft(conn, &draft)).unwrap();
         assert!(
             check
@@ -228,8 +249,8 @@ mod pipeline {
         repeated["options"][3]["id"] = json!("SEGREDO-ID");
         repeated["options"][4]["id"] = json!("SEGREDO-ID");
         let cli = fake_codex(dir.path(), &package(vec![repeated]));
-        let (db, secrets) = setup(&cli);
-        let draft = run(&db, &secrets, request(1)).unwrap();
+        let (db, secrets, clis) = setup(&cli);
+        let draft = run(&db, &secrets, &clis, request(1)).unwrap();
         let check = db.with(|conn| check_draft(conn, &draft)).unwrap();
         assert!(!check.problems.is_empty());
         let shown = format!("{:?}", check.problems);
@@ -259,10 +280,10 @@ mod pipeline {
             dir.path(),
             &package(vec![multiple("q1", "A?"), boolean("q2", "B.")]),
         );
-        let (db, secrets) = setup(&cli);
+        let (db, secrets, clis) = setup(&cli);
         let mut only_boolean = request(2);
         only_boolean.format = Some(QuestionType::Boolean);
-        let draft = run(&db, &secrets, only_boolean).unwrap();
+        let draft = run(&db, &secrets, &clis, only_boolean).unwrap();
         let check = db.with(|conn| check_draft(conn, &draft)).unwrap();
         assert!(
             check
@@ -278,14 +299,22 @@ mod pipeline {
         let dir = tempfile::tempdir().unwrap();
         let cli =
             crate::ai::runner::tests::write_script(dir.path(), "codex", "cat >/dev/null\nsleep 60");
-        let (db, secrets) = setup(&cli);
+        let (db, secrets, clis) = setup(&cli);
         let token = CancelToken::new();
         let canceller = token.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(300));
             canceller.cancel();
         });
-        let error = generate_draft(&db, &secrets, request(1), &token, &mut |_| {}).unwrap_err();
+        let error = generate_draft(
+            &db,
+            &secrets,
+            &runtime(&clis),
+            request(1),
+            &token,
+            &mut |_| {},
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("cancelada"), "{error}");
         assert_eq!(draft_count(&db), 0);
     }
@@ -294,7 +323,7 @@ mod pipeline {
     fn attachments_are_kept_by_name_only_and_overrides_win() {
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_codex(dir.path(), &package(vec![multiple("q1", "A?")]));
-        let (db, secrets) = setup(&cli);
+        let (db, secrets, clis) = setup(&cli);
         let attachment = dir.path().join("Lei 8.112.md");
         std::fs::write(&attachment, "texto").unwrap();
         let mut job = request(1);
@@ -305,7 +334,7 @@ mod pipeline {
             effort: crate::ai::agent::Effort::Low,
             fast: false,
         });
-        let draft = run(&db, &secrets, job).unwrap();
+        let draft = run(&db, &secrets, &clis, job).unwrap();
         assert_eq!(draft.request.request.sources.attachments, ["Lei 8.112.md"]);
         assert_eq!(draft.request.info.model, "modelo-do-formulario");
         assert_eq!(
@@ -324,10 +353,10 @@ mod pipeline {
     fn remnote_as_a_source_needs_it_switched_on_in_settings() {
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_codex(dir.path(), &package(vec![multiple("q1", "A?")]));
-        let (db, secrets) = setup(&cli);
+        let (db, secrets, clis) = setup(&cli);
         let mut job = request(1);
         job.sources.remnote = true;
-        let error = run(&db, &secrets, job).unwrap_err();
+        let error = run(&db, &secrets, &clis, job).unwrap_err();
         assert!(error.to_string().contains("RemNote está desligado"));
     }
 }

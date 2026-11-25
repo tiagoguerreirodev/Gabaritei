@@ -4,25 +4,25 @@
 //! The runner (#14) is here; roles, generation and the other jobs build on it (#15–#20).
 //! Verified CLI flags are recorded in `docs/ai-cli.md`.
 
-pub mod agent;
-pub mod blind_check;
-pub mod catalog;
+pub(crate) mod agent;
+pub(crate) mod blind_check;
+pub(crate) mod catalog;
 mod claude;
 mod codex;
-pub mod discovery;
-pub mod draft;
-pub mod draft_files;
-pub mod explain;
-pub mod generate;
-pub mod jobs;
-pub mod ondemand;
-pub mod prompts;
-pub mod recheck;
-pub mod review;
-pub mod roles;
-pub mod runner;
-pub mod secrets;
-pub mod settings;
+pub(crate) mod discovery;
+pub(crate) mod draft;
+pub(crate) mod draft_files;
+pub(crate) mod explain;
+pub(crate) mod generate;
+pub(crate) mod jobs;
+pub(crate) mod ondemand;
+mod prompts;
+pub(crate) mod recheck;
+pub(crate) mod review;
+pub(crate) mod roles;
+pub(crate) mod runner;
+pub(crate) mod secrets;
+pub(crate) mod settings;
 mod task;
 
 pub use agent::{Agent, Effort};

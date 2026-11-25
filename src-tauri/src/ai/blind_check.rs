@@ -9,13 +9,13 @@ use ts_rs::TS;
 
 use super::draft::{self, Draft, DraftStatus, GenerationInfo};
 use super::draft_files;
-use super::generate::GenerateRequest;
+use super::generate::{GenerateRequest, GenerationRuntime};
 use super::jobs::GenerationStage;
 use super::prompts::{self, CheckerView, Objection};
 use super::roles::RoleConfig;
 use super::runner::{CancelToken, Progress, ProgressKind};
 use super::secrets::Secrets;
-use super::settings::{self, AiSettings, Sources};
+use super::settings::{self, AiSettings, ResolvedClis, Sources};
 use super::task::{Task, ask};
 use crate::bank::PackageQuestion;
 use crate::db::Database;
@@ -138,6 +138,7 @@ fn invalid(message: &str) -> AppError {
 fn check_questions(
     settings: &AiSettings,
     secrets: &Secrets,
+    clis: &ResolvedClis,
     checker: &RoleConfig,
     questions: &[&PackageQuestion],
     cancel: &CancelToken,
@@ -147,6 +148,7 @@ fn check_questions(
     let (answers, output): (CheckerAnswers, _) = ask(
         settings,
         secrets,
+        clis,
         checker,
         Task {
             schema: schema_of::<CheckerAnswers>(),
@@ -219,6 +221,7 @@ fn revisions(
 pub fn run(
     db: &Database,
     secrets: &Secrets,
+    runtime: &GenerationRuntime<'_>,
     draft_id: &DraftId,
     attachments: &[std::path::PathBuf],
     cancel: &CancelToken,
@@ -229,8 +232,8 @@ pub fn run(
     let checker = draft.request.checker.clone();
     let generator = draft.request.generator.clone();
     let request: &GenerateRequest = &draft.request.request;
-    let started_at = crate::clock::now();
-    let began = std::time::Instant::now();
+    let started_at = (runtime.now)();
+    let began = (runtime.monotonic_time)();
     let mut package = draft.package.clone();
 
     progress(Progress::starting(
@@ -239,8 +242,15 @@ pub fn run(
         "Conferindo às cegas…",
     ));
     let all: Vec<&PackageQuestion> = package.questions.iter().collect();
-    let (first, first_output) =
-        check_questions(&settings, secrets, &checker, &all, cancel, progress)?;
+    let (first, first_output) = check_questions(
+        &settings,
+        secrets,
+        runtime.clis,
+        &checker,
+        &all,
+        cancel,
+        progress,
+    )?;
     let mut cost = first_output.cost_usd;
 
     let objections: Vec<&PackageQuestion> = package
@@ -270,6 +280,7 @@ pub fn run(
         let (resolutions, output): (DisputeResolutions, _) = ask(
             &settings,
             secrets,
+            runtime.clis,
             &generator,
             Task {
                 schema: schema_of::<DisputeResolutions>(),
@@ -296,8 +307,15 @@ pub fn run(
             let mut ids: Vec<&String> = revised_by_id.keys().collect();
             ids.sort();
             let revised: Vec<&PackageQuestion> = ids.iter().map(|id| &revised_by_id[*id]).collect();
-            let (answers, output) =
-                check_questions(&settings, secrets, &checker, &revised, cancel, progress)?;
+            let (answers, output) = check_questions(
+                &settings,
+                secrets,
+                runtime.clis,
+                &checker,
+                &revised,
+                cancel,
+                progress,
+            )?;
             cost = sum_cost(cost, output.cost_usd);
             second = answers;
         }
@@ -340,6 +358,7 @@ pub fn run(
             *question = revised;
         }
     }
+    let elapsed = (runtime.monotonic_time)().saturating_sub(began);
     let result = BlindCheck {
         verdicts,
         failed: None,
@@ -349,7 +368,7 @@ pub fn run(
             model: checker.model.clone(),
             effort: checker.effort,
             started_at,
-            duration_ms: u64::try_from(began.elapsed().as_millis()).unwrap_or(u64::MAX),
+            duration_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
             cost_usd: cost,
         }),
     };
@@ -386,6 +405,7 @@ pub fn stored(draft: &Draft) -> AppResult<Option<BlindCheck>> {
 pub fn generate_and_check(
     db: &Database,
     secrets: &Secrets,
+    runtime: &GenerationRuntime<'_>,
     files_dir: &std::path::Path,
     request: GenerateRequest,
     cancel: &CancelToken,
@@ -402,7 +422,7 @@ pub fn generate_and_check(
         .iter()
         .map(std::path::PathBuf::from)
         .collect();
-    let draft = super::generate::generate_draft(db, secrets, request, cancel, progress)?;
+    let draft = super::generate::generate_draft(db, secrets, runtime, request, cancel, progress)?;
     // From here a cancel discards the draft, so say so before anything else happens.
     progress(Progress::starting(
         GenerationStage::Checking,
@@ -412,7 +432,15 @@ pub fn generate_and_check(
     // Keep copies for the life of the draft so a retry can give the generator the same files.
     // If copying fails (the file moved meanwhile), this run still uses the originals.
     let attachments = draft_files::keep(files_dir, &draft.id, &originals).unwrap_or(originals);
-    match run(db, secrets, &draft.id, &attachments, cancel, progress) {
+    match run(
+        db,
+        secrets,
+        runtime,
+        &draft.id,
+        &attachments,
+        cancel,
+        progress,
+    ) {
         Ok(_) => Ok(draft.id),
         Err(_) if cancel.is_cancelled() => {
             draft_files::remove(files_dir, &draft.id);
@@ -432,6 +460,7 @@ pub fn generate_and_check(
 pub fn recheck_draft(
     db: &Database,
     secrets: &Secrets,
+    runtime: &GenerationRuntime<'_>,
     files_dir: &std::path::Path,
     draft_id: &DraftId,
     cancel: &CancelToken,
@@ -456,7 +485,15 @@ pub fn recheck_draft(
             "Os anexos originais não estão mais guardados; a contestação segue sem eles.",
         ));
     }
-    match run(db, secrets, draft_id, &attachments, cancel, progress) {
+    match run(
+        db,
+        secrets,
+        runtime,
+        draft_id,
+        &attachments,
+        cancel,
+        progress,
+    ) {
         Ok(_) => Ok(draft_id.to_owned()),
         Err(_) if cancel.is_cancelled() => {
             record_failure(db, draft_id, "A conferência foi cancelada.")?;

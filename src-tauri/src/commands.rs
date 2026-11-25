@@ -27,6 +27,7 @@ use crate::backup::{BackupInfo, BackupService, BackupStatus, OpenableFolder, Rel
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
+use crate::ids::{AttemptId, CollectionId, DraftId};
 use crate::learning::{self, LearningOverview};
 use crate::metrics::{self, HomeSummary, Performance, PerformanceQuery};
 use crate::migrate::{self, LegacyImportOutcome, LegacyImportStatus};
@@ -93,7 +94,7 @@ pub fn collections(db: State<'_, Database>, query: CollectionQuery) -> AppResult
 
 /// One collection with its attempts.
 #[tauri::command]
-pub fn collection(db: State<'_, Database>, id: String) -> AppResult<CollectionDetail> {
+pub fn collection(db: State<'_, Database>, id: CollectionId) -> AppResult<CollectionDetail> {
     db.with(|conn| catalog::collection(conn, &id))
 }
 
@@ -398,7 +399,7 @@ pub fn session_start(db: State<'_, Database>, request: SessionStart) -> AppResul
 
 /// An attempt with every question as the frontend may see it (no unrevealed keys).
 #[tauri::command]
-pub fn attempt(db: State<'_, Database>, id: String) -> AppResult<AttemptView> {
+pub fn attempt(db: State<'_, Database>, id: AttemptId) -> AppResult<AttemptView> {
     db.with(|conn| attempts::load(conn, &id))
 }
 
@@ -406,7 +407,7 @@ pub fn attempt(db: State<'_, Database>, id: String) -> AppResult<AttemptView> {
 #[tauri::command]
 pub fn answer(
     db: State<'_, Database>,
-    attempt_id: String,
+    attempt_id: AttemptId,
     position: u32,
     option_id: Option<String>,
 ) -> AppResult<AttemptView> {
@@ -425,7 +426,7 @@ pub fn answer(
 #[tauri::command]
 pub fn eliminate(
     db: State<'_, Database>,
-    attempt_id: String,
+    attempt_id: AttemptId,
     position: u32,
     option_id: String,
 ) -> AppResult<AttemptView> {
@@ -436,7 +437,7 @@ pub fn eliminate(
 #[tauri::command]
 pub fn flag(
     db: State<'_, Database>,
-    attempt_id: String,
+    attempt_id: AttemptId,
     position: u32,
     flagged: bool,
 ) -> AppResult<AttemptView> {
@@ -447,7 +448,7 @@ pub fn flag(
 #[tauri::command]
 pub fn finish(
     db: State<'_, Database>,
-    attempt_id: String,
+    attempt_id: AttemptId,
     revision: u32,
 ) -> AppResult<AttemptView> {
     db.transaction(|tx| attempts::finish(tx, &attempt_id, revision, &crate::clock::now()))
@@ -455,7 +456,11 @@ pub fn finish(
 
 /// Annuls a revealed question: it leaves every score until restored.
 #[tauri::command]
-pub fn annul(db: State<'_, Database>, attempt_id: String, position: u32) -> AppResult<AttemptView> {
+pub fn annul(
+    db: State<'_, Database>,
+    attempt_id: AttemptId,
+    position: u32,
+) -> AppResult<AttemptView> {
     db.transaction(|tx| {
         attempts::set_annulled(tx, &attempt_id, position, true, &crate::clock::now())
     })
@@ -465,7 +470,7 @@ pub fn annul(db: State<'_, Database>, attempt_id: String, position: u32) -> AppR
 #[tauri::command]
 pub fn unannul(
     db: State<'_, Database>,
-    attempt_id: String,
+    attempt_id: AttemptId,
     position: u32,
 ) -> AppResult<AttemptView> {
     db.transaction(|tx| {
@@ -475,7 +480,7 @@ pub fn unannul(
 
 /// Deletes an unfinished attempt.
 #[tauri::command]
-pub fn abandon(db: State<'_, Database>, attempt_id: String) -> AppResult<()> {
+pub fn abandon(db: State<'_, Database>, attempt_id: AttemptId) -> AppResult<()> {
     db.transaction(|tx| attempts::abandon(tx, &attempt_id))
 }
 
@@ -624,7 +629,7 @@ pub fn blind_check_start<R: Runtime>(
     manager: State<'_, GenerationManager>,
     service: State<'_, BackupService>,
     paths: State<'_, AppPaths>,
-    draft_id: String,
+    draft_id: DraftId,
 ) -> AppResult<()> {
     ensure_not_backing_up(&service)?;
     ensure_roles_listed(
@@ -655,7 +660,7 @@ pub fn drafts_waiting(db: State<'_, Database>) -> AppResult<Vec<DraftListItem>> 
 
 /// The spoiler-free summary of a draft: counts, problems and one state per question (plus the stem and options of flagged ones).
 #[tauri::command]
-pub fn draft_summary(db: State<'_, Database>, id: String) -> AppResult<DraftSummary> {
+pub fn draft_summary(db: State<'_, Database>, id: DraftId) -> AppResult<DraftSummary> {
     db.with(|conn| review::summary(conn, &id))
 }
 
@@ -664,7 +669,7 @@ pub fn draft_summary(db: State<'_, Database>, id: String) -> AppResult<DraftSumm
 pub fn draft_import(
     db: State<'_, Database>,
     paths: State<'_, AppPaths>,
-    id: String,
+    id: DraftId,
     mode: ImportMode,
 ) -> AppResult<ImportResult> {
     let result = db.transaction(|tx| review::import(tx, &id, mode, &crate::clock::now()))?;
@@ -677,7 +682,7 @@ pub fn draft_import(
 pub fn draft_discard(
     db: State<'_, Database>,
     paths: State<'_, AppPaths>,
-    id: String,
+    id: DraftId,
 ) -> AppResult<()> {
     db.with(|conn| review::discard(conn, &id))?;
     draft_files::remove(&paths.draft_files_dir(), &id);
@@ -713,7 +718,7 @@ pub async fn pick_attachments<R: Runtime>(app: AppHandle<R>) -> AppResult<Vec<St
 #[tauri::command]
 pub async fn recheck_ask<R: Runtime>(
     app: AppHandle<R>,
-    attempt_id: String,
+    attempt_id: AttemptId,
     position: u32,
 ) -> AppResult<RecheckView> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -735,7 +740,7 @@ pub async fn recheck_ask<R: Runtime>(
 pub fn recheck_apply(
     db: State<'_, Database>,
     jobs: State<'_, OnDemand>,
-    attempt_id: String,
+    attempt_id: AttemptId,
     position: u32,
 ) -> AppResult<AttemptView> {
     db.transaction(|tx| {
@@ -749,7 +754,7 @@ pub fn recheck_apply(
 pub fn recheck_dismiss(
     db: State<'_, Database>,
     jobs: State<'_, OnDemand>,
-    attempt_id: String,
+    attempt_id: AttemptId,
     position: u32,
 ) -> AppResult<()> {
     db.with(|conn| recheck::dismiss(conn, &jobs, &attempt_id, position))
@@ -760,7 +765,7 @@ pub fn recheck_dismiss(
 #[tauri::command]
 pub async fn explain_ask<R: Runtime>(
     app: AppHandle<R>,
-    attempt_id: String,
+    attempt_id: AttemptId,
     position: u32,
 ) -> AppResult<AttemptView> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -959,6 +964,27 @@ mod tests {
             } }),
         )
         .expect("session starts")
+    }
+
+    #[test]
+    fn topic_attempt_ipc_preserves_scalar_ids() {
+        let db = solving_db();
+        let topic_id: crate::ids::TopicId = db
+            .with(|conn| Ok(conn.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
+            .unwrap();
+        let app = MockApp::new(db);
+        let view = app
+            .call(
+                "session_start",
+                json!({ "request": {
+                    "source": { "kind": "topic", "topicId": topic_id, "count": 1 },
+                    "feedbackMode": "study"
+                } }),
+            )
+            .expect("topic session starts");
+        assert_eq!(view["sourceRef"], json!(topic_id.to_string()));
+        assert!(view["id"].is_string());
+        assert!(view["questions"][0]["questionId"].is_string());
     }
 
     /// The question's answer, explanation and references are absent from the JSON.

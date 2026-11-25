@@ -12,12 +12,14 @@
 //! current question, so corrections and annulments re-score past attempts. No score is stored.
 
 use rand::seq::SliceRandom;
-use rusqlite::{Connection, OptionalExtension, params};
-use serde::{Deserialize, Serialize};
+use rusqlite::types::ToSqlOutput;
+use rusqlite::{Connection, OptionalExtension, ToSql, params};
+use serde::{Deserialize, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::bank::{QuestionOption, QuestionType};
 use crate::error::{AppError, AppResult};
+use crate::ids::{self, AttemptId, CollectionId, QuestionId, TopicId};
 
 /// Largest topic session.
 pub const MAX_TOPIC_SESSION: u32 = 200;
@@ -62,9 +64,9 @@ impl FeedbackMode {
 #[ts(export)]
 pub enum SessionSource {
     /// Every question of a collection.
-    Collection { collection_id: String },
+    Collection { collection_id: CollectionId },
     /// Up to `count` questions of a topic: unseen first, then least recently answered.
-    Topic { topic_id: i64, count: u32 },
+    Topic { topic_id: TopicId, count: u32 },
     /// The error notebook, most recent errors first (up to 100). Blanks join when asked.
     Errors { include_blanks: bool },
     /// Due reviews (most overdue first), then recent errors (up to 100 in all).
@@ -163,7 +165,7 @@ pub struct Reveal {
 #[ts(export)]
 pub struct ResponseView {
     pub position: u32,
-    pub question_id: String,
+    pub question_id: QuestionId,
     #[serde(rename = "type")]
     #[ts(rename = "type", type = "\"multiple\" | \"boolean\"")]
     pub kind: QuestionType,
@@ -189,14 +191,62 @@ pub enum SourceKind {
     Reviews,
 }
 
+impl SourceKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Collection => "collection",
+            Self::Topic => "topic",
+            Self::Errors => "errors",
+            Self::Reviews => "reviews",
+        }
+    }
+}
+
+/// A source stored as text, including topic IDs for compatibility with existing attempts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceRef {
+    Collection(CollectionId),
+    Topic(TopicId),
+}
+
+impl SourceRef {
+    fn from_storage(kind: SourceKind, stored: Option<String>) -> Option<Self> {
+        let stored = stored?;
+        match kind {
+            SourceKind::Collection => Some(Self::Collection(stored.into())),
+            SourceKind::Topic => stored.parse::<i64>().ok().map(|id| Self::Topic(id.into())),
+            SourceKind::Errors | SourceKind::Reviews => None,
+        }
+    }
+}
+
+impl Serialize for SourceRef {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Collection(id) => id.serialize(serializer),
+            Self::Topic(id) => serializer.collect_str(id),
+        }
+    }
+}
+
+impl ToSql for SourceRef {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        match self {
+            Self::Collection(id) => id.to_sql(),
+            Self::Topic(id) => Ok(id.to_string().into()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct AttemptView {
-    pub id: String,
+    pub id: AttemptId,
     pub source_kind: SourceKind,
     /// Collection ID or topic ID, depending on `source_kind`.
-    pub source_ref: Option<String>,
+    #[ts(type = "string | null")]
+    pub source_ref: Option<SourceRef>,
     /// pt-BR title: the collection title, the topic path, "Caderno de erros" or "Revisões".
     pub title: String,
     pub feedback_mode: FeedbackMode,
@@ -225,7 +275,7 @@ struct Snapshot {
 
 struct Header {
     source_kind: SourceKind,
-    source_ref: Option<String>,
+    source_ref: Option<SourceRef>,
     mode: FeedbackMode,
     started_at: String,
     finished_at: Option<String>,
@@ -246,7 +296,7 @@ fn source_kind(value: &str) -> AppResult<SourceKind> {
     })
 }
 
-fn load_header(conn: &Connection, id: &str) -> AppResult<Header> {
+fn load_header(conn: &Connection, id: &AttemptId) -> AppResult<Header> {
     let row = conn
         .query_row(
             "SELECT source_kind, source_ref, feedback_mode, started_at, finished_at, revision
@@ -265,9 +315,10 @@ fn load_header(conn: &Connection, id: &str) -> AppResult<Header> {
         )
         .optional()?
         .ok_or_else(not_found)?;
+    let source_kind = source_kind(&row.0)?;
     Ok(Header {
-        source_kind: source_kind(&row.0)?,
-        source_ref: row.1,
+        source_kind,
+        source_ref: SourceRef::from_storage(source_kind, row.1),
         mode: FeedbackMode::parse(&row.2)?,
         started_at: row.3,
         finished_at: row.4,
@@ -275,12 +326,7 @@ fn load_header(conn: &Connection, id: &str) -> AppResult<Header> {
     })
 }
 
-fn new_attempt_id() -> String {
-    let bytes: [u8; 16] = rand::random();
-    hex::encode(bytes)
-}
-
-fn collection_title(conn: &Connection, id: &str) -> AppResult<Option<String>> {
+fn collection_title(conn: &Connection, id: &CollectionId) -> AppResult<Option<String>> {
     Ok(conn
         .query_row(
             "SELECT title FROM collections WHERE id = ?1",
@@ -290,7 +336,7 @@ fn collection_title(conn: &Connection, id: &str) -> AppResult<Option<String>> {
         .optional()?)
 }
 
-fn topic_title(conn: &Connection, id: i64) -> AppResult<Option<String>> {
+fn topic_title(conn: &Connection, id: TopicId) -> AppResult<Option<String>> {
     Ok(conn
         .query_row(
             "SELECT area || ' › ' || matter || ' › ' || topic FROM topics WHERE id = ?1",
@@ -300,23 +346,22 @@ fn topic_title(conn: &Connection, id: i64) -> AppResult<Option<String>> {
         .optional()?)
 }
 
-fn title(conn: &Connection, kind: SourceKind, source_ref: Option<&str>) -> AppResult<String> {
-    let found = match (kind, source_ref) {
-        (SourceKind::Collection, Some(id)) => collection_title(conn, id)?,
-        (SourceKind::Topic, Some(id)) => match id.parse() {
-            Ok(id) => topic_title(conn, id)?,
-            Err(_) => None,
+fn title(conn: &Connection, kind: SourceKind, source_ref: Option<&SourceRef>) -> AppResult<String> {
+    let found = match source_ref {
+        Some(SourceRef::Collection(id)) => collection_title(conn, id)?,
+        Some(SourceRef::Topic(id)) => topic_title(conn, *id)?,
+        None => match kind {
+            SourceKind::Collection | SourceKind::Topic => None,
+            SourceKind::Errors => Some("Caderno de erros".into()),
+            SourceKind::Reviews => Some("Revisões".into()),
         },
-        (SourceKind::Errors, _) => Some("Caderno de erros".into()),
-        (SourceKind::Reviews, _) => Some("Revisões".into()),
-        _ => None,
     };
     Ok(found.unwrap_or_else(|| "Sessão".into()))
 }
 
 /// Questions of a topic for a session: never answered first, then least recently answered;
 /// annulled questions skipped. Ties are broken at random.
-fn topic_questions(conn: &Connection, topic_id: i64, count: u32) -> AppResult<Vec<String>> {
+fn topic_questions(conn: &Connection, topic_id: TopicId, count: u32) -> AppResult<Vec<QuestionId>> {
     let mut stmt = conn.prepare(
         "SELECT q.id, MAX(r.answered_at)
          FROM question_topics qt
@@ -327,7 +372,7 @@ fn topic_questions(conn: &Connection, topic_id: i64, count: u32) -> AppResult<Ve
     )?;
     let mut rows = stmt
         .query_map(params![topic_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            Ok((r.get::<_, QuestionId>(0)?, r.get::<_, Option<String>>(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.shuffle(&mut rand::rng());
@@ -342,7 +387,7 @@ fn topic_questions(conn: &Connection, topic_id: i64, count: u32) -> AppResult<Ve
 
 /// Builds the shown snapshot of a question: options shuffled, except Certo/Errado, which
 /// keeps its fixed order.
-fn snapshot(conn: &Connection, question_id: &str) -> AppResult<Snapshot> {
+fn snapshot(conn: &Connection, question_id: &QuestionId) -> AppResult<Snapshot> {
     let (kind, stem, options, image, image_alt) = conn.query_row(
         "SELECT type, stem, options, image, image_alt FROM questions WHERE id = ?1",
         params![question_id],
@@ -381,7 +426,7 @@ pub fn start(conn: &Connection, request: &SessionStart, now: &str) -> AppResult<
             if collection_title(conn, collection_id)?.is_none() {
                 return Err(AppError::Invalid("Caderno não encontrado.".into()));
             }
-            let active: Option<String> = conn
+            let active: Option<AttemptId> = conn
                 .query_row(
                     "SELECT id FROM attempts WHERE source_kind = 'collection'
                        AND source_ref = ?1 AND finished_at IS NULL",
@@ -401,9 +446,13 @@ pub fn start(conn: &Connection, request: &SessionStart, now: &str) -> AppResult<
                  ORDER BY position",
             )?;
             let ids = stmt
-                .query_map(params![collection_id], |r| r.get::<_, String>(0))?
+                .query_map(params![collection_id], |r| r.get::<_, QuestionId>(0))?
                 .collect::<Result<Vec<_>, _>>()?;
-            ("collection", Some(collection_id.clone()), ids)
+            (
+                SourceKind::Collection,
+                Some(SourceRef::Collection(collection_id.clone())),
+                ids,
+            )
         }
         SessionSource::Topic { topic_id, count } => {
             if !(1..=MAX_TOPIC_SESSION).contains(count) {
@@ -415,15 +464,15 @@ pub fn start(conn: &Connection, request: &SessionStart, now: &str) -> AppResult<
                 return Err(AppError::Invalid("Assunto não encontrado.".into()));
             }
             let ids = topic_questions(conn, *topic_id, *count)?;
-            ("topic", Some(topic_id.to_string()), ids)
+            (SourceKind::Topic, Some(SourceRef::Topic(*topic_id)), ids)
         }
         SessionSource::Errors { include_blanks } => (
-            "errors",
+            SourceKind::Errors,
             None,
             crate::learning::error_questions(conn, *include_blanks, crate::learning::MAX_SESSION)?,
         ),
         SessionSource::Reviews => (
-            "reviews",
+            SourceKind::Reviews,
             None,
             crate::learning::review_session(conn, now, crate::learning::MAX_SESSION)?,
         ),
@@ -435,11 +484,17 @@ pub fn start(conn: &Connection, request: &SessionStart, now: &str) -> AppResult<
     }
     questions.shuffle(&mut rand::rng());
 
-    let id = new_attempt_id();
+    let id: AttemptId = ids::generate(&mut rand::rng());
     conn.execute(
         "INSERT INTO attempts (id, source_kind, source_ref, feedback_mode, started_at)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![id, kind, source_ref, request.feedback_mode.as_str(), now],
+        params![
+            id,
+            kind.as_str(),
+            source_ref,
+            request.feedback_mode.as_str(),
+            now
+        ],
     )?;
     let mut insert = conn.prepare(
         "INSERT INTO responses (attempt_id, position, question_id, snapshot)
@@ -453,7 +508,7 @@ pub fn start(conn: &Connection, request: &SessionStart, now: &str) -> AppResult<
 }
 
 /// The attempt as the frontend may see it.
-pub fn load(conn: &Connection, id: &str) -> AppResult<AttemptView> {
+pub fn load(conn: &Connection, id: &AttemptId) -> AppResult<AttemptView> {
     let header = load_header(conn, id)?;
     let mut stmt = conn.prepare(
         "SELECT r.position, r.question_id, r.snapshot, r.choice, r.eliminated, r.flagged,
@@ -465,7 +520,7 @@ pub fn load(conn: &Connection, id: &str) -> AppResult<AttemptView> {
     let rows = stmt.query_map(params![id], |r| {
         Ok((
             r.get::<_, u32>(0)?,
-            r.get::<_, String>(1)?,
+            r.get::<_, QuestionId>(1)?,
             r.get::<_, String>(2)?,
             r.get::<_, Option<String>>(3)?,
             r.get::<_, String>(4)?,
@@ -528,7 +583,7 @@ pub fn load(conn: &Connection, id: &str) -> AppResult<AttemptView> {
     let score = header.finished_at.is_some().then(|| Score::of(outcomes));
     Ok(AttemptView {
         id: id.to_owned(),
-        title: title(conn, header.source_kind, header.source_ref.as_deref())?,
+        title: title(conn, header.source_kind, header.source_ref.as_ref())?,
         source_kind: header.source_kind,
         source_ref: header.source_ref,
         feedback_mode: header.mode,
@@ -549,7 +604,7 @@ struct Editable {
     revealed: bool,
 }
 
-fn editable(conn: &Connection, id: &str, position: u32) -> AppResult<Editable> {
+fn editable(conn: &Connection, id: &AttemptId, position: u32) -> AppResult<Editable> {
     let header = load_header(conn, id)?;
     if header.finished_at.is_some() {
         return Err(AppError::Invalid(
@@ -594,7 +649,7 @@ fn check_option(edit: &Editable, option_id: &str) -> AppResult<()> {
     }
 }
 
-fn bump(conn: &Connection, id: &str) -> AppResult<()> {
+fn bump(conn: &Connection, id: &AttemptId) -> AppResult<()> {
     conn.execute(
         "UPDATE attempts SET revision = revision + 1 WHERE id = ?1",
         params![id],
@@ -604,7 +659,7 @@ fn bump(conn: &Connection, id: &str) -> AppResult<()> {
 
 fn save(
     conn: &Connection,
-    id: &str,
+    id: &AttemptId,
     position: u32,
     choice: Option<&str>,
     eliminated: &[String],
@@ -632,7 +687,7 @@ fn save(
 /// question and locks it. Choosing an eliminated option un-eliminates it.
 pub fn answer(
     conn: &Connection,
-    id: &str,
+    id: &AttemptId,
     position: u32,
     option_id: Option<&str>,
     now: &str,
@@ -663,7 +718,7 @@ pub fn answer(
 /// Toggles an option's elimination. Eliminating the chosen option clears the choice.
 pub fn eliminate(
     conn: &Connection,
-    id: &str,
+    id: &AttemptId,
     position: u32,
     option_id: &str,
 ) -> AppResult<AttemptView> {
@@ -695,7 +750,12 @@ pub fn eliminate(
 }
 
 /// Sets or clears a question's flag.
-pub fn flag(conn: &Connection, id: &str, position: u32, flagged: bool) -> AppResult<AttemptView> {
+pub fn flag(
+    conn: &Connection,
+    id: &AttemptId,
+    position: u32,
+    flagged: bool,
+) -> AppResult<AttemptView> {
     editable(conn, id, position)?;
     conn.execute(
         "UPDATE responses SET flagged = ?3 WHERE attempt_id = ?1 AND position = ?2",
@@ -707,7 +767,12 @@ pub fn flag(conn: &Connection, id: &str, position: u32, flagged: bool) -> AppRes
 
 /// Finishes the attempt, revealing every question. `revision` must match the latest one, so
 /// a stale screen can't finish over changes it hasn't seen.
-pub fn finish(conn: &Connection, id: &str, revision: u32, now: &str) -> AppResult<AttemptView> {
+pub fn finish(
+    conn: &Connection,
+    id: &AttemptId,
+    revision: u32,
+    now: &str,
+) -> AppResult<AttemptView> {
     let header = load_header(conn, id)?;
     if header.finished_at.is_some() {
         return Err(AppError::Invalid(
@@ -737,7 +802,7 @@ pub fn finish(conn: &Connection, id: &str, revision: u32, now: &str) -> AppResul
 /// never gives an answer away. Applies to every attempt, since scores read current state.
 pub fn set_annulled(
     conn: &Connection,
-    id: &str,
+    id: &AttemptId,
     position: u32,
     annulled: bool,
     now: &str,
@@ -748,7 +813,7 @@ pub fn set_annulled(
             "SELECT question_id, revealed_at IS NOT NULL FROM responses
              WHERE attempt_id = ?1 AND position = ?2",
             params![id, position],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)),
+            |r| Ok((r.get::<_, QuestionId>(0)?, r.get::<_, bool>(1)?)),
         )
         .optional()?
         .ok_or_else(|| AppError::Invalid("Questão não encontrada nesta tentativa.".into()))?;
@@ -767,14 +832,18 @@ pub fn set_annulled(
 
 /// The question at `position`, if the user has already seen its answer in this attempt. The
 /// on-demand AI features (re-check, explain) are only allowed after the reveal.
-pub fn revealed_question(conn: &Connection, id: &str, position: u32) -> AppResult<String> {
+pub fn revealed_question(
+    conn: &Connection,
+    id: &AttemptId,
+    position: u32,
+) -> AppResult<QuestionId> {
     load_header(conn, id)?;
     let (question_id, revealed) = conn
         .query_row(
             "SELECT question_id, revealed_at IS NOT NULL FROM responses
              WHERE attempt_id = ?1 AND position = ?2",
             params![id, position],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)),
+            |r| Ok((r.get::<_, QuestionId>(0)?, r.get::<_, bool>(1)?)),
         )
         .optional()?
         .ok_or_else(|| AppError::Invalid("Questão não encontrada nesta tentativa.".into()))?;
@@ -791,7 +860,7 @@ pub fn revealed_question(conn: &Connection, id: &str, position: u32) -> AppResul
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ActiveAttempt {
-    pub id: String,
+    pub id: AttemptId,
     pub title: String,
     pub source_kind: SourceKind,
     pub feedback_mode: FeedbackMode,
@@ -802,7 +871,7 @@ pub struct ActiveAttempt {
 }
 
 /// Columns of the unfinished-attempts query.
-type ActiveRow = (String, String, Option<String>, String, String, u32, u32);
+type ActiveRow = (AttemptId, String, Option<String>, String, String, u32, u32);
 
 /// Every unfinished attempt, newest first. Carries counts only, never questions or keys.
 pub fn active(conn: &Connection) -> AppResult<Vec<ActiveAttempt>> {
@@ -830,8 +899,9 @@ pub fn active(conn: &Connection) -> AppResult<Vec<ActiveAttempt>> {
         .map(
             |(id, kind, source_ref, mode, started_at, answered, total)| {
                 let source_kind = source_kind(&kind)?;
+                let source_ref = SourceRef::from_storage(source_kind, source_ref);
                 Ok(ActiveAttempt {
-                    title: title(conn, source_kind, source_ref.as_deref())?,
+                    title: title(conn, source_kind, source_ref.as_ref())?,
                     id,
                     source_kind,
                     feedback_mode: FeedbackMode::parse(&mode)?,
@@ -845,7 +915,7 @@ pub fn active(conn: &Connection) -> AppResult<Vec<ActiveAttempt>> {
 }
 
 /// Deletes an unfinished attempt. Finished attempts are history and are kept forever.
-pub fn abandon(conn: &Connection, id: &str) -> AppResult<()> {
+pub fn abandon(conn: &Connection, id: &AttemptId) -> AppResult<()> {
     let header = load_header(conn, id)?;
     if header.finished_at.is_some() {
         return Err(AppError::Invalid(

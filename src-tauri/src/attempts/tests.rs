@@ -10,7 +10,7 @@ const SECRET: &str = "EXPLICACAO-SECRETA";
 
 /// Three multiple-choice questions and one Certo/Errado, all in collection `c1` and in the
 /// default topic. Every question has an explanation and a reference.
-fn bank() -> (Database, Vec<String>) {
+fn bank() -> (Database, Vec<QuestionId>) {
     let db = Database::open_in_memory().unwrap();
     let mut inputs = vec![
         multiple("q1", "Primeira", 0),
@@ -26,7 +26,7 @@ fn bank() -> (Database, Vec<String>) {
         .transaction(|tx| {
             let outcome = import_questions(tx, inputs, T0)?;
             let map = outcome.ids_by_local_id;
-            let ids: Vec<String> = ["q1", "q2", "q3", "q4"].map(|k| map[k].clone()).into();
+            let ids: Vec<QuestionId> = ["q1", "q2", "q3", "q4"].map(|k| map[k].clone()).into();
             tx.execute(
                 "INSERT INTO collections (id, title, kind, created_at)
                  VALUES ('c1', 'Caderno de teste', 'imported', ?1)",
@@ -61,7 +61,7 @@ fn start_collection(db: &Database, mode: FeedbackMode) -> AttemptView {
     .unwrap()
 }
 
-fn key_of(db: &Database, question_id: &str) -> String {
+fn key_of(db: &Database, question_id: &QuestionId) -> String {
     db.with(|c| {
         Ok(c.query_row(
             "SELECT answer_id FROM questions WHERE id = ?1",
@@ -285,7 +285,7 @@ fn abandoning_leaves_no_history() {
         .unwrap();
     assert_eq!((attempts, responses), (0, 0));
     let detail = db
-        .with(|c| crate::bank::catalog::collection(c, "c1"))
+        .with(|c| crate::bank::catalog::collection(c, &"c1".into()))
         .unwrap();
     assert!(detail.attempts.is_empty());
     assert_eq!(
@@ -386,7 +386,7 @@ fn sessions_shuffle_questions_and_multiple_choice_options() {
                 }
             }
         }
-        let mut sorted: Vec<String> = view
+        let mut sorted: Vec<QuestionId> = view
             .questions
             .iter()
             .map(|q| q.question_id.clone())
@@ -404,7 +404,7 @@ fn sessions_shuffle_questions_and_multiple_choice_options() {
 #[test]
 fn topic_sessions_prefer_unseen_then_least_recent_and_skip_annulled() {
     let (db, ids) = bank();
-    let topic_id: i64 = db
+    let topic_id: TopicId = db
         .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
         .unwrap();
     // q4 annulled; q1 answered long ago, q2 answered recently; q3 never answered.
@@ -432,7 +432,7 @@ fn topic_sessions_prefer_unseen_then_least_recent_and_skip_annulled() {
                 },
                 T1,
             )?;
-            let mut chosen: Vec<String> = view
+            let mut chosen: Vec<QuestionId> = view
                 .questions
                 .iter()
                 .map(|q| q.question_id.clone())
@@ -443,8 +443,8 @@ fn topic_sessions_prefer_unseen_then_least_recent_and_skip_annulled() {
         })
         .unwrap()
     };
-    let sorted = |list: &[&String]| {
-        let mut v: Vec<String> = list.iter().map(|s| (*s).clone()).collect();
+    let sorted = |list: &[&QuestionId]| {
+        let mut v: Vec<QuestionId> = list.iter().map(|s| (*s).clone()).collect();
         v.sort();
         v
     };
@@ -564,7 +564,7 @@ fn annulling_leaves_every_denominator_and_unannulling_restores_it() {
     assert_eq!(after.accuracy, None);
 
     // Topic sessions skip it now.
-    let topic_id: i64 = db
+    let topic_id: TopicId = db
         .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
         .unwrap();
     let topic = db
@@ -635,7 +635,7 @@ fn an_answered_exam_question_cannot_be_annulled_before_finish() {
 #[test]
 fn active_lists_unfinished_attempts_newest_first_with_counts_only() {
     let (db, _) = bank();
-    let topic_id: i64 = db
+    let topic_id: TopicId = db
         .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
         .unwrap();
     let exam = start_collection(&db, FeedbackMode::Exam);
@@ -668,18 +668,18 @@ fn active_lists_unfinished_attempts_newest_first_with_counts_only() {
     let active = db.with(|c| active(c)).unwrap();
     let summary: Vec<_> = active
         .iter()
-        .map(|a| (a.id.as_str(), a.title.as_str(), a.answered, a.total))
+        .map(|a| (&a.id, a.title.as_str(), a.answered, a.total))
         .collect();
     assert_eq!(
         summary,
         [
             (
-                topic.id.as_str(),
+                &topic.id,
                 "Direito › Constitucional › Controle de constitucionalidade",
                 0,
                 2
             ),
-            (exam.id.as_str(), "Caderno de teste", 1, 4),
+            (&exam.id, "Caderno de teste", 1, 4),
         ],
         "newest first; the exam counts its answered question but reveals nothing"
     );
@@ -694,4 +694,27 @@ fn active_lists_unfinished_attempts_newest_first_with_counts_only() {
     ] {
         assert!(!json.contains(secret), "{secret} leaked: {json}");
     }
+}
+
+#[test]
+fn unavailable_topic_references_use_the_generic_session_title() {
+    let db = Database::open_in_memory().unwrap();
+    let id = AttemptId::from("legacy");
+    db.with(|conn| {
+        conn.execute(
+            "INSERT INTO attempts (id, source_kind, feedback_mode, started_at)
+             VALUES (?1, 'topic', 'study', ?2)",
+            params![id, T0],
+        )?;
+        for source_ref in [None, Some("unknown-topic"), Some("42")] {
+            conn.execute(
+                "UPDATE attempts SET source_ref = ?2 WHERE id = ?1",
+                params![id, source_ref],
+            )?;
+            assert_eq!(load(conn, &id)?.title, "Sessão");
+            assert_eq!(active(conn)?[0].title, "Sessão");
+        }
+        Ok(())
+    })
+    .unwrap();
 }

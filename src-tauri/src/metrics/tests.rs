@@ -1,3 +1,4 @@
+use super::csv::cell;
 use super::*;
 use crate::attempts::SourceKind;
 use crate::bank::catalog::CollectionKind;

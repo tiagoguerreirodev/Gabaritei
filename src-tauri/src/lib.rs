@@ -20,6 +20,7 @@ pub mod learning;
 pub mod log;
 pub mod metrics;
 pub mod migrate;
+mod ordering;
 pub mod paths;
 pub mod shortcuts;
 mod sync;

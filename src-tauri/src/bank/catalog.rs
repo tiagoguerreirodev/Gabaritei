@@ -2,14 +2,13 @@
 //!
 //! These views never include answer keys or explanations (AGENTS.md rule 1).
 
-use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
-use unicode_normalization::UnicodeNormalization;
-use unicode_normalization::char::is_combining_mark;
+pub use crate::ordering::fold;
+use crate::ordering::{cmp_pt, distinct};
 
 use crate::attempts::{ANSWERED_RESPONSE_SQL, FeedbackMode, SourceKind};
 use crate::error::{AppError, AppResult};
@@ -18,19 +17,6 @@ use crate::ids::{AttemptId, CollectionId, TopicId};
 /// Default and maximum page sizes for the collections list.
 pub const DEFAULT_PAGE_SIZE: u32 = 20;
 pub const MAX_PAGE_SIZE: u32 = 100;
-
-/// Lowercase, accent-free text for search and Portuguese alphabetical order.
-pub fn fold(text: &str) -> String {
-    text.nfd()
-        .filter(|c| !is_combining_mark(*c))
-        .collect::<String>()
-        .to_lowercase()
-}
-
-/// Portuguese-friendly order: accents and case only break ties.
-pub(crate) fn cmp_pt(a: &str, b: &str) -> Ordering {
-    fold(a).cmp(&fold(b)).then_with(|| a.cmp(b))
-}
 
 // ---- Topic tree ------------------------------------------------------------------------------
 
@@ -273,13 +259,6 @@ fn all_collections(conn: &Connection) -> AppResult<Vec<CollectionSummary>> {
         })
     })
     .collect()
-}
-
-fn distinct(values: impl Iterator<Item = Option<String>>) -> Vec<String> {
-    let mut values: Vec<String> = values.flatten().collect();
-    values.sort_by(|a, b| cmp_pt(a, b));
-    values.dedup();
-    values
 }
 
 /// One page of collections matching the query, ordered by contest and then title.

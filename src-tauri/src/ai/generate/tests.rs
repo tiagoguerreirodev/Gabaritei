@@ -150,13 +150,23 @@ mod pipeline {
         assert_eq!((check.multiple, check.boolean, check.duplicates), (1, 1, 0));
     }
 
-    #[test]
-    fn invalid_output_is_an_error_and_saves_nothing() {
+    fn invalid_generation() -> (Database, AppError) {
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_codex(dir.path(), "isto não é json");
         let (db, secrets, clis) = setup(&cli);
         let error = run(&db, &secrets, &clis, request(1)).unwrap_err();
+        (db, error)
+    }
+
+    #[test]
+    fn invalid_output_reports_the_format_error() {
+        let (_, error) = invalid_generation();
         assert!(error.to_string().contains("formato inválido"));
+    }
+
+    #[test]
+    fn invalid_output_leaves_no_draft() {
+        let (db, _) = invalid_generation();
         assert_eq!(draft_count(&db), 0);
     }
 
@@ -296,8 +306,7 @@ mod pipeline {
         assert!(check.is_blocked(0) && !check.is_blocked(1));
     }
 
-    #[test]
-    fn cancel_stops_the_generation_and_saves_nothing() {
+    fn cancelled_generation() -> (Database, AppError) {
         let dir = tempfile::tempdir().unwrap();
         let cli =
             crate::ai::runner::tests::write_script(dir.path(), "codex", "cat >/dev/null\nsleep 60");
@@ -317,12 +326,22 @@ mod pipeline {
             &mut |_| {},
         )
         .unwrap_err();
-        assert!(error.to_string().contains("cancelada"), "{error}");
-        assert_eq!(draft_count(&db), 0);
+        (db, error)
     }
 
     #[test]
-    fn attachments_are_kept_by_name_only_and_overrides_win() {
+    fn cancellation_reports_an_error() {
+        let (_, error) = cancelled_generation();
+        assert!(error.to_string().contains("cancelada"), "{error}");
+    }
+
+    #[test]
+    fn cancellation_leaves_no_draft() {
+        let (db, _) = cancelled_generation();
+        assert_eq!(draft_count(&db), 0);
+    }
+
+    fn generation_with_attachment_and_override() -> (tempfile::TempDir, Database, Draft) {
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_codex(dir.path(), &package(vec![multiple("q1", "A?")]));
         let (db, secrets, clis) = setup(&cli);
@@ -337,17 +356,28 @@ mod pipeline {
             fast: false,
         });
         let draft = run(&db, &secrets, &clis, job).unwrap();
+        (dir, db, draft)
+    }
+
+    #[test]
+    fn stored_attachment_names_omit_source_paths() {
+        let (dir, db, draft) = generation_with_attachment_and_override();
         assert_eq!(draft.request.request.sources.attachments, ["Lei 8.112.md"]);
-        assert_eq!(draft.request.info.model, "modelo-do-formulario");
-        assert_eq!(
-            draft.request.generator.effort,
-            crate::ai::agent::Effort::Low
-        );
         let stored = db.with(|conn| draft::load(conn, &draft.id)).unwrap();
         assert!(
             !serde_json::to_string(&stored.request)
                 .unwrap()
                 .contains(dir.path().to_str().unwrap())
+        );
+    }
+
+    #[test]
+    fn the_generator_override_selects_model_and_effort() {
+        let (_dir, _db, draft) = generation_with_attachment_and_override();
+        assert_eq!(draft.request.info.model, "modelo-do-formulario");
+        assert_eq!(
+            draft.request.generator.effort,
+            crate::ai::agent::Effort::Low
         );
     }
 
@@ -392,11 +422,14 @@ mod request_form {
     }
 
     #[test]
-    fn the_topic_names_are_required_and_trimmed() {
+    fn a_blank_matter_is_rejected() {
         let mut blank = request(1);
         blank.topic.matter = "   ".into();
         assert!(invalid(blank).contains("matéria"));
+    }
 
+    #[test]
+    fn form_fields_are_trimmed() {
         let mut padded = request(1);
         padded.topic.topic = "  Crase  ".into();
         padded.board = Some("   ".into());
@@ -422,19 +455,26 @@ mod request_form {
     }
 
     #[test]
-    fn attachments_must_be_small_existing_pdf_markdown_or_text_files() {
+    fn executable_attachments_are_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("programa.exe");
         std::fs::write(&exe, "x").unwrap();
         let mut bad_type = request(1);
         bad_type.sources.attachments = vec![exe.to_string_lossy().into_owned()];
         assert!(invalid(bad_type).contains("não é um PDF"));
+    }
 
+    #[test]
+    fn missing_attachments_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
         let mut missing = request(1);
         missing.sources.attachments =
             vec![dir.path().join("sumiu.pdf").to_string_lossy().into_owned()];
         assert!(invalid(missing).contains("Não encontrei"));
+    }
 
+    #[test]
+    fn excess_attachments_are_rejected() {
         let mut too_many = request(1);
         too_many.sources.attachments = (0..6).map(|i| format!("a{i}.pdf")).collect();
         assert!(invalid(too_many).contains("no máximo"));
@@ -449,13 +489,23 @@ mod prompt {
     }
 
     #[test]
-    fn it_states_the_topic_count_and_format_rules() {
+    fn the_prompt_specifies_the_requested_count() {
         let prompt = text(&request(7), &[]);
         assert!(prompt.contains("exatamente 7 questões"));
+    }
+
+    #[test]
+    fn the_prompt_names_the_selected_topic() {
+        let prompt = text(&request(7), &[]);
         assert!(
             prompt.contains("Direito › Administrativo › Atos administrativos")
                 || prompt.contains("›")
         );
+    }
+
+    #[test]
+    fn the_prompt_specifies_the_allowed_formats() {
+        let prompt = text(&request(7), &[]);
         assert!(prompt.contains("5 alternativas distintas"));
         assert!(prompt.contains("\"Certo\" e \"Errado\""));
         assert!(prompt.contains("mistur"), "a blank format lets the AI mix");
@@ -510,17 +560,8 @@ mod prompt {
     }
 
     #[test]
-    fn existing_stems_are_listed_shortened_and_capped() {
-        let long = format!("Início {}", "palavra ".repeat(100));
-        let stems: Vec<String> = (0..200)
-            .map(|i| {
-                if i == 199 {
-                    long.clone()
-                } else {
-                    format!("Enunciado {i}")
-                }
-            })
-            .collect();
+    fn the_prompt_lists_only_the_most_recent_stems() {
+        let stems: Vec<_> = (0..200).map(|i| format!("Enunciado {i}")).collect();
         let prompt = text(&request(1), &stems);
         assert!(prompt.contains("QUESTÕES JÁ EXISTENTES"));
         assert!(
@@ -528,6 +569,12 @@ mod prompt {
             "only the most recent 150 are sent"
         );
         assert!(prompt.contains("- Enunciado 150\n"));
+    }
+
+    #[test]
+    fn the_prompt_shortens_long_stems() {
+        let long = format!("Início {}", "palavra ".repeat(100));
+        let prompt = text(&request(1), std::slice::from_ref(&long));
         assert!(prompt.contains("…"), "long stems are cut");
         assert!(!prompt.contains(&long));
     }

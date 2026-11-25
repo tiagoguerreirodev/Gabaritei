@@ -216,13 +216,20 @@ fn open_attempt_questions(conn: &Connection) -> AppResult<HashSet<QuestionId>> {
     Ok(ids)
 }
 
+pub(crate) const DUE_SQL: &str = "due_at <= ?1";
+
+pub(crate) fn due_count(conn: &Connection, now: &str) -> AppResult<u32> {
+    let sql = format!("SELECT COUNT(*) FROM review_state WHERE {DUE_SQL}");
+    Ok(conn.query_row(&sql, [now], |r| r.get(0))?)
+}
+
 /// How many reviews due at `now` sit in an unfinished attempt: they stay due, but a new
 /// practice session leaves them out. The Home summary and the Learning overview both use this.
 pub fn due_in_open_attempt(conn: &Connection, now: &str) -> AppResult<u32> {
     Ok(conn.query_row(
         &format!(
             "SELECT COUNT(*) FROM review_state
-             WHERE due_at <= ?1 AND question_id IN ({OPEN_ATTEMPT_QUESTIONS_SQL})"
+             WHERE {DUE_SQL} AND question_id IN ({OPEN_ATTEMPT_QUESTIONS_SQL})"
         ),
         [now],
         |r| r.get(0),
@@ -265,7 +272,7 @@ pub fn review_session(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec
 pub fn due_questions(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<QuestionId>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT question_id FROM review_state
-         WHERE due_at <= ?1 AND question_id NOT IN ({OPEN_ATTEMPT_QUESTIONS_SQL})
+         WHERE {DUE_SQL} AND question_id NOT IN ({OPEN_ATTEMPT_QUESTIONS_SQL})
          ORDER BY due_at, question_id LIMIT ?2"
     ))?;
     let ids = stmt
@@ -362,11 +369,8 @@ pub fn overview(conn: &Connection, now: &str, include_blanks: bool) -> AppResult
     }
     // Reviews by due date; errors without one go last. `latest_results` is newest first, and
     // the sort is stable.
-    items.sort_by(|a, b| match (&a.due_at, &b.due_at) {
-        (Some(x), Some(y)) => x.cmp(y),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
+    items.sort_by(|a, b| {
+        crate::ordering::some_first(a.due_at.as_ref(), b.due_at.as_ref(), Ord::cmp)
     });
 
     // Upcoming reviews of questions that are not errors can be thousands: the list keeps the
@@ -379,7 +383,7 @@ pub fn overview(conn: &Connection, now: &str, include_blanks: bool) -> AppResult
         }
         !only_upcoming || upcoming_only <= MAX_UPCOMING_ROWS
     });
-    let due = due_dates.values().filter(|d| d.as_str() <= now).count() as u32;
+    let due = due_count(conn, now)?;
     let due_in_open_attempt = due_in_open_attempt(conn, now)?;
     Ok(LearningOverview {
         due,

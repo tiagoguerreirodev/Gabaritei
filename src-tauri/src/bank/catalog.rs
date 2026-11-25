@@ -4,11 +4,12 @@
 
 use std::collections::BTreeMap;
 
+use super::tags::FilterOptions;
+use crate::ordering::cmp_pt;
+pub use crate::ordering::fold;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
-pub use crate::ordering::fold;
-use crate::ordering::{cmp_pt, distinct};
 
 use crate::attempts::{ANSWERED_RESPONSE_SQL, FeedbackMode, SourceKind};
 use crate::error::{AppError, AppResult};
@@ -268,8 +269,8 @@ pub fn collections(conn: &Connection, query: &CollectionQuery) -> AppResult<Coll
         n => n.min(MAX_PAGE_SIZE),
     };
     let all = all_collections(conn)?;
-    let contests = distinct(all.iter().map(|c| c.contest.clone()));
-    let boards = distinct(all.iter().map(|c| c.board.clone()));
+    let FilterOptions { contests, boards } =
+        FilterOptions::from_tags(all.iter().map(|c| (c.contest.clone(), c.board.clone())));
 
     let search = fold(query.search.trim());
     let mut matching: Vec<CollectionSummary> = all

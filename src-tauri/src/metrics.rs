@@ -25,9 +25,11 @@ use crate::ai::draft::DraftStatus;
 use crate::attempts::{
     self, ActiveAttempt, FeedbackMode, Outcome, RESPONSE_TIME_SQL, Score, outcome,
 };
-use crate::ordering::cmp_pt;
+use crate::bank::TopicPath;
+pub use crate::bank::tags::FilterOptions;
 use crate::error::AppResult;
 use crate::ids::{QuestionId, TopicId};
+use crate::ordering::{cmp_pt, some_first};
 
 /// Groups with fewer answers than this carry the small-sample warning.
 pub const SMALL_SAMPLE: u32 = 5;
@@ -118,15 +120,6 @@ pub struct WeekPoint {
     pub accuracy: Option<f64>,
 }
 
-/// Tags that exist on collections, for the filter dropdowns.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct FilterOptions {
-    pub contests: Vec<String>,
-    pub boards: Vec<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -147,8 +140,7 @@ pub struct Performance {
 #[derive(Default)]
 struct Acc {
     seen: HashSet<QuestionId>,
-    outcomes: Vec<Outcome>,
-    answered: u32,
+    score: Score,
     available: u32,
 }
 
@@ -162,21 +154,17 @@ impl Acc {
             self.available += 1;
         }
         if let Some(outcome) = row.outcome {
-            self.outcomes.push(outcome);
-            if matches!(outcome, Outcome::Correct | Outcome::Wrong) {
-                self.answered += 1;
-            }
+            self.score.record(outcome);
         }
     }
 
-    fn stats(&self) -> GroupStats {
-        let score = Score::of(self.outcomes.iter().copied());
+    fn stats(self) -> GroupStats {
+        let answered = self.score.answered();
         GroupStats {
-            coverage: (self.available > 0)
-                .then(|| f64::from(self.answered) / f64::from(self.available)),
-            small_sample: self.answered < SMALL_SAMPLE,
-            score,
-            answered: self.answered,
+            coverage: Score::ratio(answered, self.available),
+            small_sample: answered < SMALL_SAMPLE,
+            score: self.score,
+            answered,
             available: self.available,
         }
     }
@@ -191,14 +179,14 @@ struct Row {
 /// Weakest first: lowest achievement, then more evaluated questions, then name. Groups with
 /// nothing evaluated go last.
 fn weakest_first(a: (&GroupStats, &str), b: (&GroupStats, &str)) -> Ordering {
-    match (a.0.score.achievement, b.0.score.achievement) {
-        (Some(x), Some(y)) => x
-            .total_cmp(&y)
-            .then(b.0.score.evaluated.cmp(&a.0.score.evaluated)),
-        (Some(_), None) => Ordering::Less,
-        (None, Some(_)) => Ordering::Greater,
-        (None, None) => Ordering::Equal,
-    }
+    some_first(
+        a.0.score.achievement.as_ref(),
+        b.0.score.achievement.as_ref(),
+        |x, y| {
+            x.total_cmp(y)
+                .then(b.0.score.evaluated.cmp(&a.0.score.evaluated))
+        },
+    )
     .then_with(|| cmp_pt(a.1, b.1))
 }
 
@@ -210,9 +198,14 @@ const FILTERS: &str = "
           AND (:contest IS NULL OR trim(c.contest) = :contest)
           AND (:board IS NULL OR trim(c.board) = :board)))";
 
+const MIN_UTC_OFFSET_MINUTES: i32 = -12 * 60;
+const MAX_UTC_OFFSET_MINUTES: i32 = 14 * 60;
+
 /// Offsets outside the real range of time zones (UTC−12 to UTC+14) are clamped.
 fn offset_minutes(query: &PerformanceQuery) -> i32 {
-    query.utc_offset_minutes.clamp(-12 * 60, 14 * 60)
+    query
+        .utc_offset_minutes
+        .clamp(MIN_UTC_OFFSET_MINUTES, MAX_UTC_OFFSET_MINUTES)
 }
 
 fn tag(value: &Option<String>) -> Option<&str> {
@@ -223,7 +216,14 @@ fn tag(value: &Option<String>) -> Option<&str> {
 
 /// The whole performance record under the given filters.
 pub fn performance(conn: &Connection, query: &PerformanceQuery) -> AppResult<Performance> {
-    let (overall, areas, weakest) = strength(conn, query)?;
+    let mut groups = StrengthGroups::default();
+    visit_topic_results(conn, query, |id, topic_id, path, row| {
+        groups.add(id, topic_id, path, row);
+    })?;
+    let overall = groups.overall.stats();
+    let mut areas = build_areas(groups.areas);
+    let weakest = weakest_topics(&areas);
+    sort_areas(&mut areas);
     Ok(Performance {
         overall,
         areas,
@@ -233,9 +233,11 @@ pub fn performance(conn: &Connection, query: &PerformanceQuery) -> AppResult<Per
     })
 }
 
-type Strength = (GroupStats, Vec<AreaStats>, Vec<WeakTopic>);
-
-fn strength(conn: &Connection, query: &PerformanceQuery) -> AppResult<Strength> {
+fn visit_topic_results(
+    conn: &Connection,
+    query: &PerformanceQuery,
+    mut visit: impl FnMut(&QuestionId, TopicId, TopicPath, &Row),
+) -> AppResult<()> {
     // One row per (question, topic). `latest` keeps the newest response of each question.
     let sql = format!(
         "WITH latest AS (
@@ -262,78 +264,110 @@ fn strength(conn: &Connection, query: &PerformanceQuery) -> AppResult<Strength> 
         ":board": tag(&query.board),
     })?;
 
-    let mut overall = Acc::default();
-    let mut groups: BTreeMap<Vec<String>, Acc> = BTreeMap::new();
-    let mut topic_ids: BTreeMap<Vec<String>, TopicId> = BTreeMap::new();
     while let Some(r) = rows.next()? {
-        let question_id: QuestionId = r.get(0)?;
+        let question_id = r.get(0)?;
         let answer_id: String = r.get(1)?;
         let annulled: bool = r.get(2)?;
-        let topic_id: TopicId = r.get(3)?;
-        let path = vec![
-            r.get::<_, String>(4)?,
-            r.get::<_, String>(5)?,
-            r.get::<_, String>(6)?,
-        ];
+        let path = TopicPath {
+            area: r.get(4)?,
+            matter: r.get(5)?,
+            topic: r.get(6)?,
+        };
         let has_response: bool = r.get(7)?;
         let choice: Option<String> = r.get(8)?;
         let row = Row {
             annulled,
             outcome: has_response.then(|| outcome(choice.as_deref(), &answer_id, annulled.into())),
         };
-        overall.add(&question_id, &row);
-        for len in 1..=path.len() {
-            groups
-                .entry(path[..len].to_vec())
-                .or_default()
-                .add(&question_id, &row);
-        }
-        topic_ids.insert(path, topic_id);
+        visit(&question_id, r.get(3)?, path, &row);
     }
+    Ok(())
+}
 
-    // Assemble the tree. `BTreeMap` keys sort by prefix, so parents precede children.
-    let mut areas: Vec<AreaStats> = Vec::new();
-    let mut weakest: Vec<WeakTopic> = Vec::new();
-    for (path, acc) in &groups {
-        let stats = acc.stats();
-        match path.len() {
-            1 => areas.push(AreaStats {
-                name: path[0].clone(),
-                stats,
-                matters: Vec::new(),
-            }),
-            2 => {
-                let area = areas.last_mut().expect("areas precede their matters");
-                area.matters.push(MatterStats {
-                    name: path[1].clone(),
-                    stats,
-                    topics: Vec::new(),
-                });
-            }
-            _ => {
-                let topic_id = topic_ids[path];
-                let matter = areas
-                    .last_mut()
-                    .and_then(|a| a.matters.last_mut())
-                    .expect("matters precede their topics");
-                if stats.score.evaluated > 0 {
+#[derive(Default)]
+struct StrengthGroups {
+    overall: Acc,
+    areas: BTreeMap<String, AreaGroup>,
+}
+
+#[derive(Default)]
+struct AreaGroup {
+    total: Acc,
+    matters: BTreeMap<String, MatterGroup>,
+}
+
+#[derive(Default)]
+struct MatterGroup {
+    total: Acc,
+    topics: BTreeMap<String, (TopicId, Acc)>,
+}
+
+impl StrengthGroups {
+    fn add(&mut self, id: &QuestionId, topic_id: TopicId, path: TopicPath, row: &Row) {
+        self.overall.add(id, row);
+        let area = self.areas.entry(path.area).or_default();
+        area.total.add(id, row);
+        let matter = area.matters.entry(path.matter).or_default();
+        matter.total.add(id, row);
+        let (_, topic) = matter
+            .topics
+            .entry(path.topic)
+            .or_insert_with(|| (topic_id, Acc::default()));
+        topic.add(id, row);
+    }
+}
+
+fn build_areas(groups: BTreeMap<String, AreaGroup>) -> Vec<AreaStats> {
+    groups
+        .into_iter()
+        .map(|(name, area)| AreaStats {
+            name,
+            stats: area.total.stats(),
+            matters: area
+                .matters
+                .into_iter()
+                .map(|(name, matter)| MatterStats {
+                    name,
+                    stats: matter.total.stats(),
+                    topics: matter
+                        .topics
+                        .into_iter()
+                        .map(|(name, (topic_id, group))| TopicStats {
+                            name,
+                            topic_id,
+                            stats: group.stats(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn weakest_topics(areas: &[AreaStats]) -> Vec<WeakTopic> {
+    let mut weakest = Vec::new();
+    for area in areas {
+        for matter in &area.matters {
+            for topic in &matter.topics {
+                if topic.stats.score.evaluated > 0 {
                     weakest.push(WeakTopic {
-                        topic_id,
-                        area: path[0].clone(),
-                        matter: path[1].clone(),
-                        topic: path[2].clone(),
-                        stats: stats.clone(),
+                        topic_id: topic.topic_id,
+                        area: area.name.clone(),
+                        matter: matter.name.clone(),
+                        topic: topic.name.clone(),
+                        stats: topic.stats.clone(),
                     });
                 }
-                matter.topics.push(TopicStats {
-                    topic_id,
-                    name: path[2].clone(),
-                    stats,
-                });
             }
         }
     }
-    for area in &mut areas {
+    weakest.sort_by(|a, b| weakest_first((&a.stats, &a.topic), (&b.stats, &b.topic)));
+    weakest.truncate(WEAKEST_LIMIT);
+    weakest
+}
+
+fn sort_areas(areas: &mut [AreaStats]) {
+    for area in areas.iter_mut() {
         for matter in &mut area.matters {
             matter
                 .topics
@@ -343,21 +377,20 @@ fn strength(conn: &Connection, query: &PerformanceQuery) -> AppResult<Strength> 
             .sort_by(|a, b| weakest_first((&a.stats, &a.name), (&b.stats, &b.name)));
     }
     areas.sort_by(|a, b| weakest_first((&a.stats, &a.name), (&b.stats, &b.name)));
-    weakest.sort_by(|a, b| weakest_first((&a.stats, &a.topic), (&b.stats, &b.topic)));
-    weakest.truncate(WEAKEST_LIMIT);
-
-    Ok((overall.stats(), areas, weakest))
 }
 
 /// *Acerto entre respondidas* per topic id for the Banco tree, over all finished attempts.
 /// Topics without an answer are absent.
 pub fn topic_accuracy(conn: &Connection) -> AppResult<HashMap<TopicId, f64>> {
-    let (_, areas, _) = strength(conn, &PerformanceQuery::default())?;
-    Ok(areas
-        .iter()
-        .flat_map(|a| &a.matters)
-        .flat_map(|m| &m.topics)
-        .filter_map(|t| Some((t.topic_id, t.stats.score.accuracy?)))
+    let mut topics = HashMap::<TopicId, Score>::new();
+    visit_topic_results(conn, &PerformanceQuery::default(), |_, topic_id, _, row| {
+        if let Some(outcome) = row.outcome {
+            topics.entry(topic_id).or_default().record(outcome);
+        }
+    })?;
+    Ok(topics
+        .into_iter()
+        .filter_map(|(id, score)| Some((id, score.accuracy?)))
         .collect())
 }
 
@@ -378,49 +411,37 @@ fn trend(conn: &Connection, query: &PerformanceQuery) -> AppResult<Vec<WeekPoint
         ":contest": tag(&query.contest),
         ":board": tag(&query.board),
     })?;
-    let mut weeks: BTreeMap<String, (u32, u32)> = BTreeMap::new();
+    let mut weeks: BTreeMap<String, Score> = BTreeMap::new();
     while let Some(r) = rows.next()? {
         let week: Option<String> = r.get(0)?;
         let choice: String = r.get(1)?;
         let answer_id: String = r.get(2)?;
         let annulled: bool = r.get(3)?;
         let Some(week) = week else { continue };
-        match outcome(Some(&choice), &answer_id, annulled.into()) {
-            Outcome::Correct => {
-                let entry = weeks.entry(week).or_default();
-                entry.0 += 1;
-                entry.1 += 1;
-            }
-            Outcome::Wrong => weeks.entry(week).or_default().0 += 1,
-            Outcome::Blank | Outcome::Annulled => {}
+        let result = outcome(Some(&choice), &answer_id, annulled.into());
+        if matches!(result, Outcome::Correct | Outcome::Wrong) {
+            weeks.entry(week).or_default().record(result);
         }
     }
     Ok(weeks
         .into_iter()
-        .map(|(week_start, (answered, correct))| WeekPoint {
+        .map(|(week_start, score)| WeekPoint {
             week_start,
-            answered,
-            correct,
-            accuracy: (answered > 0).then(|| f64::from(correct) / f64::from(answered)),
+            answered: score.answered(),
+            correct: score.correct,
+            accuracy: score.accuracy,
         })
         .collect())
 }
 
 fn filter_options(conn: &Connection) -> AppResult<FilterOptions> {
-    let column = |name: &str| -> AppResult<Vec<String>> {
-        let mut values: Vec<String> = conn
-            .prepare(&format!(
-                "SELECT DISTINCT trim({name}) FROM collections WHERE {name} IS NOT NULL AND trim({name}) <> ''"
-            ))?
-            .query_map([], |r| r.get(0))?
-            .collect::<Result<_, _>>()?;
-        values.sort_by(|a, b| cmp_pt(a, b));
-        Ok(values)
-    };
-    Ok(FilterOptions {
-        contests: column("contest")?,
-        boards: column("board")?,
-    })
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT nullif(trim(contest), ''), nullif(trim(board), '') FROM collections",
+    )?;
+    let tags = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(FilterOptions::from_tags(tags))
 }
 
 // ---- Home ------------------------------------------------------------------------------------
@@ -457,25 +478,29 @@ pub struct HomeSummary {
 
 /// The home summary at `now` (an RFC 3339 UTC timestamp).
 pub fn home(conn: &Connection, now: &str) -> AppResult<HomeSummary> {
-    let (overall, areas, _) = strength(conn, &PerformanceQuery::default())?;
+    let mut overall = Acc::default();
+    let mut area_groups = BTreeMap::<String, Acc>::new();
+    visit_topic_results(conn, &PerformanceQuery::default(), |id, _, path, row| {
+        overall.add(id, row);
+        area_groups.entry(path.area).or_default().add(id, row);
+    })?;
+    let mut areas: Vec<_> = area_groups
+        .into_iter()
+        .map(|(name, group)| AreaSummary {
+            name,
+            stats: group.stats(),
+        })
+        .collect();
+    areas.sort_by(|a, b| weakest_first((&a.stats, &a.name), (&b.stats, &b.name)));
     let count = |sql: &str, params: &[&dyn rusqlite::ToSql]| -> AppResult<u32> {
         Ok(conn.query_row(sql, params, |r| r.get(0))?)
     };
     Ok(HomeSummary {
         questions: count("SELECT COUNT(*) FROM questions", &[])?,
-        overall,
-        areas: areas
-            .into_iter()
-            .map(|a| AreaSummary {
-                name: a.name,
-                stats: a.stats,
-            })
-            .collect(),
+        overall: overall.stats(),
+        areas,
         active_attempts: attempts::active(conn)?,
-        due_reviews: count(
-            "SELECT COUNT(*) FROM review_state WHERE due_at <= ?1",
-            &[&now],
-        )?,
+        due_reviews: crate::learning::due_count(conn, now)?,
         due_in_open_attempt: crate::learning::due_in_open_attempt(conn, now)?,
         drafts_waiting: count(
             "SELECT COUNT(*) FROM drafts WHERE status = ?1",
@@ -485,7 +510,7 @@ pub fn home(conn: &Connection, now: &str) -> AppResult<HomeSummary> {
 }
 
 mod csv;
-pub use csv::{export_csv, to_csv};
+pub use csv::export_csv;
 
 #[cfg(test)]
 mod tests;

@@ -9,6 +9,7 @@ pub mod identity;
 pub mod package;
 pub mod question;
 pub mod store;
+pub(crate) mod tags;
 
 pub use package::{Package, PackageQuestion, package_json_schema};
 pub use question::{

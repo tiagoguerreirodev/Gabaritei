@@ -71,17 +71,28 @@ impl Score {
     pub fn of(outcomes: impl IntoIterator<Item = Outcome>) -> Self {
         let mut score = Self::default();
         for outcome in outcomes {
-            match outcome {
-                Outcome::Correct => score.correct += 1,
-                Outcome::Wrong => score.wrong += 1,
-                Outcome::Blank => score.blank += 1,
-                Outcome::Annulled => score.annulled += 1,
-            }
+            score.record(outcome);
         }
-        score.evaluated = score.correct + score.wrong + score.blank;
-        let ratio = |part: u32, whole: u32| (whole > 0).then(|| f64::from(part) / f64::from(whole));
-        score.achievement = ratio(score.correct, score.evaluated);
-        score.accuracy = ratio(score.correct, score.correct + score.wrong);
         score
+    }
+
+    pub(crate) fn record(&mut self, outcome: Outcome) {
+        match outcome {
+            Outcome::Correct => self.correct += 1,
+            Outcome::Wrong => self.wrong += 1,
+            Outcome::Blank => self.blank += 1,
+            Outcome::Annulled => self.annulled += 1,
+        }
+        self.evaluated = self.answered() + self.blank;
+        self.achievement = Self::ratio(self.correct, self.evaluated);
+        self.accuracy = Self::ratio(self.correct, self.answered());
+    }
+
+    pub(crate) fn answered(&self) -> u32 {
+        self.correct + self.wrong
+    }
+
+    pub(crate) fn ratio(part: u32, whole: u32) -> Option<f64> {
+        (whole > 0).then(|| f64::from(part) / f64::from(whole))
     }
 }

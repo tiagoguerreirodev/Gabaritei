@@ -376,9 +376,9 @@ pub async fn export_performance_csv<R: Runtime>(
     app: AppHandle<R>,
     query: PerformanceQuery,
 ) -> AppResult<bool> {
-    let csv = app
+    let performance = app
         .state::<Database>()
-        .with(|conn| metrics::export_csv(conn, &query))?;
+        .with(|conn| metrics::performance(conn, &query))?;
     tauri::async_runtime::spawn_blocking(move || {
         let Some(file) = app
             .dialog()
@@ -393,8 +393,7 @@ pub async fn export_performance_csv<R: Runtime>(
         let path = file
             .into_path()
             .map_err(|_| AppError::Invalid("Escolha um local deste computador.".into()))?;
-        std::fs::write(&path, csv)
-            .map_err(|_| AppError::Invalid("Não foi possível salvar o arquivo.".into()))?;
+        metrics::export_csv(&path, &performance)?;
         Ok(true)
     })
     .await

@@ -15,9 +15,16 @@ pub(crate) fn cmp_pt(a: &str, b: &str) -> Ordering {
     fold(a).cmp(&fold(b)).then_with(|| a.cmp(b))
 }
 
-pub(crate) fn distinct(values: impl Iterator<Item = Option<String>>) -> Vec<String> {
-    let mut values: Vec<String> = values.flatten().collect();
-    values.sort_by(|a, b| cmp_pt(a, b));
-    values.dedup();
-    values
+/// Compares present values first. Absent values always sort last.
+pub(crate) fn some_first<T>(
+    left: Option<&T>,
+    right: Option<&T>,
+    compare: impl FnOnce(&T, &T) -> Ordering,
+) -> Ordering {
+    match (left, right) {
+        (Some(a), Some(b)) => compare(a, b),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
 }

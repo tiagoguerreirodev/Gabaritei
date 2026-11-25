@@ -550,8 +550,10 @@ fn export_with_special_characters() -> String {
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
-    f.db.with(|c| export_csv(c, &PerformanceQuery::default()))
-        .unwrap()
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("desempenho.csv");
+    export_csv(&path, &f.all()).unwrap();
+    std::fs::read_to_string(path).unwrap()
 }
 
 #[test]

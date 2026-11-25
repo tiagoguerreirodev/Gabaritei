@@ -1,6 +1,6 @@
-use super::{GroupStats, Performance, PerformanceQuery, performance};
-use crate::error::AppResult;
-use rusqlite::Connection;
+use super::{GroupStats, Performance};
+use crate::error::{AppError, AppResult};
+use std::path::Path;
 
 // ---- CSV export ------------------------------------------------------------------------------
 
@@ -50,7 +50,7 @@ fn csv_row(level: &str, area: &str, matter: &str, topic: &str, stats: &GroupStat
 }
 
 /// The area › matter › topic table as CSV (`;`-separated, UTF-8 with BOM, CRLF lines).
-pub fn to_csv(performance: &Performance) -> String {
+fn to_csv(performance: &Performance) -> String {
     let mut out = String::from(BOM);
     out.push_str(
         "Nível;Área;Matéria;Assunto;Certas;Erradas;Em branco;Anuladas;Avaliadas;\
@@ -85,7 +85,8 @@ pub fn to_csv(performance: &Performance) -> String {
     out
 }
 
-/// The CSV for the given filters.
-pub fn export_csv(conn: &Connection, query: &PerformanceQuery) -> AppResult<String> {
-    Ok(to_csv(&performance(conn, query)?))
+/// Writes the performance table to the chosen local file.
+pub fn export_csv(path: &Path, performance: &Performance) -> AppResult<()> {
+    std::fs::write(path, to_csv(performance))
+        .map_err(|_| AppError::Invalid("Não foi possível salvar o arquivo.".into()))
 }

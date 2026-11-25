@@ -4,9 +4,9 @@ import { api } from "../api";
 import LegacyImport from "../components/LegacyImport";
 import MasteryBar from "../components/MasteryBar";
 import { EmptyState, ErrorState, Loading } from "../components/states";
-import { formatDate, formatNumber, questionCount } from "./bank/format";
+import { formatDate, formatNumber, questionCount } from "../format";
 import StatCards from "./performance/StatCards";
-import { openAttempt } from "./solve/format";
+import { openAttempt } from "../navigation";
 
 const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
 

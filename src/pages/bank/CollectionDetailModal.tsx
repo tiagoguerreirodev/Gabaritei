@@ -3,8 +3,8 @@ import { api } from "../../api";
 import Modal from "../../components/Modal";
 import { EmptyState, ErrorState, Loading } from "../../components/states";
 import StartSessionModal from "../solve/StartSessionModal";
-import { openAttempt } from "../solve/format";
-import { formatDate, questionCount } from "./format";
+import { openAttempt } from "../../navigation";
+import { formatDate, questionCount } from "../../format";
 
 const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
 

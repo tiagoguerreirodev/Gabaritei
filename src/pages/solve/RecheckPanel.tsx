@@ -2,7 +2,7 @@ import { For, Match, Show, Switch, createEffect, createSignal, on } from "solid-
 import type { RecheckView } from "../../bindings/RecheckView";
 import type { ResponseView } from "../../bindings/ResponseView";
 import { errorMessage } from "../../components/states";
-import { optionLetters } from "./format";
+import { optionLetters } from "../../format";
 
 type State =
   | { step: "idle" }

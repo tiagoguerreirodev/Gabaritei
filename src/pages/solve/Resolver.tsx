@@ -8,7 +8,7 @@ import { showError, showToast } from "../../components/toasts";
 import Navigator from "./Navigator";
 import QuestionCard from "./QuestionCard";
 import { loadShortcuts, shortcutsEnabled } from "../../shortcuts";
-import { formatPercent, optionLetters } from "./format";
+import { formatPercent, optionLetters } from "../../format";
 
 const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
 

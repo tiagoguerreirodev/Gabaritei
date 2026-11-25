@@ -1,7 +1,7 @@
 import { For, Show } from "solid-js";
 import type { WeekPoint } from "../../bindings/WeekPoint";
 import { EmptyState } from "../../components/states";
-import { formatPercent } from "../solve/format";
+import { formatPercent } from "../../format";
 
 const WIDTH = 640;
 const HEIGHT = 220;

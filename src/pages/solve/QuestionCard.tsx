@@ -3,7 +3,8 @@ import type { RecheckView } from "../../bindings/RecheckView";
 import type { ResponseView } from "../../bindings/ResponseView";
 import QuestionImage from "../../components/QuestionImage";
 import RichText from "../../components/RichText";
-import { optionLetters, outcomeText } from "./format";
+import { optionLetters } from "../../format";
+import { outcomeText } from "../../labels";
 import RecheckPanel from "./RecheckPanel";
 import { showError } from "../../components/toasts";
 

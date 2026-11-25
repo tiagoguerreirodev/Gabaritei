@@ -4,7 +4,7 @@ import type { RoleConfig } from "../../bindings/RoleConfig";
 import type { RoleSettings } from "../../bindings/RoleSettings";
 import { catalogState, loadCatalog, roleForAgent, roleProblem } from "../../catalog";
 import { CatalogNotice, EffortField, FastField, ModelField } from "../../components/ModelOptions";
-import { agentLabels, agents, roleLabels, roleOrder } from "./labels";
+import { agentLabels, agents, roleLabels, roleOrder } from "../../labels";
 
 /** Agent, model, effort for each of the four roles. */
 export default function RolesSection(props: {

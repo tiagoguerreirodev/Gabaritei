@@ -4,7 +4,7 @@ import type { FeedbackMode } from "../../bindings/FeedbackMode";
 import type { SessionSource } from "../../bindings/SessionSource";
 import Modal from "../../components/Modal";
 import { showError } from "../../components/toasts";
-import { openAttempt } from "./format";
+import { openAttempt } from "../../navigation";
 
 const modes: { id: FeedbackMode; label: string; hint: string }[] = [
   {

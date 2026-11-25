@@ -8,7 +8,7 @@ import { showError, showToast } from "../components/toasts";
 import StatCards from "./performance/StatCards";
 import StrengthTable, { SmallSample } from "./performance/StrengthTable";
 import TrendChart from "./performance/TrendChart";
-import { formatPercent } from "./solve/format";
+import { formatPercent } from "../format";
 
 /** Minutes to add to UTC to get the local time (−180 in Brasília). */
 const localOffsetMinutes = () => -new Date().getTimezoneOffset();

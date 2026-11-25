@@ -1,6 +1,7 @@
-import type { Agent } from "../../bindings/Agent";
-import type { Effort } from "../../bindings/Effort";
-import type { Role } from "../../bindings/Role";
+import type { Agent } from "./bindings/Agent";
+import type { Effort } from "./bindings/Effort";
+import type { Outcome } from "./bindings/Outcome";
+import type { Role } from "./bindings/Role";
 
 export const agentLabels: Record<Agent, string> = {
   claude: "Claude Code",
@@ -34,3 +35,11 @@ export const roleOrder: { role: Role; key: "generate" | "blindCheck" | "recheck"
   { role: "recheck", key: "recheck" },
   { role: "explain", key: "explain" },
 ];
+
+/** What the reveal says about the user's answer; also what the live region announces. */
+export const outcomeText: Record<Outcome, string> = {
+  correct: "Você acertou.",
+  wrong: "Você errou.",
+  blank: "Questão em branco.",
+  annulled: "Questão anulada: não entra na pontuação.",
+};

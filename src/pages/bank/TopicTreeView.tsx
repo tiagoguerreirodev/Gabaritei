@@ -2,9 +2,8 @@ import { For, Match, Show, Switch, createResource, createSignal } from "solid-js
 import { api } from "../../api";
 import { EmptyState, ErrorState, Loading } from "../../components/states";
 import type { TopicNode } from "../../bindings/TopicNode";
-import { formatPercent } from "../solve/format";
+import { formatPercent, questionCount } from "../../format";
 import StartSessionModal from "../solve/StartSessionModal";
-import { questionCount } from "./format";
 
 /** Area › matter › topic, each with its number of questions and a button to solve it. */
 export default function TopicTreeView() {

@@ -9,7 +9,7 @@ import type { AgentCatalog } from "./bindings/AgentCatalog";
 import type { Catalog } from "./bindings/Catalog";
 import type { Effort } from "./bindings/Effort";
 import type { RoleConfig } from "./bindings/RoleConfig";
-import { efforts as knownEfforts } from "./pages/settings/labels";
+import { efforts as knownEfforts } from "./labels";
 
 /** `undefined` while not loaded yet, `null` if the request failed. */
 export type CatalogValue = Catalog | null | undefined;

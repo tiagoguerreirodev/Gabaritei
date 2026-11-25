@@ -3,7 +3,7 @@ import { api } from "../../api";
 import type { CollectionSummary } from "../../bindings/CollectionSummary";
 import { EmptyState, ErrorState, Loading } from "../../components/states";
 import CollectionDetailModal from "./CollectionDetailModal";
-import { formatDate, formatNumber, questionCount } from "./format";
+import { formatDate, formatNumber, questionCount } from "../../format";
 
 export const PAGE_SIZE = 20;
 

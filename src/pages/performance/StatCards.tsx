@@ -1,7 +1,6 @@
 import { For } from "solid-js";
 import type { GroupStats } from "../../bindings/GroupStats";
-import { formatNumber } from "../bank/format";
-import { formatPercent } from "../solve/format";
+import { formatNumber, formatPercent } from "../../format";
 
 /** Headline numbers of a group of questions: achievement, accuracy, coverage and answers. */
 export default function StatCards(props: { stats: GroupStats; label: string }) {

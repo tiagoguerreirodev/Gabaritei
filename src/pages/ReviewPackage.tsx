@@ -9,8 +9,8 @@ import RichText from "../components/RichText";
 import { ErrorState, Loading } from "../components/states";
 import { showError, showToast } from "../components/toasts";
 import { dismissGeneration, generationStatus, refreshWaitingDrafts } from "../generation";
-import { agentLabels, effortLabels } from "./settings/labels";
-import { optionLetters } from "./solve/format";
+import { agentLabels, effortLabels } from "../labels";
+import { optionLetters } from "../format";
 
 const lineText: Record<LineState, string> = {
   agreed: "conferida",

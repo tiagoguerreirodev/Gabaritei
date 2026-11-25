@@ -3,7 +3,7 @@ import type { Agent } from "../../bindings/Agent";
 import type { RoleConfig } from "../../bindings/RoleConfig";
 import { catalogState, roleForAgent } from "../../catalog";
 import { EffortField, FastField, ModelField } from "../../components/ModelOptions";
-import { agentLabels, agents } from "../settings/labels";
+import { agentLabels, agents } from "../../labels";
 
 /** Agent, model and effort for one role, for this generation only. */
 export default function RolePicker(props: {

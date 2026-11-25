@@ -11,7 +11,7 @@ import {
   roleForModel,
   unavailableReason,
 } from "../catalog";
-import { effortLabels } from "../pages/settings/labels";
+import { effortLabels } from "../labels";
 
 interface FieldProps {
   /** Names the field for assistive technology, e.g. the role's name. */

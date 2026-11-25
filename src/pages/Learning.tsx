@@ -3,9 +3,9 @@ import { api } from "../api";
 import type { LearningItem } from "../bindings/LearningItem";
 import type { SessionSource } from "../bindings/SessionSource";
 import { EmptyState, ErrorState, Loading } from "../components/states";
-import { formatDate, formatNumber } from "./bank/format";
+import { formatDate, formatNumber } from "../format";
 import StartSessionModal from "./solve/StartSessionModal";
-import { openAttempt } from "./solve/format";
+import { openAttempt } from "../navigation";
 
 const topicLabel = (item: LearningItem) =>
   item.topics.length === 0

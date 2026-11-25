@@ -1,16 +1,15 @@
-import { Match, Show, Switch, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
+import { Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { api } from "../../api";
 import type { AttemptView } from "../../bindings/AttemptView";
 import type { Score } from "../../bindings/Score";
-import Modal from "../../components/Modal";
-import { ErrorState, Loading } from "../../components/states";
+import ConfirmModal from "../../components/ConfirmModal";
+import { Loading, ResourceView } from "../../components/states";
 import { showError, showToast } from "../../components/toasts";
 import Navigator from "./Navigator";
 import QuestionCard from "./QuestionCard";
 import { loadShortcuts, shortcutsEnabled } from "../../shortcuts";
 import { formatPercent, optionLetters } from "../../format";
-
-const modeLabel = { study: "Estudo", exam: "Simulado" } as const;
+import { modeLabel, outcomeLabel } from "../../labels";
 
 /** End-of-attempt recap: points over evaluated questions, achievement and the four counts. The
  * counts carry a shape as well as a colour. Comparing with the previous attempt is left out:
@@ -32,25 +31,25 @@ function ScoreSummary(props: { score: Score }) {
           <span class="recap-glyph" aria-hidden="true">
             ✓
           </span>
-          {props.score.correct} {props.score.correct === 1 ? "certa" : "certas"}
+          {props.score.correct} {outcomeLabel("correct", props.score.correct)}
         </li>
         <li class="recap-wrong">
           <span class="recap-glyph" aria-hidden="true">
             ✕
           </span>
-          {props.score.wrong} {props.score.wrong === 1 ? "errada" : "erradas"}
+          {props.score.wrong} {outcomeLabel("wrong", props.score.wrong)}
         </li>
         <li class="recap-blank">
           <span class="recap-glyph" aria-hidden="true">
             ○
           </span>
-          {props.score.blank} em branco
+          {props.score.blank} {outcomeLabel("blank", props.score.blank)}
         </li>
         <li class="recap-annulled">
           <span class="recap-glyph recap-struck" aria-hidden="true">
             –
           </span>
-          {props.score.annulled} {props.score.annulled === 1 ? "anulada" : "anuladas"}
+          {props.score.annulled} {outcomeLabel("annulled", props.score.annulled)}
         </li>
       </ul>
       <dl class="facts">
@@ -70,6 +69,7 @@ const typing = (target: EventTarget | null) =>
 export default function Resolver(props: { attemptId: string; onLeave: () => void }) {
   const [view, setView] = createSignal<AttemptView>();
   const [loadError, setLoadError] = createSignal<unknown>();
+  const [loading, setLoading] = createSignal(true);
   const [index, setIndex] = createSignal(0);
   const [dialog, setDialog] = createSignal<"finish" | "abandon" | null>(null);
   const [eliminating, setEliminating] = createSignal(false);
@@ -82,6 +82,25 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
   const [helpOpen, setHelpOpen] = createSignal(false);
   let shortcutsBox: HTMLDivElement | undefined;
   let shortcutsToggle: HTMLButtonElement | undefined;
+  let loadingAttempt = 0;
+
+  const loadAttempt = async (id: string) => {
+    const request = ++loadingAttempt;
+    setLoading(true);
+    try {
+      const loaded = await api.attempt(id);
+      if (request !== loadingAttempt) return;
+      // Resume at the first unanswered question.
+      const next = loaded.questions.findIndex((q) => q.choice === null);
+      setIndex(loaded.finishedAt === null && next >= 0 ? next : 0);
+      setView(loaded);
+      setLoadError(undefined);
+    } catch (error) {
+      if (request === loadingAttempt) setLoadError(error);
+    } finally {
+      if (request === loadingAttempt) setLoading(false);
+    }
+  };
 
   createEffect(
     on(
@@ -91,12 +110,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
         setLoadError(undefined);
         setIndex(0);
         setPending(null);
-        api.attempt(id).then((loaded) => {
-          setView(loaded);
-          // Resume at the first unanswered question.
-          const next = loaded.questions.findIndex((q) => q.choice === null);
-          setIndex(loaded.finishedAt === null && next >= 0 ? next : 0);
-        }, setLoadError);
+        void loadAttempt(id);
       },
     ),
   );
@@ -176,15 +190,18 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     enqueue((id) => api.flag(id, q.position, !q.flagged));
   };
 
-  const annul = (annulled: boolean) => {
+  const updateAnnulment = (change: typeof api.annul, message: string) => {
     const q = current();
     if (!q?.reveal) return;
     enqueue(async (id) => {
-      const next = await (annulled ? api.annul(id, q.position) : api.unannul(id, q.position));
-      showToast(annulled ? "Questão anulada." : "Anulação desfeita.");
+      const next = await change(id, q.position);
+      showToast(message);
       return next;
     });
   };
+
+  const annul = () => updateAnnulment(api.annul, "Questão anulada.");
+  const unannul = () => updateAnnulment(api.unannul, "Anulação desfeita.");
 
   const recheck = () => {
     const q = current();
@@ -343,187 +360,172 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
       <div class="sr-only" aria-live="polite" aria-atomic="true" data-testid="live-region">
         {announcement()}
       </div>
-      <Switch>
-        <Match when={loadError()}>
-          {(error) => (
-            <>
-              <h1>Resolver</h1>
-              <ErrorState error={error()} />
-            </>
-          )}
-        </Match>
-        <Match when={!view()}>
-          <h1>Resolver</h1>
-          <Loading label="Carregando tentativa…" />
-        </Match>
-        <Match when={view()}>
-          {(attempt) => (
-            <div class="resolver">
-              <header class="resolver-header">
-                <div>
-                  <h1>{attempt().title}</h1>
-                  <p class="muted">
-                    <span class="badge">{modeLabel[attempt().feedbackMode]}</span>{" "}
-                    <span data-testid="progress">
-                      {answered()} de {total()} respondidas
-                    </span>
-                    <Show when={finished()}> · finalizada</Show>
-                  </p>
+      <Show when={!view()}>
+        <h1 id="resolver-title">Resolver</h1>
+      </Show>
+      <ResourceView
+        value={view()}
+        error={loadError}
+        pending={loading()}
+        retrying={loading()}
+        onRetry={() => loadAttempt(props.attemptId)}
+        describedBy="resolver-title"
+        placeholder={<Loading label="Carregando tentativa…" />}
+      >
+        {(attempt) => (
+          <div class="resolver">
+            <header class="resolver-header">
+              <div>
+                <h1>{attempt().title}</h1>
+                <p class="muted">
+                  <span class="badge">{modeLabel[attempt().feedbackMode]}</span>{" "}
+                  <span data-testid="progress">
+                    {answered()} de {total()} respondidas
+                  </span>
+                  <Show when={finished()}> · finalizada</Show>
+                </p>
+                <div
+                  class="progress-bar"
+                  role="progressbar"
+                  aria-label="Progresso da tentativa"
+                  aria-valuemin={0}
+                  aria-valuemax={total()}
+                  aria-valuenow={answered()}
+                  aria-valuetext={`${answered()} de ${total()} respondidas`}
+                >
                   <div
-                    class="progress-bar"
-                    role="progressbar"
-                    aria-label="Progresso da tentativa"
-                    aria-valuemin={0}
-                    aria-valuemax={total()}
-                    aria-valuenow={answered()}
-                    aria-valuetext={`${answered()} de ${total()} respondidas`}
-                  >
-                    <div
-                      class="progress-fill"
-                      style={{ width: `${total() === 0 ? 0 : (answered() / total()) * 100}%` }}
-                    />
-                  </div>
-                </div>
-                <div class="resolver-actions">
-                  <Show
-                    when={!finished()}
-                    fallback={
-                      <button type="button" onClick={() => props.onLeave()}>
-                        Voltar ao Banco
-                      </button>
-                    }
-                  >
-                    <button type="button" onClick={() => setDialog("abandon")}>
-                      Abandonar
-                    </button>
-                    <button type="button" class="primary" onClick={() => setDialog("finish")}>
-                      Finalizar
-                    </button>
-                  </Show>
-                </div>
-              </header>
-              <Show when={attempt().score}>{(score) => <ScoreSummary score={score()} />}</Show>
-              <Navigator questions={attempt().questions} current={index()} onSelect={select} />
-              <Show when={current()}>
-                {(q) => (
-                  <QuestionCard
-                    question={q()}
-                    number={index() + 1}
-                    total={total()}
-                    locked={locked()}
-                    finished={finished()}
-                    eliminating={eliminating()}
-                    pending={pending()}
-                    confirmRequired={attempt().feedbackMode === "study"}
-                    onAnswer={choose}
-                    onConfirm={confirm}
-                    onEliminate={eliminate}
-                    onFlag={flag}
-                    onAnnul={annul}
-                    onExplain={explain}
-                    onRecheck={recheck}
-                    onRecheckApply={applyRecheck}
-                    onRecheckDismiss={dismissRecheck}
-                    onAiCancel={() => void api.aiRequestCancel().catch(showError)}
+                    class="progress-fill"
+                    style={{ width: `${total() === 0 ? 0 : (answered() / total()) * 100}%` }}
                   />
-                )}
-              </Show>
-              <footer class="resolver-footer">
-                <button type="button" disabled={index() === 0} onClick={() => move(-1)}>
-                  ← Anterior
-                </button>
-                <div class="shortcuts" ref={shortcutsBox}>
-                  <button
-                    type="button"
-                    class="shortcuts-toggle"
-                    ref={shortcutsToggle}
-                    aria-expanded={helpOpen()}
-                    aria-controls="shortcuts-help"
-                    onClick={() => setHelpOpen(!helpOpen())}
-                  >
-                    Atalhos
-                  </button>
-                  <div
-                    id="shortcuts-help"
-                    class="shortcuts-panel"
-                    role="group"
-                    aria-label="Atalhos de teclado"
-                    hidden={!helpOpen()}
-                  >
-                    <Show
-                      when={shortcutsEnabled()}
-                      fallback={<p>Os atalhos de uma tecla estão desativados em Configurações.</p>}
-                    >
-                      <ul>
-                        <li>
-                          <kbd>A</kbd>–<kbd>E</kbd> (ou <kbd>C</kbd>/<kbd>E</kbd>){" "}
-                          {attempt().feedbackMode === "study" ? "escolhe" : "responde"}
-                        </li>
-                        <Show when={attempt().feedbackMode === "study"}>
-                          <li>
-                            <kbd>Enter</kbd> confirma
-                          </li>
-                        </Show>
-                        <li>
-                          <kbd>X</kbd> e uma letra elimina
-                        </li>
-                        <li>
-                          <kbd>F</kbd> marca para revisar
-                        </li>
-                      </ul>
-                    </Show>
-                    <p>
-                      <kbd>←</kbd> <kbd>→</kbd> navegam entre as questões.
-                    </p>
-                  </div>
                 </div>
-                <button type="button" disabled={index() >= total() - 1} onClick={() => move(1)}>
-                  Próxima →
+              </div>
+              <div class="resolver-actions">
+                <Show
+                  when={!finished()}
+                  fallback={
+                    <button type="button" onClick={() => props.onLeave()}>
+                      Voltar ao Banco
+                    </button>
+                  }
+                >
+                  <button type="button" onClick={() => setDialog("abandon")}>
+                    Abandonar
+                  </button>
+                  <button type="button" class="primary" onClick={() => setDialog("finish")}>
+                    Finalizar
+                  </button>
+                </Show>
+              </div>
+            </header>
+            <Show when={attempt().score}>{(score) => <ScoreSummary score={score()} />}</Show>
+            <Navigator questions={attempt().questions} current={index()} onSelect={select} />
+            <Show when={current()}>
+              {(q) => (
+                <QuestionCard
+                  question={q()}
+                  number={index() + 1}
+                  total={total()}
+                  locked={locked()}
+                  finished={finished()}
+                  eliminating={eliminating()}
+                  pending={pending()}
+                  confirmRequired={attempt().feedbackMode === "study"}
+                  onAnswer={choose}
+                  onConfirm={confirm}
+                  onEliminate={eliminate}
+                  onFlag={flag}
+                  onAnnul={annul}
+                  onUnannul={unannul}
+                  onExplain={explain}
+                  onRecheck={recheck}
+                  onRecheckApply={applyRecheck}
+                  onRecheckDismiss={dismissRecheck}
+                  onAiCancel={() => void api.aiRequestCancel().catch(showError)}
+                />
+              )}
+            </Show>
+            <footer class="resolver-footer">
+              <button type="button" disabled={index() === 0} onClick={() => move(-1)}>
+                ← Anterior
+              </button>
+              <div class="shortcuts" ref={shortcutsBox}>
+                <button
+                  type="button"
+                  class="shortcuts-toggle"
+                  ref={shortcutsToggle}
+                  aria-expanded={helpOpen()}
+                  aria-controls="shortcuts-help"
+                  onClick={() => setHelpOpen(!helpOpen())}
+                >
+                  Atalhos
                 </button>
-              </footer>
-              <Show when={dialog() === "finish"}>
-                <Modal
-                  title="Finalizar tentativa?"
-                  onClose={() => setDialog(null)}
-                  footer={
-                    <>
-                      <button type="button" onClick={() => setDialog(null)}>
-                        Continuar resolvendo
-                      </button>
-                      <button type="button" class="primary" onClick={() => void finish()}>
-                        Finalizar
-                      </button>
-                    </>
-                  }
+                <div
+                  id="shortcuts-help"
+                  class="shortcuts-panel"
+                  role="group"
+                  aria-label="Atalhos de teclado"
+                  hidden={!helpOpen()}
                 >
-                  <p data-testid="finish-summary">
-                    {answered()} respondidas e {total() - answered()} em branco.
+                  <Show
+                    when={shortcutsEnabled()}
+                    fallback={<p>Os atalhos de uma tecla estão desativados em Configurações.</p>}
+                  >
+                    <ul>
+                      <li>
+                        <kbd>A</kbd>–<kbd>E</kbd> (ou <kbd>C</kbd>/<kbd>E</kbd>){" "}
+                        {attempt().feedbackMode === "study" ? "escolhe" : "responde"}
+                      </li>
+                      <Show when={attempt().feedbackMode === "study"}>
+                        <li>
+                          <kbd>Enter</kbd> confirma
+                        </li>
+                      </Show>
+                      <li>
+                        <kbd>X</kbd> e uma letra elimina
+                      </li>
+                      <li>
+                        <kbd>F</kbd> marca para revisar
+                      </li>
+                    </ul>
+                  </Show>
+                  <p>
+                    <kbd>←</kbd> <kbd>→</kbd> navegam entre as questões.
                   </p>
-                  <p class="muted">Depois de finalizar, as respostas não podem mais mudar.</p>
-                </Modal>
-              </Show>
-              <Show when={dialog() === "abandon"}>
-                <Modal
-                  title="Abandonar tentativa?"
-                  onClose={() => setDialog(null)}
-                  footer={
-                    <>
-                      <button type="button" onClick={() => setDialog(null)}>
-                        Voltar
-                      </button>
-                      <button type="button" class="primary danger" onClick={() => void abandon()}>
-                        Abandonar
-                      </button>
-                    </>
-                  }
-                >
-                  <p>A tentativa e suas respostas serão apagadas e não entram no histórico.</p>
-                </Modal>
-              </Show>
-            </div>
-          )}
-        </Match>
-      </Switch>
+                </div>
+              </div>
+              <button type="button" disabled={index() >= total() - 1} onClick={() => move(1)}>
+                Próxima →
+              </button>
+            </footer>
+            <Show when={dialog() === "finish"}>
+              <ConfirmModal
+                title="Finalizar tentativa?"
+                confirmLabel="Finalizar"
+                cancelLabel="Continuar resolvendo"
+                onClose={() => setDialog(null)}
+                onConfirm={() => void finish()}
+              >
+                <p data-testid="finish-summary">
+                  {answered()} respondidas e {total() - answered()} em branco.
+                </p>
+                <p class="muted">Depois de finalizar, as respostas não podem mais mudar.</p>
+              </ConfirmModal>
+            </Show>
+            <Show when={dialog() === "abandon"}>
+              <ConfirmModal
+                title="Abandonar tentativa?"
+                confirmLabel="Abandonar"
+                cancelLabel="Voltar"
+                danger
+                onClose={() => setDialog(null)}
+                onConfirm={() => void abandon()}
+              >
+                <p>A tentativa e suas respostas serão apagadas e não entram no histórico.</p>
+              </ConfirmModal>
+            </Show>
+          </div>
+        )}
+      </ResourceView>
     </>
   );
 }

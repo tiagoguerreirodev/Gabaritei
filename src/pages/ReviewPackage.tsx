@@ -1,5 +1,6 @@
 import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import { For, Show, createEffect, createResource, createSignal, on } from "solid-js";
+import { createAction } from "../actions";
 import { api } from "../api";
 import type { DraftSummary } from "../bindings/DraftSummary";
 import type { ImportResult } from "../bindings/ImportResult";
@@ -7,7 +8,7 @@ import type { LineState } from "../bindings/LineState";
 import ConfirmModal from "../components/ConfirmModal";
 import RichText from "../components/RichText";
 import { InlineError, ResourceView } from "../components/states";
-import { showError, showToast } from "../components/toasts";
+import { showToast } from "../components/toasts";
 import { generationStatus, refreshWaitingDrafts } from "../generation";
 import { agentLabels, effortLabels } from "../labels";
 import { formatDuration, formatNumber, optionLetters } from "../format";
@@ -104,7 +105,7 @@ function Package(props: { id: string }) {
 
 function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
   const navigate = useNavigate();
-  const [busy, setBusy] = createSignal(false);
+  const { active: busy, run } = createAction();
   const [onlyFlagged, setOnlyFlagged] = createSignal(false);
   const [expanded, setExpanded] = createSignal<ReadonlySet<number>>(new Set());
   const [confirmingDiscard, setConfirmingDiscard] = createSignal(false);
@@ -112,17 +113,6 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
   const waiting = () => s().status === "review";
   const checking = () => s().checking;
   const confirmed = () => s().confirmed;
-
-  const run = async (action: () => Promise<void>) => {
-    setBusy(true);
-    try {
-      await action();
-    } catch (error) {
-      showError(error);
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const imported = async (result: ImportResult) => {
     await refreshWaitingDrafts();

@@ -15,12 +15,14 @@ import { createRoleEditor } from "../catalog";
 import { CatalogNotice } from "../components/ModelOptions";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { GenerateRequest } from "../bindings/GenerateRequest";
+import type { GenerationOutcome } from "../bindings/GenerationOutcome";
 import type { QuestionType } from "../bindings/QuestionType";
 import type { CountLimits } from "../bindings/CountLimits";
 import type { TopicTree } from "../bindings/TopicTree";
-import { ErrorState, Loading } from "../components/states";
+import { InlineError, ResourceView } from "../components/states";
 import { showError } from "../components/toasts";
 import GenerationProgress from "../components/GenerationProgress";
+import { cloneJson } from "../json";
 import {
   cancelledMessage,
   dismissGeneration,
@@ -44,14 +46,9 @@ const BOARDS = [
 
 const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
-/** A deep copy where no two places share an object. */
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
-
 /** Gerar: the generation form, and progress while it runs. */
 export default function Generate() {
-  const [data] = createResource(async () => {
+  const [data, { refetch }] = createResource(async () => {
     const [tree, settings, counts] = await Promise.all([
       api.topicsTree(),
       api.aiSettings(),
@@ -67,17 +64,21 @@ export default function Generate() {
         Escolha um assunto e a quantidade de questões. Uma IA elabora o pacote e outra confere o
         gabarito às cegas, sem ver a resposta.
       </p>
-      <Show when={!data.error} fallback={<ErrorState error={data.error as unknown} />}>
-        <Show when={data()} fallback={<Loading />}>
-          {(loaded) => (
-            <GenerateView
-              tree={loaded().tree}
-              settings={loaded().settings}
-              counts={loaded().counts}
-            />
-          )}
-        </Show>
-      </Show>
+      <ResourceView
+        value={data()}
+        error={() => data.error}
+        pending={data.state === "pending"}
+        retrying={data.loading}
+        onRetry={() => refetch()}
+      >
+        {(loaded) => (
+          <GenerateView
+            tree={loaded().tree}
+            settings={loaded().settings}
+            counts={loaded().counts}
+          />
+        )}
+      </ResourceView>
     </section>
   );
 }
@@ -91,7 +92,7 @@ function GenerateView(props: { tree: TopicTree; settings: AiSettings; counts: Co
           <h2 id="running-title">
             {isRecheckRun() ? "Conferindo o pacote…" : "Gerando o pacote…"}
           </h2>
-          <StepList states={["done", "done", "current"]} />
+          <StepList states={reviewSteps} />
           <GenerationProgress />
           <p class="muted">
             Isto pode levar alguns minutos. Você pode usar outras páginas enquanto isso.
@@ -106,34 +107,39 @@ function GenerateView(props: { tree: TopicTree; settings: AiSettings; counts: Co
   );
 }
 
-const STEPS = ["Assunto", "Opções", "Revisão"] as const;
+const STEPS = [
+  { id: "topic", label: "Assunto" },
+  { id: "options", label: "Opções" },
+  { id: "review", label: "Revisão" },
+] as const;
 type StepState = "done" | "current" | "pending";
+type StepStates = Record<(typeof STEPS)[number]["id"], StepState>;
+const reviewSteps: StepStates = { topic: "done", options: "done", review: "current" };
+const stepStateLabels: Record<StepState, string> = {
+  done: " (concluída)",
+  current: " (etapa atual)",
+  pending: " (pendente)",
+};
 
 /**
  * The steps from topic to review, as an ordered list. The caller says which are done, current
  * or still pending, so a step is never "concluída" just because it was not touched. The state
  * is text and a shape, never colour alone. Fontes is not a step: sources are optional.
  */
-function StepList(props: { states: readonly StepState[] }) {
+function StepList(props: { states: StepStates }) {
   return (
     <ol class="step-list" role="list" aria-label="Etapas">
       <For each={STEPS}>
-        {(step, index) => (
+        {(step) => (
           <li
             classList={{
-              done: props.states[index()] === "done",
-              current: props.states[index()] === "current",
+              done: props.states[step.id] === "done",
+              current: props.states[step.id] === "current",
             }}
-            aria-current={props.states[index()] === "current" ? "step" : undefined}
+            aria-current={props.states[step.id] === "current" ? "step" : undefined}
           >
-            {step}
-            <span class="sr-only">
-              {props.states[index()] === "done"
-                ? " (concluída)"
-                : props.states[index()] === "current"
-                  ? " (etapa atual)"
-                  : " (pendente)"}
-            </span>
+            {step.label}
+            <span class="sr-only">{stepStateLabels[props.states[step.id]]}</span>
           </li>
         )}
       </For>
@@ -146,28 +152,7 @@ function Outcome() {
     <Show when={generationStatus()?.outcome}>
       {(outcome) => (
         <section class="card" aria-label="Resultado da última geração">
-          <Switch>
-            <Match when={outcome().kind === "draft"}>
-              <StepList states={["done", "done", "current"]} />
-              <p>O pacote ficou pronto.</p>
-              <A
-                href={`/revisar-pacote?id=${encodeURIComponent(
-                  (outcome() as { kind: "draft"; draftId: string }).draftId,
-                )}`}
-                onClick={() => void dismissGeneration()}
-              >
-                Revisar pacote
-              </A>
-            </Match>
-            <Match when={outcome().kind === "failed"}>
-              <p class="error" role="alert">
-                {failedPrefix()} {(outcome() as { kind: "failed"; message: string }).message}
-              </p>
-            </Match>
-            <Match when={outcome().kind === "cancelled"}>
-              <p>{cancelledMessage()}</p>
-            </Match>
-          </Switch>
+          {outcomeContent(outcome())}
           <button type="button" onClick={() => void dismissGeneration()}>
             Dispensar
           </button>
@@ -175,6 +160,32 @@ function Outcome() {
       )}
     </Show>
   );
+}
+
+function outcomeContent(outcome: GenerationOutcome) {
+  switch (outcome.kind) {
+    case "draft":
+      return (
+        <>
+          <StepList states={reviewSteps} />
+          <p>O pacote ficou pronto.</p>
+          <A
+            href={`/revisar-pacote?id=${encodeURIComponent(outcome.draftId)}`}
+            onClick={() => void dismissGeneration()}
+          >
+            Revisar pacote
+          </A>
+        </>
+      );
+    case "failed":
+      return (
+        <InlineError>
+          {failedPrefix()} {outcome.message}
+        </InlineError>
+      );
+    case "cancelled":
+      return <p>{cancelledMessage()}</p>;
+  }
 }
 
 function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimits }) {
@@ -186,8 +197,8 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
     instructions: null,
     sources: { remnote: false, web: false, attachments: [] },
     // Prefilled from the role defaults once; later changes in Configurações apply next time.
-    generator: untrack(() => clone(props.settings.roles.generate)),
-    checker: untrack(() => clone(props.settings.roles.blindCheck)),
+    generator: untrack(() => cloneJson(props.settings.roles.generate)),
+    checker: untrack(() => cloneJson(props.settings.roles.blindCheck)),
   });
   const [submitting, setSubmitting] = createSignal(false);
   // The errors on screen. They change on submit and on blur, not on every keystroke.
@@ -233,11 +244,11 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
     [shownTopicError(), shownCountError()].flatMap((error) => (error ? [error] : []));
   const validateTopic = () => setShownTopicError(topicError());
   const validateCount = () => setShownCountError(countError());
-  const stepStates = (): StepState[] => [
-    topicError() ? "current" : "done",
-    optionsTouched() ? "done" : "pending",
-    "pending",
-  ];
+  const stepStates = (): StepStates => ({
+    topic: topicError() ? "current" : "done",
+    options: optionsTouched() ? "done" : "pending",
+    review: "pending",
+  });
 
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
@@ -258,7 +269,7 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
     }
     setSubmitting(true);
     try {
-      await api.generationStart(clone(unwrap(form)));
+      await api.generationStart(cloneJson(unwrap(form)));
     } catch (error) {
       showError(error);
     } finally {

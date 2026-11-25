@@ -43,14 +43,13 @@ export const isRecheckRun = () => {
 };
 
 /** The cancelled outcome's wording: a re-check keeps its draft, a generation saves nothing. */
-export const cancelledMessage = (short = false) =>
+export const cancelledMessage = () =>
   isRecheckRun()
-    ? short
-      ? "Conferência cancelada."
-      : "Conferência cancelada. O pacote foi mantido."
-    : short
-      ? "Geração cancelada."
-      : "Geração cancelada. Nada foi salvo.";
+    ? "Conferência cancelada. O pacote foi mantido."
+    : "Geração cancelada. Nada foi salvo.";
+
+export const cancelledShortMessage = () =>
+  isRecheckRun() ? "Conferência cancelada." : "Geração cancelada.";
 
 /** The failed outcome's wording. */
 export const failedPrefix = () => (isRecheckRun() ? "A conferência falhou:" : "A geração falhou:");

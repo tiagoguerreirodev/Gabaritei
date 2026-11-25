@@ -1,8 +1,9 @@
 import { formatNumber } from "../format";
 import { A, useLocation } from "@solidjs/router";
 import { Match, Show, Switch } from "solid-js";
+import type { GenerationOutcome } from "../bindings/GenerationOutcome";
 import {
-  cancelledMessage,
+  cancelledShortMessage,
   dismissGeneration,
   failedPrefix,
   generationPanelShown,
@@ -81,19 +82,10 @@ function RunStatus() {
               </p>
             </Show>
           </Match>
-          <Match when={status().outcome?.kind !== "draft" && status().outcome}>
-            {(outcome) => (
+          <Match when={bannerOutcome(status().outcome)}>
+            {(notice) => (
               <p class="generation-banner" role="status">
-                <Switch>
-                  <Match when={outcome().kind === "failed"}>
-                    <span class="error">
-                      {failedPrefix()} {(outcome() as { kind: "failed"; message: string }).message}
-                    </span>
-                  </Match>
-                  <Match when={outcome().kind === "cancelled"}>
-                    <span>{cancelledMessage(true)}</span>
-                  </Match>
-                </Switch>
+                {notice()}
                 <button type="button" onClick={() => void dismissGeneration()}>
                   Dispensar
                 </button>
@@ -104,4 +96,20 @@ function RunStatus() {
       )}
     </Show>
   );
+}
+
+function bannerOutcome(outcome: GenerationOutcome | null) {
+  if (outcome === null) return;
+  switch (outcome.kind) {
+    case "draft":
+      return;
+    case "failed":
+      return (
+        <span class="error">
+          {failedPrefix()} {outcome.message}
+        </span>
+      );
+    case "cancelled":
+      return <span>{cancelledShortMessage()}</span>;
+  }
 }

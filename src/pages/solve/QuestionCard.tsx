@@ -5,10 +5,10 @@ import QuestionImage from "../../components/QuestionImage";
 import RichText from "../../components/RichText";
 import { optionLetters } from "../../format";
 import { outcomeText } from "../../labels";
-
-const ANSWER_POP_MS = 600;
 import RecheckPanel from "./RecheckPanel";
 import { showError } from "../../components/toasts";
+
+const ANSWER_POP_MS = 600;
 
 /**
  * One question: stem, image, options with eliminate, flag, and, once revealed, the key and
@@ -34,8 +34,10 @@ export default function QuestionCard(props: {
   onConfirm: () => void;
   onEliminate: (optionId: string) => void;
   onFlag: () => void;
-  /** Annuls the revealed question, or restores it with `false`. */
-  onAnnul: (annulled: boolean) => void;
+  /** Annuls the revealed question. */
+  onAnnul: () => void;
+  /** Restores an annulled question. */
+  onUnannul: () => void;
   /** Asks the AI to re-check the key; resolves with its proposal. */
   onRecheck: () => Promise<RecheckView>;
   onRecheckApply: () => void;
@@ -252,7 +254,10 @@ export default function QuestionCard(props: {
               onCancel={props.onAiCancel}
             />
             <div class="reveal-actions">
-              <button type="button" onClick={() => props.onAnnul(!revealed().annulled)}>
+              <button
+                type="button"
+                onClick={() => (revealed().annulled ? props.onUnannul() : props.onAnnul())}
+              >
                 {revealed().annulled ? "Desfazer anulação" : "Anular questão"}
               </button>
               <span class="muted">

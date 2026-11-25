@@ -94,6 +94,9 @@ pub enum Outcome {
     Annulled,
 }
 
+/// A response counts as answered once it has a saved choice (`responses r`).
+pub(crate) const ANSWERED_RESPONSE_SQL: &str = "r.choice IS NOT NULL";
+
 /// SQL for when a response counts as given, over `responses r` joined to `attempts a`: the time
 /// the user answered, or the attempt's finish time for a blank. Desempenho and the error
 /// notebook both rank a question's responses by it, so they pick the same latest one.
@@ -875,14 +878,15 @@ type ActiveRow = (AttemptId, String, Option<String>, String, String, u32, u32);
 
 /// Every unfinished attempt, newest first. Carries counts only, never questions or keys.
 pub fn active(conn: &Connection) -> AppResult<Vec<ActiveAttempt>> {
+    let sql = format!(
+        "SELECT a.id, a.source_kind, a.source_ref, a.feedback_mode, a.started_at,
+                COUNT(*) FILTER (WHERE {ANSWERED_RESPONSE_SQL}), COUNT(r.position)
+         FROM attempts a LEFT JOIN responses r ON r.attempt_id = a.id
+         WHERE a.finished_at IS NULL
+         GROUP BY a.id ORDER BY a.started_at DESC, a.id",
+    );
     let rows: Vec<ActiveRow> = conn
-        .prepare(
-            "SELECT a.id, a.source_kind, a.source_ref, a.feedback_mode, a.started_at,
-                    COALESCE(SUM(r.choice IS NOT NULL), 0), COUNT(r.position)
-             FROM attempts a LEFT JOIN responses r ON r.attempt_id = a.id
-             WHERE a.finished_at IS NULL
-             GROUP BY a.id ORDER BY a.started_at DESC, a.id",
-        )?
+        .prepare(&sql)?
         .query_map([], |r| {
             Ok((
                 r.get(0)?,

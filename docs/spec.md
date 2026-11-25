@@ -96,6 +96,7 @@ All UI text is in Portuguese. There are no accounts and no server.
   - **Anular** removes it from all scores.
   - **Pedir revisão à IA** runs the Re-check role. It shows the verdict, the corrected key if any, and sources. Confirming applies the key change, logs it and re-scores past answers.
   - **Explicar** (only when the explanation is missing) runs the Explain role and saves the result to the question.
+  - Re-check and Explain accept up to 50 sources per AI reply and 2,000 characters per source before trimming, using the bank's reference limits. Explain adds distinct new sources to the question's existing references and caps the stored total at 50.
 
 ### 3.4 Performance (*Desempenho*)
 - **Scoring:** correct, wrong, blank or annulled (§3.4 of the analysis, without essays or pending grades).

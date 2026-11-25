@@ -130,16 +130,31 @@ mod flow {
     use super::*;
 
     #[test]
-    fn it_fills_in_a_missing_explanation_and_merges_the_references() {
+    fn it_saves_a_missing_explanation() {
         let w = world("", FeedbackMode::Study, true, good());
         let view = explain(&w).unwrap();
         let reveal = view.questions[0].reveal.as_ref().unwrap();
         assert!(reveal.explanation.starts_with("A alternativa certa é a B"));
-        assert_eq!(reveal.refs, ["Lei 1", "CF/88, art. 5º"]);
         let stored: String =
             w.db.with(|c| Ok(c.query_row("SELECT explanation FROM questions", [], |r| r.get(0))?))
                 .unwrap();
         assert_eq!(stored, reveal.explanation);
+    }
+
+    #[test]
+    fn it_adds_distinct_references_to_the_existing_ones() {
+        let w = world("", FeedbackMode::Study, true, good());
+        let view = explain(&w).unwrap();
+        assert_eq!(
+            view.questions[0].reveal.as_ref().unwrap().refs,
+            ["Lei 1", "CF/88, art. 5º"]
+        );
+    }
+
+    #[test]
+    fn the_prompt_names_the_correct_option_by_letter() {
+        let w = world("", FeedbackMode::Study, true, good());
+        explain(&w).unwrap();
         let sent = std::fs::read_to_string(w.dir.path().join("stdin.txt")).unwrap();
         // The key is named by letter, never by the internal hex id, and the AI is told to cite
         // the alternative's content because the order is shuffled in the exam.
@@ -147,6 +162,66 @@ mod flow {
         assert!(!sent.contains(&w.key));
         assert!(sent.contains("cite o conteúdo das alternativas"));
         assert!(sent.contains("NUNCA invente"));
+    }
+
+    #[test]
+    fn sources_at_the_bank_limits_are_accepted() {
+        let mut refs = vec!["Lei 1".to_owned(), "á".repeat(2_000)];
+        refs.extend((2..50).map(|index| format!("Fonte {index}")));
+        let w = world(
+            "",
+            FeedbackMode::Study,
+            true,
+            json!({ "explanation": "Texto.", "refs": refs }),
+        );
+
+        let view = explain(&w).unwrap();
+
+        assert_eq!(view.questions[0].reveal.as_ref().unwrap().refs, refs);
+    }
+
+    #[test]
+    fn too_many_sources_in_the_reply_are_refused_before_deduplicating() {
+        let w = world(
+            "",
+            FeedbackMode::Study,
+            true,
+            json!({ "explanation": "Texto.", "refs": vec!["Lei 1"; 51] }),
+        );
+
+        let error = explain(&w).unwrap_err();
+
+        assert!(error.to_string().contains("fontes demais"), "{error}");
+    }
+
+    #[test]
+    fn too_many_sources_after_merging_are_refused() {
+        let refs: Vec<_> = (1..=50).map(|index| format!("Fonte {index}")).collect();
+        let w = world(
+            "",
+            FeedbackMode::Study,
+            true,
+            json!({ "explanation": "Texto.", "refs": refs }),
+        );
+
+        let error = explain(&w).unwrap_err();
+
+        assert!(error.to_string().contains("fontes demais"), "{error}");
+    }
+
+    #[test]
+    fn a_source_that_exceeds_the_length_limit_is_refused_before_trimming() {
+        let reference = format!("{} ", "á".repeat(2_000));
+        let w = world(
+            "",
+            FeedbackMode::Study,
+            true,
+            json!({ "explanation": "Texto.", "refs": [reference] }),
+        );
+
+        let error = explain(&w).unwrap_err();
+
+        assert!(error.to_string().contains("fontes inválidas"), "{error}");
     }
 
     #[test]

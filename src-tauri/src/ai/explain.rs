@@ -76,17 +76,22 @@ pub fn ask_explain(
             "A IA devolveu uma explicação inválida. Tente de novo.",
         ));
     }
+    let too_many_refs = || invalid("A IA devolveu fontes demais. Tente de novo.");
+    if answer.refs.len() > MAX_REFS {
+        return Err(too_many_refs());
+    }
     let mut refs = question.refs.clone();
-    for reference in answer.refs.iter().map(|r| r.trim()) {
-        if reference.is_empty() || reference.chars().count() > MAX_REF {
+    for reference in &answer.refs {
+        let trimmed = reference.trim();
+        if trimmed.is_empty() || reference.chars().count() > MAX_REF {
             return Err(invalid("A IA devolveu fontes inválidas. Tente de novo."));
         }
-        if !refs.iter().any(|r| r == reference) {
-            refs.push(reference.to_owned());
+        if !refs.iter().any(|r| r == trimmed) {
+            refs.push(trimmed.to_owned());
         }
     }
     if refs.len() > MAX_REFS {
-        return Err(invalid("A IA devolveu fontes demais. Tente de novo."));
+        return Err(too_many_refs());
     }
 
     db.transaction(|tx| {

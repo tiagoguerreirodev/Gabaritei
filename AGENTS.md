@@ -48,6 +48,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src-tauri/src/commands.rs` | Tauri commands (thin wrappers). Register each one in `register()` in `lib.rs`. |
 | `src-tauri/src/error.rs` | `AppError`: every command returns `AppResult<T>`; the frontend receives `{ message }` in pt-BR. |
 | `src-tauri/src/attempts/` | Session creation and shuffling, attempt views, response updates, active attempts, and scoring. |
+| `src-tauri/src/backup.rs`, `backup/` | Backup DTOs and service, with modules for names, computer ownership, folders, probes, old-folder offers, rotation, restore, relocation, snapshots and data files. |
 | `src-tauri/src/bank/catalog.rs` | Read-only browsing views (topic tree, collections, collection detail) with accent- and case-insensitive search and Portuguese ordering (`fold`). |
 | `src-tauri/src/db.rs` | `Database` (managed Tauri state, opened at startup at `<app data dir>/gabaritei.sqlite`), `with`/`transaction` helpers, JSON settings helpers, migration runner. |
 | `src-tauri/src/paths.rs` | `AppPaths` (managed state): the app data folder, database file and `images/` folder. |

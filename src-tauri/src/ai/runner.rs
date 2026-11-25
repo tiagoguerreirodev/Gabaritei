@@ -139,7 +139,6 @@ pub enum ProgressKind {
     Reading,
     Searching,
     Writing,
-    Done,
 }
 
 /// A progress event. The label is fixed pt-BR text, never model output.

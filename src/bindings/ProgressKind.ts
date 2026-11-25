@@ -3,4 +3,4 @@
 /**
  * A stage of a run, for the progress indicator.
  */
-export type ProgressKind = "started" | "thinking" | "reading" | "searching" | "writing" | "done";
+export type ProgressKind = "started" | "thinking" | "reading" | "searching" | "writing";

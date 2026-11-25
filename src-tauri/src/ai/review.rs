@@ -6,7 +6,7 @@
 //! disputes it, or it has a validation problem) also carries its stem and options, so the user can
 //! judge it. No key, explanation, reference or checker reason ever appears.
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Transaction, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -274,7 +274,7 @@ fn not_waiting() -> AppError {
 /// Imports a draft's questions into the bank as a new `generated` collection. Call inside a
 /// transaction. Nothing is written if it fails.
 pub fn import(
-    conn: &Connection,
+    conn: &Transaction<'_>,
     id: &DraftId,
     mode: ImportMode,
     now: &str,
@@ -324,7 +324,7 @@ pub fn import(
         .filter(|(index, _)| chosen.contains(index))
         .map(|(_, input)| input)
         .collect();
-    let local_ids: Vec<String> = inputs.iter().map(|i| i.local_id.clone()).collect();
+    let local_ids: Vec<String> = inputs.iter().map(|i| i.id.clone()).collect();
     let outcome = import_questions(conn, inputs, now).map_err(|error| match error {
         // The detailed message quotes question text; the preview must not.
         AppError::Invalid(_) => AppError::Invalid("Não foi possível importar o pacote.".into()),
@@ -338,10 +338,7 @@ pub fn import(
         [year, month, day] => format!("{day}/{month}/{year}"),
         _ => day.to_owned(),
     };
-    let title = format!(
-        "{} › {} › {} · gerado em {date}",
-        topic.area, topic.matter, topic.topic
-    );
+    let title = format!("{topic} · gerado em {date}");
     let collection_id = ids::generate::<CollectionId>(&mut rand::rng());
     conn.execute(
         "INSERT INTO collections (id, title, kind, contest, board, created_at)

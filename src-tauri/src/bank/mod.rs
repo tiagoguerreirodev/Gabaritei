@@ -16,6 +16,4 @@ pub use question::{
     Provenance, Question, QuestionInput, QuestionOption, QuestionType, TopicPath, canonicalize,
     validate,
 };
-pub use store::{
-    ImportOutcome, ImportPlan, apply_import, import_questions, load_question, plan_import,
-};
+pub use store::{ImportOutcome, import_questions, load_question};

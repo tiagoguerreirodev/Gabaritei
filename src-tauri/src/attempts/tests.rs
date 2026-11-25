@@ -20,7 +20,7 @@ fn bank() -> (Database, Vec<QuestionId>) {
         boolean("q4", "Quarta", true),
     ];
     for input in &mut inputs {
-        input.explanation = format!("{SECRET} {}", input.local_id);
+        input.explanation = format!("{SECRET} {}", input.id);
         input.refs = vec!["REF-SECRETA".into()];
     }
     let ids = db

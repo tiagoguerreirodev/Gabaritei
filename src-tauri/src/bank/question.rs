@@ -18,23 +18,23 @@ use crate::ids::{DraftId, QuestionId};
 use crate::images::ImageFormat;
 
 /// Number of options in a multiple-choice question.
-pub const MULTIPLE_OPTIONS: usize = 5;
+const MULTIPLE_OPTIONS: usize = 5;
 /// The two options of a Certo/Errado question.
-pub const BOOLEAN_TEXTS: [&str; 2] = ["Certo", "Errado"];
+const BOOLEAN_TEXTS: [&str; 2] = ["Certo", "Errado"];
 
-pub const MAX_LOCAL_ID: usize = 200;
-pub const MAX_STEM: usize = 100_000;
-pub const MAX_OPTION_ID: usize = 100;
-pub const MAX_OPTION_TEXT: usize = 20_000;
-pub const MAX_EXPLANATION: usize = 100_000;
-pub const MAX_REFS: usize = 50;
-pub const MAX_REF: usize = 2_000;
-pub const MIN_TOPICS: usize = 1;
-pub const MAX_TOPICS: usize = 30;
-pub const MAX_AREA: usize = 250;
-pub const MAX_MATTER: usize = 250;
-pub const MAX_TOPIC: usize = 500;
-pub const MAX_IMAGE_ALT: usize = 1_000;
+const MAX_LOCAL_ID: usize = 200;
+const MAX_STEM: usize = 100_000;
+const MAX_OPTION_ID: usize = 100;
+const MAX_OPTION_TEXT: usize = 20_000;
+pub(crate) const MAX_EXPLANATION: usize = 100_000;
+pub(crate) const MAX_REFS: usize = 50;
+pub(crate) const MAX_REF: usize = 2_000;
+const MIN_TOPICS: usize = 1;
+const MAX_TOPICS: usize = 30;
+pub(crate) const MAX_AREA: usize = 250;
+pub(crate) const MAX_MATTER: usize = 250;
+pub(crate) const MAX_TOPIC: usize = 500;
+const MAX_IMAGE_ALT: usize = 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "lowercase")]
@@ -111,11 +111,10 @@ pub enum Provenance {
     },
 }
 
-/// A question as received, before canonicalization.
+/// A question paired with its package label or its canonical content fingerprint.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QuestionInput {
-    /// Identifier within its batch (package question ID or legacy ID), used in messages.
-    pub local_id: String,
+pub struct Question<Id = QuestionId> {
+    pub id: Id,
     pub kind: QuestionType,
     pub stem: String,
     pub options: Vec<QuestionOption>,
@@ -129,24 +128,10 @@ pub struct QuestionInput {
     pub provenance: Provenance,
 }
 
-/// A canonical, stored question. `id` is the content fingerprint.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Question {
-    pub id: QuestionId,
-    pub kind: QuestionType,
-    pub stem: String,
-    pub options: Vec<QuestionOption>,
-    pub answer_id: String,
-    pub explanation: String,
-    pub refs: Vec<String>,
-    pub topics: Vec<TopicPath>,
-    pub image: Option<String>,
-    pub image_alt: Option<String>,
-    pub annulled: bool,
-    pub provenance: Provenance,
-}
+/// A question as received, with an identifier local to its input batch.
+pub type QuestionInput = Question<String>;
 
-impl Question {
+impl<Id> Question<Id> {
     /// The text of the correct option.
     pub fn answer_text(&self) -> Option<&str> {
         self.options
@@ -172,23 +157,37 @@ pub fn is_valid_image_name(name: &str) -> bool {
 /// Every rule a question must follow. Returns pt-BR problems; empty means valid.
 pub fn validate(input: &QuestionInput) -> Vec<String> {
     let mut problems = Vec::new();
-    let mut problem = |message: String| problems.push(message);
 
-    if is_blank(&input.local_id) || too_long(&input.local_id, MAX_LOCAL_ID) {
-        problem(format!(
+    if is_blank(&input.id) || too_long(&input.id, MAX_LOCAL_ID) {
+        problems.push(format!(
             "Identificador inválido (vazio ou com mais de {MAX_LOCAL_ID} caracteres)."
         ));
     }
     if is_blank(&input.stem) {
-        problem("O enunciado está vazio.".into());
+        problems.push("O enunciado está vazio.".into());
     } else if too_long(&input.stem, MAX_STEM) {
-        problem(format!("O enunciado tem mais de {MAX_STEM} caracteres."));
+        problems.push(format!("O enunciado tem mais de {MAX_STEM} caracteres."));
     }
 
+    check_options(input, &mut problems);
+    if too_long(&input.explanation, MAX_EXPLANATION) {
+        problems.push(format!(
+            "O comentário tem mais de {MAX_EXPLANATION} caracteres."
+        ));
+    }
+    check_references(&input.refs, &mut problems);
+    check_topics(&input.topics, &mut problems);
+    check_image(input, &mut problems);
+
+    problems.dedup();
+    problems
+}
+
+fn check_options(input: &QuestionInput, problems: &mut Vec<String>) {
     match input.kind {
         QuestionType::Multiple => {
             if input.options.len() != MULTIPLE_OPTIONS {
-                problem(format!(
+                problems.push(format!(
                     "Questões de múltipla escolha têm {MULTIPLE_OPTIONS} alternativas; esta tem {}.",
                     input.options.len()
                 ));
@@ -198,7 +197,7 @@ pub fn validate(input: &QuestionInput) -> Vec<String> {
             let mut texts: Vec<&str> = input.options.iter().map(|o| o.text.as_str()).collect();
             texts.sort_unstable();
             if texts != BOOLEAN_TEXTS {
-                problem(
+                problems.push(
                     "Questões Certo/Errado têm exatamente as alternativas \"Certo\" e \"Errado\"."
                         .into(),
                 );
@@ -210,88 +209,86 @@ pub fn validate(input: &QuestionInput) -> Vec<String> {
     let mut texts = HashSet::new();
     for option in &input.options {
         if is_blank(&option.id) || too_long(&option.id, MAX_OPTION_ID) {
-            problem(format!(
+            problems.push(format!(
                 "Alternativa com identificador inválido (vazio ou com mais de {MAX_OPTION_ID} caracteres)."
             ));
         }
         if is_blank(&option.text) {
-            problem("Há uma alternativa sem texto.".into());
+            problems.push("Há uma alternativa sem texto.".into());
         } else if too_long(&option.text, MAX_OPTION_TEXT) {
-            problem(format!(
+            problems.push(format!(
                 "Uma alternativa tem mais de {MAX_OPTION_TEXT} caracteres."
             ));
         }
         if !ids.insert(option.id.as_str()) {
-            problem(format!(
+            problems.push(format!(
                 "Identificador de alternativa repetido: {}.",
                 option.id
             ));
         }
         if !texts.insert(js_trim(&option.text).to_lowercase()) {
-            problem(format!(
+            problems.push(format!(
                 "Alternativas com o mesmo texto: \"{}\".",
                 js_trim(&option.text)
             ));
         }
     }
     if !input.options.iter().any(|o| o.id == input.answer_id) {
-        problem("O gabarito não corresponde a nenhuma alternativa.".into());
+        problems.push("O gabarito não corresponde a nenhuma alternativa.".into());
     }
+}
 
-    if too_long(&input.explanation, MAX_EXPLANATION) {
-        problem(format!(
-            "O comentário tem mais de {MAX_EXPLANATION} caracteres."
-        ));
+fn check_references(refs: &[String], problems: &mut Vec<String>) {
+    if refs.len() > MAX_REFS {
+        problems.push(format!("Há mais de {MAX_REFS} referências."));
     }
-    if input.refs.len() > MAX_REFS {
-        problem(format!("Há mais de {MAX_REFS} referências."));
+    if refs.iter().any(|r| is_blank(r)) {
+        problems.push("Há uma referência vazia.".into());
     }
-    if input.refs.iter().any(|r| is_blank(r)) {
-        problem("Há uma referência vazia.".into());
+    if refs.iter().any(|r| too_long(r, MAX_REF)) {
+        problems.push(format!("Uma referência tem mais de {MAX_REF} caracteres."));
     }
-    if input.refs.iter().any(|r| too_long(r, MAX_REF)) {
-        problem(format!("Uma referência tem mais de {MAX_REF} caracteres."));
-    }
+}
 
-    if !(MIN_TOPICS..=MAX_TOPICS).contains(&input.topics.len()) {
-        problem(format!(
+fn check_topics(topics: &[TopicPath], problems: &mut Vec<String>) {
+    if !(MIN_TOPICS..=MAX_TOPICS).contains(&topics.len()) {
+        problems.push(format!(
             "Cada questão precisa de {MIN_TOPICS} a {MAX_TOPICS} assuntos (área › matéria › assunto)."
         ));
     }
-    for path in &input.topics {
+    for path in topics {
         let names = [
             (&path.area, MAX_AREA),
             (&path.matter, MAX_MATTER),
             (&path.topic, MAX_TOPIC),
         ];
         if names.iter().any(|(name, _)| is_blank(name)) {
-            problem("Área, matéria e assunto não podem ficar vazios.".into());
+            problems.push("Área, matéria e assunto não podem ficar vazios.".into());
         }
         if names.iter().any(|(name, max)| too_long(name, *max)) {
-            problem(format!(
+            problems.push(format!(
                 "Área, matéria ou assunto longo demais (limites: {MAX_AREA}, {MAX_MATTER} e {MAX_TOPIC} caracteres)."
             ));
         }
     }
+}
 
+fn check_image(input: &QuestionInput, problems: &mut Vec<String>) {
     match (&input.image, &input.image_alt) {
         (Some(image), alt) => {
             if !is_valid_image_name(image) {
-                problem(format!("Nome de imagem inválido: {image}."));
+                problems.push(format!("Nome de imagem inválido: {image}."));
             }
             match alt {
                 Some(alt) if !is_blank(alt) && !too_long(alt, MAX_IMAGE_ALT) => {}
-                _ => problem(format!(
+                _ => problems.push(format!(
                     "A imagem precisa de uma descrição (texto alternativo) de até {MAX_IMAGE_ALT} caracteres."
                 )),
             }
         }
-        (None, Some(_)) => problem("Há texto alternativo, mas nenhuma imagem.".into()),
+        (None, Some(_)) => problems.push("Há texto alternativo, mas nenhuma imagem.".into()),
         (None, None) => {}
     }
-
-    problems.dedup();
-    problems
 }
 
 /// Validates the input and turns it into a canonical [`Question`]: option IDs derived from
@@ -302,12 +299,11 @@ pub fn canonicalize(input: QuestionInput) -> Result<Question, Vec<String>> {
     if !problems.is_empty() {
         return Err(problems);
     }
-    let answer_text = input
-        .options
-        .iter()
-        .find(|o| o.id == input.answer_id)
-        .map(|o| o.text.clone())
-        .expect("validated: the answer matches an option");
+    let answer_id = option_id(
+        input
+            .answer_text()
+            .expect("validated: the answer matches an option"),
+    );
     let options: Vec<QuestionOption> = input
         .options
         .into_iter()
@@ -316,18 +312,10 @@ pub fn canonicalize(input: QuestionInput) -> Result<Question, Vec<String>> {
             text: o.text,
         })
         .collect();
-    let mut topics: Vec<TopicPath> = Vec::new();
-    for path in input.topics.iter().map(TopicPath::trimmed) {
-        if !topics.contains(&path) {
-            topics.push(path);
-        }
-    }
-    let mut refs: Vec<String> = Vec::new();
-    for reference in input.refs {
-        if !refs.contains(&reference) {
-            refs.push(reference);
-        }
-    }
+    let mut topics = Vec::new();
+    extend_unique(&mut topics, input.topics.iter().map(TopicPath::trimmed));
+    let mut refs = Vec::new();
+    extend_unique(&mut refs, input.refs);
     let id = fingerprint(
         input.kind,
         &input.stem,
@@ -338,7 +326,7 @@ pub fn canonicalize(input: QuestionInput) -> Result<Question, Vec<String>> {
         id,
         kind: input.kind,
         stem: input.stem,
-        answer_id: option_id(&answer_text),
+        answer_id,
         options,
         explanation: input.explanation,
         refs,
@@ -348,6 +336,15 @@ pub fn canonicalize(input: QuestionInput) -> Result<Question, Vec<String>> {
         annulled: input.annulled,
         provenance: input.provenance,
     })
+}
+
+/// Adds unseen items while preserving the input order.
+pub(super) fn extend_unique<T: PartialEq>(values: &mut Vec<T>, items: impl IntoIterator<Item = T>) {
+    for item in items {
+        if !values.contains(&item) {
+            values.push(item);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -372,7 +369,7 @@ pub(crate) mod tests {
             })
             .collect();
         QuestionInput {
-            local_id: local_id.to_owned(),
+            id: local_id.to_owned(),
             kind: QuestionType::Multiple,
             stem: stem.to_owned(),
             answer_id: options[answer].id.clone(),
@@ -389,7 +386,7 @@ pub(crate) mod tests {
 
     pub(crate) fn boolean(local_id: &str, stem: &str, certo: bool) -> QuestionInput {
         QuestionInput {
-            local_id: local_id.to_owned(),
+            id: local_id.to_owned(),
             kind: QuestionType::Boolean,
             stem: stem.to_owned(),
             options: vec![
@@ -522,31 +519,51 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn refs_are_bounded() {
+    fn the_reference_list_has_a_length_limit() {
         let mut q = multiple("q", "Enunciado", 0);
         q.refs = vec!["Lei 8.112/1990".into(); MAX_REFS + 1];
         assert_rejected(q, "Há mais de 50 referências");
+    }
+
+    #[test]
+    fn a_reference_needs_text() {
         let mut q = multiple("q", "Enunciado", 0);
         q.refs = vec![" ".into()];
         assert_rejected(q, "referência vazia");
+    }
+
+    #[test]
+    fn a_reference_has_a_length_limit() {
         let mut q = multiple("q", "Enunciado", 0);
         q.refs = vec!["r".repeat(MAX_REF + 1)];
         assert_rejected(q, "Uma referência tem mais de");
     }
 
     #[test]
-    fn topics_need_one_to_thirty_complete_paths() {
+    fn a_question_needs_at_least_one_topic() {
         let mut q = multiple("q", "Enunciado", 0);
         q.topics.clear();
         assert_rejected(q, "de 1 a 30 assuntos");
+    }
+
+    #[test]
+    fn the_topic_list_has_a_length_limit() {
         let mut q = multiple("q", "Enunciado", 0);
-        q.topics = (0..31)
+        q.topics = (0..=MAX_TOPICS)
             .map(|i| TopicPath::new("A", "M", &format!("T{i}")))
             .collect();
         assert_rejected(q, "de 1 a 30 assuntos");
+    }
+
+    #[test]
+    fn every_level_of_the_topic_path_needs_a_name() {
         let mut q = multiple("q", "Enunciado", 0);
         q.topics = vec![TopicPath::new("Direito", " ", "Crase")];
         assert_rejected(q, "não podem ficar vazios");
+    }
+
+    #[test]
+    fn the_topic_area_name_has_a_length_limit() {
         let mut q = multiple("q", "Enunciado", 0);
         q.topics = vec![TopicPath::new(&"a".repeat(MAX_AREA + 1), "M", "T")];
         assert_rejected(q, "longo demais");

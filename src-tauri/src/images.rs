@@ -5,12 +5,15 @@
 //! match the image pattern are served, and only from `<app data>/images/`: anything else,
 //! including path traversal, gets 404. No other folder is reachable.
 
+use std::ops::RangeInclusive;
 use std::path::Path;
 
 use tauri::http::{Method, Request, Response, StatusCode, header};
 
 /// URI scheme registered for question images.
 pub const SCHEME: &str = "image";
+
+const IMAGE_HASH_LENGTH: RangeInclusive<usize> = 24..=64;
 
 pub(crate) enum ImageFormat {
     Png,
@@ -22,7 +25,7 @@ impl ImageFormat {
     /// Matches a lowercase hex hash followed by a supported extension.
     pub(crate) fn from_name(name: &str) -> Option<Self> {
         let (stem, extension) = name.split_once('.')?;
-        if !(24..=64).contains(&stem.len())
+        if !IMAGE_HASH_LENGTH.contains(&stem.len())
             || !stem.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
         {
             return None;

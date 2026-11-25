@@ -64,97 +64,98 @@ pub struct TopicNode {
 /// Area › matter › topic with distinct question counts at every level. A question filed
 /// under two topics of the same matter counts once for that matter.
 pub fn topic_tree(conn: &Connection) -> AppResult<TopicTree> {
-    let mut area_counts: BTreeMap<String, u32> = BTreeMap::new();
-    for row in conn
-        .prepare(
-            "SELECT t.area, COUNT(DISTINCT qt.question_id)
-             FROM topics t JOIN question_topics qt ON qt.topic_id = t.id GROUP BY t.area",
-        )?
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?)))?
-    {
-        let (area, count) = row?;
-        area_counts.insert(area, count);
-    }
-    let mut matter_counts: BTreeMap<(String, String), u32> = BTreeMap::new();
-    for row in conn
-        .prepare(
-            "SELECT t.area, t.matter, COUNT(DISTINCT qt.question_id)
-             FROM topics t JOIN question_topics qt ON qt.topic_id = t.id
-             GROUP BY t.area, t.matter",
-        )?
-        .query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, u32>(2)?,
-            ))
-        })?
-    {
-        let (area, matter, count) = row?;
-        matter_counts.insert((area, matter), count);
-    }
+    let area_counts = area_counts(conn)?;
+    let matter_counts = matter_counts(conn)?;
+    let groups = topic_groups(conn)?;
+    let areas = build_areas(groups, &area_counts, &matter_counts)?;
+    let questions = conn.query_row("SELECT COUNT(*) FROM questions", [], |r| r.get(0))?;
+    Ok(TopicTree { areas, questions })
+}
 
+type ByAreaAndMatter<T> = BTreeMap<String, BTreeMap<String, T>>;
+
+fn area_counts(conn: &Connection) -> AppResult<BTreeMap<String, u32>> {
+    let mut statement = conn.prepare(
+        "SELECT t.area, COUNT(DISTINCT qt.question_id)
+         FROM topics t JOIN question_topics qt ON qt.topic_id = t.id GROUP BY t.area",
+    )?;
+    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+fn matter_counts(conn: &Connection) -> AppResult<ByAreaAndMatter<u32>> {
+    let mut statement = conn.prepare(
+        "SELECT t.area, t.matter, COUNT(DISTINCT qt.question_id)
+         FROM topics t JOIN question_topics qt ON qt.topic_id = t.id
+         GROUP BY t.area, t.matter",
+    )?;
+    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+    let mut counts = ByAreaAndMatter::new();
+    for row in rows {
+        let (area, matter, count) = row?;
+        counts.entry(area).or_default().insert(matter, count);
+    }
+    Ok(counts)
+}
+
+fn topic_groups(conn: &Connection) -> AppResult<ByAreaAndMatter<Vec<TopicNode>>> {
     let accuracy = crate::metrics::topic_accuracy(conn)?;
-    let mut areas: BTreeMap<String, BTreeMap<String, Vec<TopicNode>>> = BTreeMap::new();
-    for row in conn
-        .prepare(
-            "SELECT t.id, t.area, t.matter, t.topic, COUNT(qt.question_id)
-             FROM topics t JOIN question_topics qt ON qt.topic_id = t.id
-             GROUP BY t.id",
-        )?
-        .query_map([], |r| {
-            Ok((
-                r.get::<_, TopicId>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, u32>(4)?,
-            ))
-        })?
-    {
-        let (id, area, matter, topic, count) = row?;
-        areas
+    let mut groups = ByAreaAndMatter::<Vec<TopicNode>>::new();
+    let mut statement = conn.prepare(
+        "SELECT t.id, t.area, t.matter, t.topic, COUNT(qt.question_id)
+         FROM topics t JOIN question_topics qt ON qt.topic_id = t.id
+         GROUP BY t.id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        let id = row.get(0)?;
+        let topic = TopicNode {
+            id,
+            name: row.get(3)?,
+            questions: row.get(4)?,
+            accuracy: accuracy.get(&id).copied(),
+        };
+        Ok((row.get(1)?, row.get(2)?, topic))
+    })?;
+    for row in rows {
+        let (area, matter, topic) = row?;
+        groups
             .entry(area)
             .or_default()
             .entry(matter)
             .or_default()
-            .push(TopicNode {
-                id,
-                name: topic,
-                questions: count,
-                accuracy: accuracy.get(&id).copied(),
-            });
+            .push(topic);
     }
+    Ok(groups)
+}
 
-    let mut tree: Vec<AreaNode> = areas
-        .into_iter()
-        .map(|(area, matters)| {
-            let mut matters: Vec<MatterNode> = matters
-                .into_iter()
-                .map(|(matter, mut topics)| {
-                    topics.sort_by(|a, b| cmp_pt(&a.name, &b.name));
-                    MatterNode {
-                        questions: matter_counts[&(area.clone(), matter.clone())],
-                        name: matter,
-                        topics,
-                    }
-                })
-                .collect();
-            matters.sort_by(|a, b| cmp_pt(&a.name, &b.name));
-            AreaNode {
-                questions: area_counts[&area],
-                name: area,
-                matters,
-            }
-        })
-        .collect();
-    tree.sort_by(|a, b| cmp_pt(&a.name, &b.name));
-
-    let questions = conn.query_row("SELECT COUNT(*) FROM questions", [], |r| r.get(0))?;
-    Ok(TopicTree {
-        areas: tree,
-        questions,
-    })
+fn build_areas(
+    groups: ByAreaAndMatter<Vec<TopicNode>>,
+    area_counts: &BTreeMap<String, u32>,
+    matter_counts: &ByAreaAndMatter<u32>,
+) -> AppResult<Vec<AreaNode>> {
+    let missing_count = || AppError::Internal("missing group count in the topic tree".into());
+    let mut areas = Vec::with_capacity(groups.len());
+    for (area, grouped_matters) in groups {
+        let questions = *area_counts.get(&area).ok_or_else(missing_count)?;
+        let counts = matter_counts.get(&area).ok_or_else(missing_count)?;
+        let mut matters = Vec::with_capacity(grouped_matters.len());
+        for (matter, mut topics) in grouped_matters {
+            topics.sort_by(|a, b| cmp_pt(&a.name, &b.name));
+            matters.push(MatterNode {
+                questions: *counts.get(&matter).ok_or_else(missing_count)?,
+                name: matter,
+                topics,
+            });
+        }
+        matters.sort_by(|a, b| cmp_pt(&a.name, &b.name));
+        areas.push(AreaNode {
+            name: area,
+            questions,
+            matters,
+        });
+    }
+    areas.sort_by(|a, b| cmp_pt(&a.name, &b.name));
+    Ok(areas)
 }
 
 // ---- Collections -----------------------------------------------------------------------------
@@ -507,6 +508,21 @@ mod tests {
                 questions: 0
             }
         );
+    }
+
+    #[test]
+    fn the_tree_rejects_missing_matter_counts() {
+        let groups = ByAreaAndMatter::from([(
+            "Direito".into(),
+            BTreeMap::from([("Constitucional".into(), Vec::new())]),
+        )]);
+        let area_counts = BTreeMap::from([("Direito".into(), 1)]);
+        let matter_counts = ByAreaAndMatter::from([("Direito".into(), BTreeMap::new())]);
+
+        assert!(matches!(
+            build_areas(groups, &area_counts, &matter_counts),
+            Err(AppError::Internal(_))
+        ));
     }
 
     fn sample_collections() -> Database {

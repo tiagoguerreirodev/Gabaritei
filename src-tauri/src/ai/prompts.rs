@@ -46,7 +46,7 @@ pub fn generate_prompt(request: &GenerateRequest, existing_stems: &[String]) -> 
     let topic = &request.topic;
     let mut text = format!(
         "Elabore exatamente {count} questões inéditas sobre o assunto abaixo.\n\n\
-ASSUNTO: {area} › {matter} › {topic_name}\n\n\
+ASSUNTO: {topic}\n\n\
 FORMATO\n\
 - {format}\n\
 - Múltipla escolha: exatamente 5 alternativas distintas e uma única correta. Use ids curtos \
@@ -68,9 +68,6 @@ cite o conteúdo da alternativa.\n\
 - Use `notes` para observações sobre as fontes consultadas ou limitações; deixe vazio se não \
 houver.\n\n{DATA_RULE}\n",
         count = request.count,
-        area = topic.area,
-        matter = topic.matter,
-        topic_name = topic.topic,
         format = format_rules(request.format),
     );
     if let Some(board) = request.board.as_deref().filter(|b| !b.trim().is_empty()) {

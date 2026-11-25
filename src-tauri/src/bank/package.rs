@@ -51,7 +51,7 @@ impl Package {
         self.questions
             .into_iter()
             .map(|q| QuestionInput {
-                local_id: q.id,
+                id: q.id,
                 kind: q.kind,
                 stem: q.stem,
                 options: q.options,

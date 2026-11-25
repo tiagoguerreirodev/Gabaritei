@@ -1,0 +1,25 @@
+name: Codex restricted profile probe
+
+on:
+  push:
+    branches: [probe-81-codex-macos]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [macos-15, windows-11-arm]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install pinned CLI
+        run: npm install --prefix probe-cli --ignore-scripts @openai/codex@0.172.0
+      - name: Exercise real sandbox on synthetic data
+        run: python3 .github/codex-profile-probe.py

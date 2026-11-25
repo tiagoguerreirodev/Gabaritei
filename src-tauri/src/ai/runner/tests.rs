@@ -254,6 +254,9 @@ exit 1"#,
 
     #[test]
     fn attachments_and_schema_are_in_a_fresh_folder_that_is_removed_afterwards() {
+        if !codex::supports_attachment_profile() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let attachment = dir.path().join("Lei 8.112.md");
         std::fs::write(&attachment, "texto").unwrap();
@@ -261,7 +264,16 @@ exit 1"#,
             dir.path(),
             "codex",
             r#"out=""
-while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift;; esac; shift; done
+profile=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) out="$2"; shift;;
+        default_permissions=*) profile="$1";;
+        --sandbox|--disable) exit 14;;
+    esac
+    shift
+done
+[ -n "$profile" ] || exit 15
 cat >/dev/null
 printf '{"cwd":"%s","files":"%s"}' "$(pwd)" "$(ls . anexos | tr '\n' ' ')" > "$out""#,
         );
@@ -352,7 +364,7 @@ mod arguments {
         let work = Workdir::prepare(spec).unwrap();
         let plan = match spec.agent {
             Agent::Claude => claude::plan(spec, &work),
-            Agent::Codex => codex::plan(spec, &work),
+            Agent::Codex => codex::plan(spec, &work).unwrap(),
         };
         (
             plan.args
@@ -392,6 +404,26 @@ mod arguments {
             assert!(!args.iter().any(|a| a.contains(forbidden)), "{forbidden}");
         }
         assert!(env.is_empty());
+    }
+
+    #[test]
+    fn claude_gets_the_checker_schema_without_its_dialect_declaration() {
+        let mut job = spec(Agent::Claude, "claude".into());
+        job.schema =
+            serde_json::from_str(include_str!("../../../schemas/checker.schema.json")).unwrap();
+        let (args, _) = plan_for(&job);
+        let sent = args
+            .windows(2)
+            .find(|pair| pair[0] == "--json-schema")
+            .map(|pair| serde_json::from_str::<Value>(&pair[1]).unwrap())
+            .expect("the JSON schema argument");
+
+        let mut expected = job.schema;
+        assert_eq!(
+            expected.as_object_mut().unwrap().remove("$schema"),
+            Some(json!("https://json-schema.org/draft/2020-12/schema"))
+        );
+        assert_eq!(sent, expected);
     }
 
     #[test]
@@ -439,7 +471,7 @@ mod arguments {
     #[test]
     fn claude_remnote_token_lives_only_in_the_temporary_config_file() {
         let mut job = spec(Agent::Claude, "claude".into());
-        job.remnote = Some(RemNoteAccess::Server {
+        job.remnote = Some(RemNoteAccess {
             url: "https://remnote.example/mcp".into(),
             token: "TOKEN-SECRETO".into(),
             tools: vec!["search".into(), "read_note".into()],
@@ -483,18 +515,82 @@ mod arguments {
     }
 
     #[test]
-    fn codex_keeps_its_read_only_shell_when_there_are_attachments() {
+    fn codex_attaches_files_through_a_scoped_profile() {
+        if !codex::supports_attachment_profile() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("a.txt");
         std::fs::write(&file, "x").unwrap();
-        let mut job = spec(Agent::Codex, "codex".into());
+        let cli = dir.path().join("codex");
+        std::fs::write(&cli, "fake CLI").unwrap();
+        let mut job = spec(Agent::Codex, cli.clone());
         job.attachments = vec![file];
         job.web = true;
-        let (args, _) = plan_for(&job);
-        assert!(!args.contains(&"shell_tool".to_owned()));
-        assert!(has_pair(&args, "--sandbox", "read-only"));
+        let work = Workdir::prepare(&job).unwrap();
+        let plan = codex::plan(&job, &work).unwrap();
+        let args: Vec<_> = plan
+            .args
+            .iter()
+            .map(|arg| arg.to_str().unwrap().to_owned())
+            .collect();
+        let run = work.path().canonicalize().unwrap();
+        let profile = run.file_name().unwrap().to_str().unwrap();
+        let cli = cli.canonicalize().unwrap();
+        let scratch = if cfg!(target_os = "macos") {
+            r#", "/private/tmp"="deny", "/private/var/tmp"="deny""#
+        } else {
+            ""
+        };
+        assert_eq!(plan.executable, cli);
+        assert!(has_pair(
+            &args,
+            "-c",
+            &format!("default_permissions={profile:?}")
+        ));
+        assert!(has_pair(
+            &args,
+            "-c",
+            &format!(
+                "permissions.{profile}.filesystem={{\":minimal\"=\"read\", {:?}=\"read\", {:?}=\"read\"{scratch}}}",
+                cli.to_str().unwrap(),
+                run.to_str().unwrap(),
+            ),
+        ));
+        assert!(has_pair(
+            &args,
+            "-c",
+            &format!("permissions.{profile}.network.enabled=false")
+        ));
+        assert!(has_pair(&args, "-c", r#"approval_policy="never""#));
+        assert!(args.iter().any(|arg| arg == "--strict-config"));
+        assert!(args.iter().any(|arg| arg == "--ignore-user-config"));
+        assert!(
+            args.iter()
+                .all(|arg| !matches!(arg.as_str(), "--sandbox" | "--disable"))
+        );
         // Web search is independent of the attachments (the owner decided so).
         assert!(has_pair(&args, "-c", "web_search=live"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn codex_on_windows_keeps_the_read_only_sandbox_with_attachments() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+        let mut job = spec(Agent::Codex, "codex.cmd".into());
+        job.attachments = vec![file];
+        let (args, _) = plan_for(&job);
+        assert!(has_pair(&args, "--sandbox", "read-only"));
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg.starts_with("default_permissions="))
+        );
+        assert!(!args.iter().any(|arg| arg == "--disable"));
+        assert!(args.iter().any(|arg| arg == "--ignore-user-config"));
+        assert!(has_pair(&args, "-c", r#"approval_policy="never""#));
     }
 
     #[test]
@@ -509,7 +605,7 @@ mod arguments {
     #[test]
     fn remnote_with_no_approved_tools_gives_codex_no_server() {
         let mut job = spec(Agent::Codex, "codex".into());
-        job.remnote = Some(RemNoteAccess::Server {
+        job.remnote = Some(RemNoteAccess {
             url: "https://remnote.example/mcp".into(),
             token: "t".into(),
             tools: Vec::new(),
@@ -522,13 +618,14 @@ mod arguments {
     #[test]
     fn codex_remnote_token_travels_in_the_environment_only() {
         let mut job = spec(Agent::Codex, "codex".into());
-        job.remnote = Some(RemNoteAccess::Server {
+        job.remnote = Some(RemNoteAccess {
             url: "https://remnote.example/mcp".into(),
             token: "TOKEN-SECRETO".into(),
             tools: vec!["search".into()],
         });
         let (args, env) = plan_for(&job);
         assert!(!args.iter().any(|a| a.contains("TOKEN-SECRETO")));
+        assert!(args.contains(&"--ignore-user-config".to_owned()));
         assert_eq!(
             env,
             [(codex::TOKEN_ENV.to_owned(), "TOKEN-SECRETO".to_owned())]
@@ -540,19 +637,10 @@ mod arguments {
     }
 
     #[test]
-    fn reusing_the_codex_config_keeps_the_users_config_loaded() {
-        let mut job = spec(Agent::Codex, "codex".into());
-        job.remnote = Some(RemNoteAccess::CodexConfig);
-        let (args, env) = plan_for(&job);
-        assert!(!args.contains(&"--ignore-user-config".to_owned()));
-        assert!(env.is_empty());
-    }
-
-    #[test]
     fn debug_output_hides_the_prompt_and_the_token() {
         let mut job = spec(Agent::Claude, "claude".into());
         job.prompt = "GABARITO-SECRETO".into();
-        job.remnote = Some(RemNoteAccess::Server {
+        job.remnote = Some(RemNoteAccess {
             url: "https://x".into(),
             token: "TOKEN-SECRETO".into(),
             tools: Vec::new(),
@@ -601,7 +689,7 @@ mod arguments {
         assert!(is_valid_tool_name("read_note") && is_valid_tool_name("get-rem"));
 
         let mut claude_job = spec(Agent::Claude, "claude".into());
-        claude_job.remnote = Some(RemNoteAccess::Server {
+        claude_job.remnote = Some(RemNoteAccess {
             url: "https://remnote.example/mcp".into(),
             token: "t".into(),
             tools: vec!["search,Bash".into(), "ok_tool".into()],
@@ -618,7 +706,7 @@ mod arguments {
 
     #[test]
     fn write_like_tools_are_dropped_from_the_plan_for_both_agents() {
-        let remnote = Some(RemNoteAccess::Server {
+        let remnote = Some(RemNoteAccess {
             url: "https://remnote.example/mcp".into(),
             token: "t".into(),
             tools: vec!["search".into(), "create_note".into()],

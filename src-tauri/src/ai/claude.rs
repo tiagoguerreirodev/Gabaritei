@@ -42,7 +42,7 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
     }
     // RemNote: only the exact read-only tools the user approved, never the whole server.
     if work.mcp_config.is_some()
-        && let Some(RemNoteAccess::Server { tools, .. }) = &spec.remnote
+        && let Some(RemNoteAccess { tools, .. }) = &spec.remnote
     {
         allowed.extend(
             read_only_tools(tools)
@@ -51,6 +51,12 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         );
     }
     let builtin = builtin.join(",");
+    // Claude Code 2.1.331 rejects the generated Draft 2020-12 declaration. Its validator
+    // accepts the same schemas, including local $defs references, without the declaration.
+    let mut schema = spec.schema.clone();
+    if let Some(schema) = schema.as_object_mut() {
+        schema.remove("$schema");
+    }
 
     let mut args: Vec<String> = vec![
         "-p".into(),
@@ -58,7 +64,7 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         "stream-json".into(),
         "--verbose".into(),
         "--json-schema".into(),
-        spec.schema.to_string(),
+        schema.to_string(),
         format!("--model={}", spec.model),
         "--effort".into(),
         spec.effort.as_str().into(),
@@ -88,8 +94,8 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         args.push("--append-system-prompt-file".into());
         args.push(file.to_string_lossy().into_owned());
     }
-    // `RemNoteAccess::CodexConfig` only makes sense for Codex; Claude then gets no RemNote.
     Plan {
+        executable: spec.cli.clone(),
         args: args.into_iter().map(Into::into).collect(),
         env: Vec::new(),
     }

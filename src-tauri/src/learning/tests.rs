@@ -4,6 +4,7 @@ use crate::bank::catalog::CollectionKind;
 use crate::bank::import_questions;
 use crate::bank::question::tests::multiple;
 use crate::db::Database;
+use ErrorFilter::{IncludeBlanks, WrongOnly};
 use rand::SeedableRng;
 use rusqlite::params;
 
@@ -145,10 +146,8 @@ impl Bank {
             .unwrap()
     }
 
-    fn errors(&self, include_blanks: bool) -> Vec<QuestionId> {
-        self.db
-            .with(|c| error_questions(c, include_blanks, 100))
-            .unwrap()
+    fn errors(&self, filter: ErrorFilter) -> Vec<QuestionId> {
+        self.db.with(|c| error_questions(c, filter, 100)).unwrap()
     }
 
     fn due_list(&self, now: &str) -> Vec<QuestionId> {
@@ -157,6 +156,27 @@ impl Bank {
 }
 
 use rusqlite::OptionalExtension;
+
+#[test]
+fn review_interval_follows_the_streak_and_caps_at_sixty_days() {
+    assert_eq!(
+        (0..=8).map(interval_after).collect::<Vec<_>>(),
+        [1, 1, 3, 7, 14, 30, 60, 60, 60],
+    );
+}
+
+#[test]
+fn the_errors_session_keeps_the_existing_boolean_wire_shape() {
+    for (include_blanks, filter) in [(false, WrongOnly), (true, IncludeBlanks)] {
+        let json = serde_json::json!({"kind": "errors", "includeBlanks": include_blanks});
+        let request = SessionSource::Errors { filter };
+        assert_eq!(
+            serde_json::from_value::<SessionSource>(json.clone()).unwrap(),
+            request
+        );
+        assert_eq!(serde_json::to_value(request).unwrap(), json);
+    }
+}
 
 #[test]
 fn intervals_grow_on_hits_along_the_ladder() {
@@ -274,7 +294,7 @@ fn unfinished_attempts_do_not_schedule_reviews() {
     })
     .unwrap();
     assert_eq!(b.due("q1"), None);
-    assert!(b.errors(true).is_empty());
+    assert!(b.errors(IncludeBlanks).is_empty());
 }
 
 fn update_annulment(b: &Bank, local: &str, annulled: bool) {
@@ -304,11 +324,11 @@ fn annulling_a_question_removes_the_review() {
 fn annulling_a_question_removes_it_from_the_error_notebook() {
     let b = bank(&["q1"]);
     b.answer(D0, &[("q1", "o1")]);
-    assert_eq!(b.errors(false), [b.id("q1")]);
+    assert_eq!(b.errors(WrongOnly), [b.id("q1")]);
 
     update_annulment(&b, "q1", true);
 
-    assert!(b.errors(false).is_empty());
+    assert!(b.errors(WrongOnly).is_empty());
 }
 
 #[test]
@@ -330,7 +350,7 @@ fn restoring_a_question_returns_it_to_the_error_notebook() {
 
     update_annulment(&b, "q1", false);
 
-    assert_eq!(b.errors(false), [b.id("q1")]);
+    assert_eq!(b.errors(WrongOnly), [b.id("q1")]);
 }
 
 #[test]
@@ -347,7 +367,7 @@ fn change_key_after_two_answers(b: &Bank) {
     // Answered o1 while the key was o0: a miss.
     b.answer(D0, &[("q1", "o1")]);
     assert_eq!(b.interval("q1"), Some(1));
-    assert_eq!(b.errors(false), [b.id("q1")]);
+    assert_eq!(b.errors(WrongOnly), [b.id("q1")]);
     // A hit afterwards on o0 starts a streak at the first rung.
     b.answer(D1, &[("q1", "o0")]);
     assert_eq!(b.interval("q1"), Some(1));
@@ -380,24 +400,24 @@ fn a_key_change_replays_the_review_history() {
 fn a_key_change_updates_the_error_notebook() {
     let b = bank(&["q1"]);
     change_key_after_two_answers(&b);
-    assert_eq!(b.errors(false), [b.id("q1")]);
+    assert_eq!(b.errors(WrongOnly), [b.id("q1")]);
 }
 
 #[test]
 fn the_error_notebook_uses_the_latest_answer() {
     let b = bank(&["q1", "q2"]);
     b.answer(D0, &[("q1", "o1"), ("q2", "o1")]);
-    assert_eq!(b.errors(false).len(), 2);
+    assert_eq!(b.errors(WrongOnly).len(), 2);
     // A later hit on q1 removes it; q2 stays.
     b.answer(D1, &[("q1", "o0")]);
-    assert_eq!(b.errors(false), vec![b.id("q2")]);
+    assert_eq!(b.errors(WrongOnly), vec![b.id("q2")]);
 }
 
 #[test]
 fn the_error_notebook_uses_a_corrected_key_without_refresh() {
     let b = bank(&["q2"]);
     b.answer(D0, &[("q2", "o1")]);
-    assert_eq!(b.errors(false), [b.id("q2")]);
+    assert_eq!(b.errors(WrongOnly), [b.id("q2")]);
 
     // Correcting q2's key to what was answered clears it, with no refresh needed.
     let q2 = b.id("q2");
@@ -410,15 +430,15 @@ fn the_error_notebook_uses_a_corrected_key_without_refresh() {
         Ok(())
     })
     .unwrap();
-    assert!(b.errors(false).is_empty());
+    assert!(b.errors(WrongOnly).is_empty());
 }
 
 #[test]
 fn blanks_are_in_the_error_notebook_only_on_request() {
     let b = bank(&["q1", "q2"]);
     b.answer(D0, &[("q1", "blank"), ("q2", "o1")]);
-    assert_eq!(b.errors(false), vec![b.id("q2")]);
-    let mut with_blanks = b.errors(true);
+    assert_eq!(b.errors(WrongOnly), vec![b.id("q2")]);
+    let mut with_blanks = b.errors(IncludeBlanks);
     with_blanks.sort();
     let mut expected = vec![b.id("q1"), b.id("q2")];
     expected.sort();
@@ -430,8 +450,8 @@ fn a_later_blank_does_not_hide_an_earlier_wrong_answer() {
     let b = bank(&["q1"]);
     b.answer(D0, &[("q1", "o1")]);
     b.answer(D1, &[("q1", "blank")]);
-    assert_eq!(b.errors(false), vec![b.id("q1")]);
-    assert_eq!(b.errors(true), vec![b.id("q1")]);
+    assert_eq!(b.errors(WrongOnly), vec![b.id("q1")]);
+    assert_eq!(b.errors(IncludeBlanks), vec![b.id("q1")]);
 }
 
 #[test]
@@ -439,8 +459,8 @@ fn a_blank_after_a_hit_is_an_error_only_when_blanks_are_included() {
     let b = bank(&["q1"]);
     b.answer(D0, &[("q1", "o0")]);
     b.answer(D1, &[("q1", "blank")]);
-    assert!(b.errors(false).is_empty());
-    assert_eq!(b.errors(true).len(), 1);
+    assert!(b.errors(WrongOnly).is_empty());
+    assert_eq!(b.errors(IncludeBlanks).len(), 1);
 }
 
 #[test]
@@ -449,7 +469,7 @@ fn a_hit_after_a_wrong_answer_leaves_the_notebook() {
     b.answer(D0, &[("q1", "o1")]);
     b.answer(D1, &[("q1", "o0")]);
     b.answer(D4, &[("q1", "blank")]);
-    assert!(b.errors(false).is_empty());
+    assert!(b.errors(WrongOnly).is_empty());
 }
 
 fn error_bank() -> Bank {
@@ -463,13 +483,13 @@ fn error_bank() -> Bank {
 #[test]
 fn errors_come_newest_first() {
     let b = error_bank();
-    assert_eq!(b.errors(false), [b.id("q3"), b.id("q2"), b.id("q1")]);
+    assert_eq!(b.errors(WrongOnly), [b.id("q3"), b.id("q2"), b.id("q1")]);
 }
 
 #[test]
 fn error_questions_respect_the_limit() {
     let b = error_bank();
-    let capped = b.db.with(|c| error_questions(c, false, 2)).unwrap();
+    let capped = b.db.with(|c| error_questions(c, WrongOnly, 2)).unwrap();
     assert_eq!(capped, [b.id("q3"), b.id("q2")]);
 }
 
@@ -512,9 +532,7 @@ fn sessions_are_capped_at_one_hundred_questions() {
             attempts::start(
                 tx,
                 &SessionStart {
-                    source: SessionSource::Errors {
-                        include_blanks: false,
-                    },
+                    source: SessionSource::Errors { filter: WrongOnly },
                     feedback_mode: FeedbackMode::Study,
                 },
                 D1,
@@ -561,7 +579,7 @@ fn finishing_an_attempt_schedules_reviews() {
     })
     .unwrap();
     assert_eq!(b.interval("q1"), Some(1));
-    assert_eq!(b.errors(false), vec![b.id("q1")]);
+    assert_eq!(b.errors(WrongOnly), vec![b.id("q1")]);
 }
 
 fn overview_bank() -> Bank {
@@ -575,21 +593,21 @@ fn overview_bank() -> Bank {
 #[test]
 fn the_overview_counts_reviews_by_due_date() {
     let b = overview_bank();
-    let overview = b.db.with(|c| overview(c, D1, false)).unwrap();
+    let overview = b.db.with(|c| overview(c, D1, WrongOnly)).unwrap();
     assert_eq!((overview.due, overview.upcoming), (1, 2));
 }
 
 #[test]
 fn the_overview_counts_errors() {
     let b = overview_bank();
-    let overview = b.db.with(|c| overview(c, D1, false)).unwrap();
+    let overview = b.db.with(|c| overview(c, D1, WrongOnly)).unwrap();
     assert_eq!(overview.errors, 1);
 }
 
 #[test]
 fn the_overview_lists_the_due_review_first() {
     let b = overview_bank();
-    let overview = b.db.with(|c| overview(c, D1, false)).unwrap();
+    let overview = b.db.with(|c| overview(c, D1, WrongOnly)).unwrap();
     assert_eq!(overview.items.len(), 3);
     let first = &overview.items[0];
     assert_eq!(
@@ -606,7 +624,7 @@ fn the_overview_lists_the_due_review_first() {
 #[test]
 fn the_overview_serializes_without_answers() {
     let b = overview_bank();
-    let overview = b.db.with(|c| overview(c, D1, false)).unwrap();
+    let overview = b.db.with(|c| overview(c, D1, WrongOnly)).unwrap();
     let json = serde_json::to_string(&overview).unwrap();
     for forbidden in ["answer", "explanation", "stem", "options"] {
         assert!(!json.contains(forbidden), "{forbidden} leaked: {json}");
@@ -617,8 +635,8 @@ fn the_overview_serializes_without_answers() {
 fn the_overview_lists_blank_errors_only_when_asked() {
     let b = bank(&["q1"]);
     b.answer(D0, &[("q1", "blank")]);
-    let without = b.db.with(|c| overview(c, D0, false)).unwrap();
-    let with = b.db.with(|c| overview(c, D0, true)).unwrap();
+    let without = b.db.with(|c| overview(c, D0, WrongOnly)).unwrap();
+    let with = b.db.with(|c| overview(c, D0, IncludeBlanks)).unwrap();
     assert_eq!(without.errors, 0);
     assert_eq!(with.errors, 1);
 }
@@ -654,6 +672,22 @@ fn refresh_all_drops_reviews_without_history() {
 }
 
 #[test]
+fn refresh_all_drops_stale_reviews_for_annulled_questions() {
+    let b = bank(&["q1"]);
+    b.answer(D0, &[("q1", "o1")]);
+    let id = b.id("q1");
+    b.db.transaction(|tx| {
+        tx.execute(
+            "UPDATE questions SET annulled = 1 WHERE id = ?1",
+            params![id],
+        )?;
+        refresh_all(tx)
+    })
+    .unwrap();
+    assert_eq!(b.due("q1"), None);
+}
+
+#[test]
 fn a_reviews_session_takes_due_reviews_then_recent_errors() {
     let b = bank(&["q1", "q2", "q3"]);
     b.answer(D0, &[("q1", "o1")]); // error, due D1
@@ -664,20 +698,30 @@ fn a_reviews_session_takes_due_reviews_then_recent_errors() {
     assert_eq!(session, vec![b.id("q1"), b.id("q2"), b.id("q3")]);
     let capped = b.db.with(|c| review_session(c, D4, 2)).unwrap();
     assert_eq!(capped, vec![b.id("q1"), b.id("q2")]);
-    let ov = b.db.with(|c| overview(c, D4, false)).unwrap();
+    let ov = b.db.with(|c| overview(c, D4, WrongOnly)).unwrap();
     assert_eq!(ov.practice, 3);
 }
 
-#[test]
-fn the_overview_list_caps_upcoming_reviews_but_not_their_count() {
+fn overview_with_many_upcoming_reviews() -> LearningOverview {
     let locals: Vec<String> = (0..60).map(|i| format!("q{i}")).collect();
     let refs: Vec<&str> = locals.iter().map(String::as_str).collect();
     let b = bank(&refs);
     let responses: Vec<(&str, &str)> = refs.iter().map(|l| (*l, "o0")).collect();
     b.answer(D0, &responses);
-    let ov = b.db.with(|c| overview(c, D0, false)).unwrap();
-    assert_eq!(ov.upcoming, 60);
-    assert_eq!(ov.items.len(), MAX_UPCOMING_ROWS);
+    b.db.with(|c| overview(c, D0, WrongOnly)).unwrap()
+}
+
+#[test]
+fn the_overview_list_caps_upcoming_reviews() {
+    assert_eq!(
+        overview_with_many_upcoming_reviews().items.len(),
+        MAX_UPCOMING_ROWS
+    );
+}
+
+#[test]
+fn the_overview_count_includes_all_upcoming_reviews() {
+    assert_eq!(overview_with_many_upcoming_reviews().upcoming, 60);
 }
 
 #[test]
@@ -698,11 +742,11 @@ fn scoring_in_sql_agrees_with_attempts_outcome() {
     b.answer(D0, &[("q1", "o0")]);
     assert_eq!(b.interval("q1"), Some(1));
     b.answer(D1, &[("q1", "o1")]);
-    assert_eq!(b.errors(false).len(), 1);
+    assert_eq!(b.errors(WrongOnly).len(), 1);
     // A later blank resets the review streak but never hides the wrong answer.
     b.answer(D4, &[("q1", "blank")]);
     assert_eq!(b.interval("q1"), Some(1));
-    assert_eq!(b.errors(false).len(), 1);
+    assert_eq!(b.errors(WrongOnly).len(), 1);
 }
 
 #[test]
@@ -712,7 +756,7 @@ fn a_wrong_then_blank_question_points_at_the_attempt_with_the_wrong_answer() {
     b.answer(D1, &[("q1", "blank")]);
     b.db.transaction(|tx| refresh_attempt(tx, &wrong_attempt))
         .unwrap();
-    let ov = b.db.with(|c| overview(c, D1, false)).unwrap();
+    let ov = b.db.with(|c| overview(c, D1, WrongOnly)).unwrap();
     let item = ov.items.iter().find(|i| i.is_error).unwrap();
     assert_eq!(item.last_attempt_id, wrong_attempt);
     assert_eq!(item.last_answered_at, D0);
@@ -722,8 +766,8 @@ fn a_wrong_then_blank_question_points_at_the_attempt_with_the_wrong_answer() {
 fn a_question_only_ever_left_blank_is_an_error_only_with_blanks() {
     let b = bank(&["q1"]);
     b.answer(D0, &[("q1", "blank")]);
-    assert!(b.errors(false).is_empty());
-    assert_eq!(b.errors(true).len(), 1);
+    assert!(b.errors(WrongOnly).is_empty());
+    assert_eq!(b.errors(IncludeBlanks).len(), 1);
 }
 
 #[test]
@@ -731,7 +775,7 @@ fn a_key_correction_turns_an_earlier_wrong_answer_right_even_after_a_blank() {
     let b = bank(&["q1"]);
     b.answer(D0, &[("q1", "o1")]);
     b.answer(D1, &[("q1", "blank")]);
-    assert_eq!(b.errors(false).len(), 1);
+    assert_eq!(b.errors(WrongOnly).len(), 1);
     let wrong = b.option("q1", "o1").unwrap();
     let q1 = b.id("q1");
     b.db.with(|c| {
@@ -742,7 +786,7 @@ fn a_key_correction_turns_an_earlier_wrong_answer_right_even_after_a_blank() {
         Ok(())
     })
     .unwrap();
-    assert!(b.errors(false).is_empty());
+    assert!(b.errors(WrongOnly).is_empty());
 }
 
 impl Bank {
@@ -789,27 +833,17 @@ fn a_second_session_leaves_out_questions_in_an_open_attempt() {
     b.answer(D0, &[("q3", "o0")]);
     // An open errors session takes q1 and q2 (not q3, which was a hit).
     let first = b
-        .start(
-            SessionSource::Errors {
-                include_blanks: false,
-            },
-            D1,
-        )
+        .start(SessionSource::Errors { filter: WrongOnly }, D1)
         .unwrap();
     assert_eq!(first.len(), 2);
     // They are still errors and due, but no new session picks them again.
-    assert!(b.errors(false).is_empty());
+    assert!(b.errors(WrongOnly).is_empty());
     assert!(b.due_list(D25).iter().all(|id| *id == b.id("q3")));
     let reviews = b.db.with(|c| review_session(c, D25, 100)).unwrap();
     assert_eq!(reviews, vec![b.id("q3")]);
     assert!(
-        b.start(
-            SessionSource::Errors {
-                include_blanks: false
-            },
-            D1
-        )
-        .is_err()
+        b.start(SessionSource::Errors { filter: WrongOnly }, D1)
+            .is_err()
     );
 }
 
@@ -818,12 +852,12 @@ fn finishing_the_open_attempt_frees_its_questions() {
     let b = bank(&["q1"]);
     b.answer(D0, &[("q1", "o1")]);
     let view = b.start_view(SessionSource::Reviews, D1);
-    assert!(b.errors(true).is_empty());
+    assert!(b.errors(IncludeBlanks).is_empty());
     b.db.transaction(|tx| attempts::finish(tx, &view.id, view.revision, D4).map(|_| ()))
         .unwrap();
     // Finished with the question blank: with blanks on, it is an error again, and the review
     // was rescheduled by finishing.
-    assert_eq!(b.errors(true), vec![b.id("q1")]);
+    assert_eq!(b.errors(IncludeBlanks), vec![b.id("q1")]);
     assert_eq!(b.interval("q1"), Some(1));
 }
 
@@ -831,34 +865,51 @@ fn finishing_the_open_attempt_frees_its_questions() {
 fn abandoning_the_open_attempt_frees_its_questions() {
     let b = bank(&["q1"]);
     b.answer(D0, &[("q1", "o1")]);
-    let view = b.start_view(
-        SessionSource::Errors {
-            include_blanks: false,
-        },
-        D1,
-    );
-    assert!(b.errors(false).is_empty());
+    let view = b.start_view(SessionSource::Errors { filter: WrongOnly }, D1);
+    assert!(b.errors(WrongOnly).is_empty());
     b.db.transaction(|tx| attempts::abandon(tx, &view.id))
         .unwrap();
-    assert_eq!(b.errors(false), vec![b.id("q1")]);
+    assert_eq!(b.errors(WrongOnly), vec![b.id("q1")]);
+}
+
+fn overview_with_held_errors() -> LearningOverview {
+    let b = bank(&["q1", "q2"]);
+    b.answer(D0, &[("q1", "o1"), ("q2", "o1")]);
+    b.start(SessionSource::Errors { filter: WrongOnly }, D1)
+        .unwrap();
+    b.db.with(|c| overview(c, D1, WrongOnly)).unwrap()
 }
 
 #[test]
-fn the_overview_still_lists_questions_in_an_open_attempt_but_practice_leaves_them_out() {
-    let b = bank(&["q1", "q2"]);
-    b.answer(D0, &[("q1", "o1"), ("q2", "o1")]);
-    b.start(
-        SessionSource::Errors {
-            include_blanks: false,
-        },
-        D1,
-    )
-    .unwrap();
-    let ov = b.db.with(|c| overview(c, D1, false)).unwrap();
-    assert_eq!(ov.items.len(), 2);
-    assert_eq!(ov.practice, 0);
-    assert_eq!(ov.errors, 2);
-    assert_eq!(ov.practice_errors, 0);
+fn the_overview_lists_errors_held_by_an_open_attempt() {
+    let overview = overview_with_held_errors();
+    assert_eq!((overview.errors, overview.items.len()), (2, 2));
+}
+
+#[test]
+fn the_overview_practice_counts_exclude_errors_held_by_an_open_attempt() {
+    let overview = overview_with_held_errors();
+    assert_eq!((overview.practice, overview.practice_errors), (0, 0));
+}
+
+#[test]
+fn the_overview_practice_counts_match_the_selected_sessions() {
+    let b = bank(&["q1", "q2", "q3", "q4"]);
+    b.answer(D0, &[("q1", "o1"), ("q2", "o0")]);
+    b.answer(D1, &[("q3", "blank"), ("q4", "o1")]);
+    for filter in [WrongOnly, IncludeBlanks] {
+        let result = b.db.with(|conn| overview(conn, D1, filter)).unwrap();
+        let reviews =
+            b.db.with(|conn| review_session(conn, D1, MAX_SESSION))
+                .unwrap();
+        let errors =
+            b.db.with(|conn| error_questions(conn, filter, MAX_SESSION))
+                .unwrap();
+        assert_eq!(
+            (result.practice, result.practice_errors),
+            (reviews.len() as u32, errors.len() as u32),
+        );
+    }
 }
 
 #[test]
@@ -869,12 +920,12 @@ fn the_overview_says_how_many_due_reviews_are_held_by_an_open_attempt() {
     assert_eq!(first.questions.len(), 3);
     // q4 becomes due after the session started, so it is not held by it.
     b.answer(D0, &[("q4", "o1")]);
-    let ov = b.db.with(|c| overview(c, D1, false)).unwrap();
+    let ov = b.db.with(|c| overview(c, D1, WrongOnly)).unwrap();
     assert_eq!(ov.due, 4);
     assert_eq!(ov.due_in_open_attempt, 3);
     assert_eq!(ov.practice, 1);
     // Not yet due at D0: nothing counts.
-    let early = b.db.with(|c| overview(c, D0, false)).unwrap();
+    let early = b.db.with(|c| overview(c, D0, WrongOnly)).unwrap();
     assert_eq!(early.due_in_open_attempt, 0);
 }
 
@@ -892,5 +943,5 @@ fn overlapping_attempts_rank_by_when_the_answer_was_given() {
         Ok(())
     })
     .unwrap();
-    assert!(b.errors(false).is_empty());
+    assert!(b.errors(WrongOnly).is_empty());
 }

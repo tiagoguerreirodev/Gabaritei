@@ -19,6 +19,7 @@ use ts_rs::TS;
 use crate::bank::{QuestionOption, QuestionType};
 use crate::error::{AppError, AppResult};
 use crate::ids::{AttemptId, CollectionId, QuestionId, TopicId};
+use crate::learning::ErrorFilter;
 
 mod active;
 mod response;
@@ -66,7 +67,11 @@ pub enum SessionSource {
     /// Up to `count` questions of a topic: unseen first, then least recently answered.
     Topic { topic_id: TopicId, count: u32 },
     /// The error notebook, most recent errors first (up to 100). Blanks join when asked.
-    Errors { include_blanks: bool },
+    Errors {
+        #[serde(rename = "includeBlanks")]
+        #[ts(type = "boolean")]
+        filter: ErrorFilter,
+    },
     /// Due reviews (most overdue first), then recent errors (up to 100 in all).
     Reviews,
 }

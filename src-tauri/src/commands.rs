@@ -366,7 +366,7 @@ pub fn learning_overview(
     db: State<'_, Database>,
     include_blanks: bool,
 ) -> AppResult<LearningOverview> {
-    db.with(|conn| learning::overview(conn, &crate::clock::now(), include_blanks))
+    db.with(|conn| learning::overview(conn, &crate::clock::now(), include_blanks.into()))
 }
 
 /// Asks where to save the performance table as CSV (using the same filters) and writes it.

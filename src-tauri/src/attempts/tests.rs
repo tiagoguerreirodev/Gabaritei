@@ -629,7 +629,7 @@ fn empty_sources_are_a_pt_br_error() {
     let (db, _) = bank();
     for source in [
         SessionSource::Errors {
-            include_blanks: true,
+            filter: ErrorFilter::IncludeBlanks,
         },
         SessionSource::Reviews,
     ] {

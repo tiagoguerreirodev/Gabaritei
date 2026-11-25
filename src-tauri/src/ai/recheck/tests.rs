@@ -367,6 +367,45 @@ mod flow {
     }
 
     #[test]
+    fn sources_at_the_bank_limits_are_accepted() {
+        let mut sources: Vec<_> = (1..50).map(|index| format!("Fonte {index}")).collect();
+        sources.push("á".repeat(2_000));
+        let w = world(|_, _| {
+            json!({
+                "verdict": "correct",
+                "correctedKey": "",
+                "reasoning": "Está ok.",
+                "sources": sources
+            })
+        });
+        let attempt = start(&w, FeedbackMode::Study);
+        answer_with(&w, &attempt, &w.old_key);
+
+        assert_eq!(ask_it(&w, &attempt).unwrap().sources, sources);
+    }
+
+    #[test]
+    fn sources_over_either_bank_limit_are_refused() {
+        for sources in [vec!["Fonte".to_owned(); 51], vec!["á".repeat(2_001)]] {
+            let w = world(|_, _| {
+                json!({
+                    "verdict": "correct",
+                    "correctedKey": "",
+                    "reasoning": "Está ok.",
+                    "sources": sources
+                })
+            });
+            let attempt = start(&w, FeedbackMode::Study);
+            answer_with(&w, &attempt, &w.old_key);
+
+            let error = ask_it(&w, &attempt).unwrap_err();
+
+            assert!(error.to_string().contains("fontes inválidas"), "{error}");
+            assert!(w.jobs.take(&w.question_id).is_none());
+        }
+    }
+
+    #[test]
     fn a_proposal_is_stale_if_the_key_changed_after_it_was_made() {
         let w = world(wrong_answer);
         let attempt = start(&w, FeedbackMode::Study);

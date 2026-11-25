@@ -15,6 +15,7 @@ use super::secrets::Secrets;
 use super::settings::{self, Sources};
 use super::task::{Task, ask};
 use crate::attempts;
+use crate::bank::question::{MAX_REF, MAX_REFS};
 use crate::bank::store::load_question;
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
@@ -22,8 +23,6 @@ use crate::ids::AttemptId;
 use crate::learning;
 
 const MAX_REASONING: usize = 20_000;
-const MAX_SOURCES: usize = 20;
-const MAX_SOURCE: usize = 2_000;
 
 /// What the re-checker concluded about the key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -128,11 +127,11 @@ pub fn ask_recheck(
     if answer.reasoning.trim().is_empty() || answer.reasoning.chars().count() > MAX_REASONING {
         return Err(invalid("A IA não justificou a revisão. Tente de novo."));
     }
-    if answer.sources.len() > MAX_SOURCES
+    if answer.sources.len() > MAX_REFS
         || answer
             .sources
             .iter()
-            .any(|s| s.trim().is_empty() || s.chars().count() > MAX_SOURCE)
+            .any(|s| s.trim().is_empty() || s.chars().count() > MAX_REF)
     {
         return Err(invalid("A IA devolveu fontes inválidas. Tente de novo."));
     }

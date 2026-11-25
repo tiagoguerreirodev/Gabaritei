@@ -145,7 +145,7 @@ pub fn ask_recheck(
                 ));
             }
         },
-        _ => None,
+        RecheckVerdict::Correct | RecheckVerdict::Ambiguous => None,
     };
     let proposal = Proposal {
         verdict: answer.verdict,

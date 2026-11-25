@@ -1138,7 +1138,7 @@ impl BackupService {
                     self.probe.run_for(&folder, MANIFEST_READ_TIMEOUT, move || {
                         match folder_state(&path) {
                             FolderState::Unavailable => None,
-                            _ => Some(is_due(&path, now)),
+                            FolderState::Present | FolderState::Missing => Some(is_due(&path, now)),
                         }
                     })
                 }

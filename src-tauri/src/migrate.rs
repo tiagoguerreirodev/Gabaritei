@@ -20,6 +20,7 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::bank::catalog::CollectionKind;
 use crate::bank::identity::sha256_hex;
 use crate::bank::question::is_valid_image_name;
 use crate::bank::{
@@ -303,7 +304,7 @@ fn prepare(tables: Tables) -> AppResult<Prepared> {
                 row.id
             ))
         })?;
-        let kind = QuestionType::parse(&legacy.kind).ok_or_else(|| {
+        let kind = legacy.kind.parse::<QuestionType>().map_err(|_| {
             invalid(format!(
                 "A questão {} é do tipo \"{}\", que o Gabaritei não importa.",
                 row.id, legacy.kind
@@ -493,8 +494,8 @@ fn write_import(
         for collection in &prepared.collections {
             tx.execute(
                 "INSERT INTO collections (id, title, kind, contest, board, created_at)
-                 VALUES (?1, ?2, 'imported', ?3, NULL, ?4)",
-                params![collection.id, collection.title, collection.contest, collection.created],
+                 VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
+                params![collection.id, collection.title, CollectionKind::Imported, collection.contest, collection.created],
             )?;
         }
         for item in &prepared.items {

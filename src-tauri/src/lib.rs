@@ -12,6 +12,7 @@ pub mod bank;
 pub mod clock;
 pub mod commands;
 pub mod db;
+mod enum_text;
 pub mod error;
 pub mod ids;
 pub mod images;

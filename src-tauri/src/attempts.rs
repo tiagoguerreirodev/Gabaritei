@@ -35,24 +35,10 @@ pub enum FeedbackMode {
     Exam,
 }
 
-impl FeedbackMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Study => "study",
-            Self::Exam => "exam",
-        }
-    }
-
-    pub fn parse(value: &str) -> AppResult<Self> {
-        match value {
-            "study" => Ok(Self::Study),
-            "exam" => Ok(Self::Exam),
-            other => Err(AppError::Internal(format!(
-                "unknown feedback mode {other:?}"
-            ))),
-        }
-    }
-}
+crate::enum_text::stored_enum!(FeedbackMode {
+    Study => "study",
+    Exam => "exam",
+});
 
 /// Where a session's questions come from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -194,16 +180,12 @@ pub enum SourceKind {
     Reviews,
 }
 
-impl SourceKind {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Collection => "collection",
-            Self::Topic => "topic",
-            Self::Errors => "errors",
-            Self::Reviews => "reviews",
-        }
-    }
-}
+crate::enum_text::stored_enum!(SourceKind {
+    Collection => "collection",
+    Topic => "topic",
+    Errors => "errors",
+    Reviews => "reviews",
+});
 
 /// A source stored as text, including topic IDs for compatibility with existing attempts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -289,16 +271,6 @@ fn not_found() -> AppError {
     AppError::Invalid("Tentativa não encontrada.".into())
 }
 
-fn source_kind(value: &str) -> AppResult<SourceKind> {
-    Ok(match value {
-        "collection" => SourceKind::Collection,
-        "topic" => SourceKind::Topic,
-        "errors" => SourceKind::Errors,
-        "reviews" => SourceKind::Reviews,
-        other => return Err(AppError::Internal(format!("unknown source kind {other:?}"))),
-    })
-}
-
 fn load_header(conn: &Connection, id: &AttemptId) -> AppResult<Header> {
     let row = conn
         .query_row(
@@ -307,9 +279,9 @@ fn load_header(conn: &Connection, id: &AttemptId) -> AppResult<Header> {
             params![id],
             |r| {
                 Ok((
-                    r.get::<_, String>(0)?,
+                    r.get::<_, SourceKind>(0)?,
                     r.get::<_, Option<String>>(1)?,
-                    r.get::<_, String>(2)?,
+                    r.get::<_, FeedbackMode>(2)?,
                     r.get::<_, String>(3)?,
                     r.get::<_, Option<String>>(4)?,
                     r.get::<_, u32>(5)?,
@@ -318,11 +290,10 @@ fn load_header(conn: &Connection, id: &AttemptId) -> AppResult<Header> {
         )
         .optional()?
         .ok_or_else(not_found)?;
-    let source_kind = source_kind(&row.0)?;
     Ok(Header {
-        source_kind,
-        source_ref: SourceRef::from_storage(source_kind, row.1),
-        mode: FeedbackMode::parse(&row.2)?,
+        source_kind: row.0,
+        source_ref: SourceRef::from_storage(row.0, row.1),
+        mode: row.2,
         started_at: row.3,
         finished_at: row.4,
         revision: row.5,
@@ -396,7 +367,7 @@ fn snapshot(conn: &Connection, question_id: &QuestionId) -> AppResult<Snapshot> 
         params![question_id],
         |r| {
             Ok((
-                r.get::<_, String>(0)?,
+                r.get::<_, QuestionType>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, Option<String>>(3)?,
@@ -404,8 +375,6 @@ fn snapshot(conn: &Connection, question_id: &QuestionId) -> AppResult<Snapshot> 
             ))
         },
     )?;
-    let kind = QuestionType::parse(&kind)
-        .ok_or_else(|| AppError::Internal(format!("unknown question type {kind:?}")))?;
     let mut options: Vec<QuestionOption> = serde_json::from_str(&options)?;
     if kind == QuestionType::Multiple {
         options.shuffle(&mut rand::rng());
@@ -431,9 +400,9 @@ pub fn start(conn: &Connection, request: &SessionStart, now: &str) -> AppResult<
             }
             let active: Option<AttemptId> = conn
                 .query_row(
-                    "SELECT id FROM attempts WHERE source_kind = 'collection'
-                       AND source_ref = ?1 AND finished_at IS NULL",
-                    params![collection_id],
+                    "SELECT id FROM attempts WHERE source_kind = ?1
+                       AND source_ref = ?2 AND finished_at IS NULL",
+                    params![SourceKind::Collection, collection_id],
                     |r| r.get(0),
                 )
                 .optional()?;
@@ -491,13 +460,7 @@ pub fn start(conn: &Connection, request: &SessionStart, now: &str) -> AppResult<
     conn.execute(
         "INSERT INTO attempts (id, source_kind, source_ref, feedback_mode, started_at)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-            id,
-            kind.as_str(),
-            source_ref,
-            request.feedback_mode.as_str(),
-            now
-        ],
+        params![id, kind, source_ref, request.feedback_mode, now],
     )?;
     let mut insert = conn.prepare(
         "INSERT INTO responses (attempt_id, position, question_id, snapshot)
@@ -874,7 +837,15 @@ pub struct ActiveAttempt {
 }
 
 /// Columns of the unfinished-attempts query.
-type ActiveRow = (AttemptId, String, Option<String>, String, String, u32, u32);
+type ActiveRow = (
+    AttemptId,
+    SourceKind,
+    Option<String>,
+    FeedbackMode,
+    String,
+    u32,
+    u32,
+);
 
 /// Every unfinished attempt, newest first. Carries counts only, never questions or keys.
 pub fn active(conn: &Connection) -> AppResult<Vec<ActiveAttempt>> {
@@ -901,14 +872,13 @@ pub fn active(conn: &Connection) -> AppResult<Vec<ActiveAttempt>> {
         .collect::<Result<_, _>>()?;
     rows.into_iter()
         .map(
-            |(id, kind, source_ref, mode, started_at, answered, total)| {
-                let source_kind = source_kind(&kind)?;
+            |(id, source_kind, source_ref, feedback_mode, started_at, answered, total)| {
                 let source_ref = SourceRef::from_storage(source_kind, source_ref);
                 Ok(ActiveAttempt {
                     title: title(conn, source_kind, source_ref.as_ref())?,
                     id,
                     source_kind,
-                    feedback_mode: FeedbackMode::parse(&mode)?,
+                    feedback_mode,
                     started_at,
                     answered,
                     total,

@@ -328,7 +328,9 @@ pub fn check_draft(conn: &Connection, draft: &Draft) -> AppResult<DraftCheck> {
             (Some(QuestionType::Boolean), QuestionType::Multiple) => {
                 problem("Você pediu só Certo/Errado, mas esta é de múltipla escolha.".into());
             }
-            _ => {}
+            (Some(QuestionType::Multiple), QuestionType::Multiple)
+            | (Some(QuestionType::Boolean), QuestionType::Boolean)
+            | (None, QuestionType::Multiple | QuestionType::Boolean) => {}
         }
         if !local_ids.insert(question.id.as_str()) {
             problem("O identificador desta questão repete o de outra do pacote.".into());

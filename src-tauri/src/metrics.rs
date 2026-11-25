@@ -21,6 +21,7 @@ use rusqlite::{Connection, named_params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::ai::draft::DraftStatus;
 use crate::attempts::{
     self, ActiveAttempt, FeedbackMode, Outcome, RESPONSE_TIME_SQL, Score, outcome,
 };
@@ -218,10 +219,6 @@ fn tag(value: &Option<String>) -> Option<&str> {
     value.as_deref().map(str::trim).filter(|v| !v.is_empty())
 }
 
-fn mode(query: &PerformanceQuery) -> Option<&'static str> {
-    query.feedback_mode.map(FeedbackMode::as_str)
-}
-
 // ---- Computation -----------------------------------------------------------------------------
 
 /// The whole performance record under the given filters.
@@ -260,7 +257,7 @@ fn strength(conn: &Connection, query: &PerformanceQuery) -> AppResult<Strength> 
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(named_params! {
-        ":mode": mode(query),
+        ":mode": query.feedback_mode,
         ":contest": tag(&query.contest),
         ":board": tag(&query.board),
     })?;
@@ -377,7 +374,7 @@ fn trend(conn: &Connection, query: &PerformanceQuery) -> AppResult<Vec<WeekPoint
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(named_params! {
         ":offset": format!("{:+} minutes", offset_minutes(query)),
-        ":mode": mode(query),
+        ":mode": query.feedback_mode,
         ":contest": tag(&query.contest),
         ":board": tag(&query.board),
     })?;
@@ -480,7 +477,10 @@ pub fn home(conn: &Connection, now: &str) -> AppResult<HomeSummary> {
             &[&now],
         )?,
         due_in_open_attempt: crate::learning::due_in_open_attempt(conn, now)?,
-        drafts_waiting: count("SELECT COUNT(*) FROM drafts WHERE status = 'review'", &[])?,
+        drafts_waiting: count(
+            "SELECT COUNT(*) FROM drafts WHERE status = ?1",
+            &[&DraftStatus::Review],
+        )?,
     })
 }
 

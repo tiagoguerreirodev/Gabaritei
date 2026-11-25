@@ -261,7 +261,7 @@ fn insert_question(conn: &Connection, q: &Question, now: &str) -> AppResult<()> 
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
         params![
             q.id,
-            q.kind.as_str(),
+            q.kind,
             q.stem,
             serde_json::to_string(&q.options)?,
             q.answer_id,
@@ -302,7 +302,7 @@ pub fn load_question(conn: &Connection, id: &QuestionId) -> AppResult<Option<Que
             params![id],
             |row| {
                 Ok((
-                    row.get::<_, String>(0)?,
+                    row.get::<_, QuestionType>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
@@ -331,8 +331,6 @@ pub fn load_question(conn: &Connection, id: &QuestionId) -> AppResult<Option<Que
     else {
         return Ok(None);
     };
-    let kind = QuestionType::parse(&kind)
-        .ok_or_else(|| AppError::Internal(format!("unknown question type {kind:?}")))?;
     let mut stmt = conn.prepare_cached(
         "SELECT t.area, t.matter, t.topic FROM question_topics qt
          JOIN topics t ON t.id = qt.topic_id

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
+use super::draft::DraftStatus;
 use crate::error::{AppError, AppResult};
 use crate::ids::DraftId;
 
@@ -93,9 +94,9 @@ pub fn sweep(conn: &Connection, root: &Path) -> AppResult<usize> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Ok(0); // no folder yet: nothing to sweep
     };
-    let mut statement = conn.prepare("SELECT id FROM drafts WHERE status = 'review'")?;
+    let mut statement = conn.prepare("SELECT id FROM drafts WHERE status = ?1")?;
     let waiting: HashSet<DraftId> = statement
-        .query_map([], |row| row.get(0))?
+        .query_map([DraftStatus::Review], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
     let mut removed = 0;
     for entry in entries.flatten() {

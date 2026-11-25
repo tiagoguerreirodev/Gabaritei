@@ -14,6 +14,7 @@ use super::agent::{Agent, Effort};
 use super::blind_check::{self, VerdictState};
 use super::draft::{self, Draft, DraftStatus};
 use super::generate::{DraftProblem, check_draft, draft_inputs};
+use crate::bank::catalog::CollectionKind;
 use crate::bank::store::import_questions;
 use crate::bank::{PackageQuestion, QuestionType, TopicPath};
 use crate::error::{AppError, AppResult};
@@ -243,8 +244,8 @@ pub fn summary(conn: &Connection, id: &DraftId) -> AppResult<DraftSummary> {
 /// Drafts waiting for review, newest first.
 pub fn waiting(conn: &Connection) -> AppResult<Vec<DraftListItem>> {
     let ids: Vec<DraftId> = conn
-        .prepare("SELECT id FROM drafts WHERE status = 'review' ORDER BY created_at DESC, id")?
-        .query_map([], |row| row.get(0))?
+        .prepare("SELECT id FROM drafts WHERE status = ?1 ORDER BY created_at DESC, id")?
+        .query_map([DraftStatus::Review], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
     ids.iter()
         .map(|id| {
@@ -344,8 +345,14 @@ pub fn import(
     let collection_id = ids::generate::<CollectionId>(&mut rand::rng());
     conn.execute(
         "INSERT INTO collections (id, title, kind, contest, board, created_at)
-         VALUES (?1, ?2, 'generated', NULL, ?3, ?4)",
-        params![collection_id, title, request.board, now],
+         VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
+        params![
+            collection_id,
+            title,
+            CollectionKind::Generated,
+            request.board,
+            now
+        ],
     )?;
     let mut position = 0;
     let mut placed: Vec<&QuestionId> = Vec::new();

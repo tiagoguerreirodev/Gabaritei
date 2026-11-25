@@ -480,8 +480,8 @@ pub fn recover_interrupted(conn: &rusqlite::Connection) -> AppResult<()> {
     })?;
     conn.execute(
         "UPDATE drafts SET blind_check = ?1
-         WHERE status = 'review' AND json_extract(blind_check, '$.pending') = 1",
-        rusqlite::params![failed],
+         WHERE status = ?2 AND json_extract(blind_check, '$.pending') = 1",
+        rusqlite::params![failed, DraftStatus::Review],
     )?;
     Ok(())
 }

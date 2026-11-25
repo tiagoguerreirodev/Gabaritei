@@ -11,7 +11,7 @@ use ts_rs::TS;
 use unicode_normalization::UnicodeNormalization;
 use unicode_normalization::char::is_combining_mark;
 
-use crate::attempts::{ANSWERED_RESPONSE_SQL, FeedbackMode};
+use crate::attempts::{ANSWERED_RESPONSE_SQL, FeedbackMode, SourceKind};
 use crate::error::{AppError, AppResult};
 use crate::ids::{AttemptId, CollectionId, TopicId};
 
@@ -181,18 +181,11 @@ pub enum CollectionKind {
     Practice,
 }
 
-impl CollectionKind {
-    fn parse(value: &str) -> AppResult<Self> {
-        match value {
-            "imported" => Ok(Self::Imported),
-            "generated" => Ok(Self::Generated),
-            "practice" => Ok(Self::Practice),
-            other => Err(AppError::Internal(format!(
-                "unknown collection kind {other:?}"
-            ))),
-        }
-    }
-}
+crate::enum_text::stored_enum!(CollectionKind {
+        Imported => "imported",
+        Generated => "generated",
+        Practice => "practice",
+});
 
 /// Filters and page for the collections list. Empty strings mean "no filter".
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, TS)]
@@ -245,17 +238,17 @@ fn all_collections(conn: &Connection) -> AppResult<Vec<CollectionSummary>> {
         "SELECT c.id, c.title, c.kind, c.contest, c.board, c.created_at,
                 (SELECT COUNT(*) FROM collection_items ci WHERE ci.collection_id = c.id),
                 (SELECT MAX(a.finished_at) FROM attempts a
-                  WHERE a.source_kind = 'collection' AND a.source_ref = c.id),
+                  WHERE a.source_kind = ?1 AND a.source_ref = c.id),
                 EXISTS (SELECT 1 FROM attempts a
-                  WHERE a.source_kind = 'collection' AND a.source_ref = c.id
+                  WHERE a.source_kind = ?1 AND a.source_ref = c.id
                     AND a.finished_at IS NULL)
          FROM collections c",
     )?;
-    let rows = stmt.query_map([], |r| {
+    let rows = stmt.query_map([SourceKind::Collection], |r| {
         Ok((
             r.get::<_, CollectionId>(0)?,
             r.get::<_, String>(1)?,
-            r.get::<_, String>(2)?,
+            r.get::<_, CollectionKind>(2)?,
             r.get::<_, Option<String>>(3)?,
             r.get::<_, Option<String>>(4)?,
             r.get::<_, String>(5)?,
@@ -270,7 +263,7 @@ fn all_collections(conn: &Connection) -> AppResult<Vec<CollectionSummary>> {
         Ok(CollectionSummary {
             id,
             title,
-            kind: CollectionKind::parse(&kind)?,
+            kind,
             contest,
             board,
             questions,
@@ -370,7 +363,7 @@ pub fn collection(conn: &Connection, id: &CollectionId) -> AppResult<CollectionD
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
+                    r.get::<_, CollectionKind>(1)?,
                     r.get::<_, Option<String>>(2)?,
                     r.get::<_, Option<String>>(3)?,
                     r.get::<_, String>(4)?,
@@ -388,15 +381,15 @@ pub fn collection(conn: &Connection, id: &CollectionId) -> AppResult<CollectionD
                    AND {ANSWERED_RESPONSE_SQL}),
                 (SELECT COUNT(*) FROM responses r WHERE r.attempt_id = a.id)
          FROM attempts a
-         WHERE a.source_kind = 'collection' AND a.source_ref = ?1
+         WHERE a.source_kind = ?1 AND a.source_ref = ?2
          ORDER BY a.started_at DESC, a.id DESC",
     );
     let mut stmt = conn.prepare(&sql)?;
     let attempts = stmt
-        .query_map(params![id], |r| {
+        .query_map(params![SourceKind::Collection, id], |r| {
             Ok((
                 r.get::<_, AttemptId>(0)?,
-                r.get::<_, String>(1)?,
+                r.get::<_, FeedbackMode>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, Option<String>>(3)?,
                 r.get::<_, u32>(4)?,
@@ -404,8 +397,7 @@ pub fn collection(conn: &Connection, id: &CollectionId) -> AppResult<CollectionD
             ))
         })?
         .map(|row| {
-            let (id, mode, started_at, finished_at, answered, total) = row?;
-            let feedback_mode = FeedbackMode::parse(&mode)?;
+            let (id, feedback_mode, started_at, finished_at, answered, total) = row?;
             Ok(AttemptListItem {
                 id,
                 feedback_mode,
@@ -419,7 +411,7 @@ pub fn collection(conn: &Connection, id: &CollectionId) -> AppResult<CollectionD
     Ok(CollectionDetail {
         id: id.to_owned(),
         title,
-        kind: CollectionKind::parse(&kind)?,
+        kind,
         contest,
         board,
         questions,

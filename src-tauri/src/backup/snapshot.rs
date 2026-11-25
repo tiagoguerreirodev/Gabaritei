@@ -370,7 +370,7 @@ pub fn stage(dir: &Path) -> AppResult<Staged> {
     }
     db::prepare_restored(&mut conn).map_err(|error| match error {
         AppError::Invalid(_) => error,
-        _ => corrupt(),
+        AppError::Internal(_) => corrupt(),
     })?;
     if read_schema(&conn).map_err(|_| corrupt())? != expected_schema()? {
         return Err(corrupt());

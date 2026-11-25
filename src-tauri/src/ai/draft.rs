@@ -24,24 +24,11 @@ pub enum DraftStatus {
     Discarded,
 }
 
-impl DraftStatus {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Review => "review",
-            Self::Imported => "imported",
-            Self::Discarded => "discarded",
-        }
-    }
-
-    fn parse(value: &str) -> AppResult<Self> {
-        match value {
-            "review" => Ok(Self::Review),
-            "imported" => Ok(Self::Imported),
-            "discarded" => Ok(Self::Discarded),
-            other => Err(AppError::Internal(format!("unknown draft status {other}"))),
-        }
-    }
-}
+crate::enum_text::stored_enum!(DraftStatus {
+        Review => "review",
+        Imported => "imported",
+        Discarded => "discarded",
+});
 
 /// Who wrote a package and how long it took (the draft's provenance).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -87,7 +74,7 @@ pub fn insert(conn: &Connection, draft: &Draft) -> AppResult<()> {
         params![
             draft.id,
             draft.created_at,
-            draft.status.as_str(),
+            draft.status,
             serde_json::to_string(&draft.request)?,
             serde_json::to_string(&draft.package)?,
             draft
@@ -108,7 +95,7 @@ pub fn load(conn: &Connection, id: &DraftId) -> AppResult<Draft> {
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
+                    row.get::<_, DraftStatus>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, Option<String>>(4)?,
@@ -120,7 +107,7 @@ pub fn load(conn: &Connection, id: &DraftId) -> AppResult<Draft> {
     Ok(Draft {
         id: id.to_owned(),
         created_at: row.0,
-        status: DraftStatus::parse(&row.1)?,
+        status: row.1,
         request: serde_json::from_str(&row.2)?,
         package: serde_json::from_str(&row.3)?,
         blind_check: row.4.map(|text| serde_json::from_str(&text)).transpose()?,
@@ -134,16 +121,16 @@ pub fn set_blind_check(
 ) -> AppResult<()> {
     // Only a draft still waiting for review: one that was imported or discarded stays as it is.
     conn.execute(
-        "UPDATE drafts SET blind_check = ?2 WHERE id = ?1 AND status = 'review'",
-        params![id, serde_json::to_string(verdicts)?],
+        "UPDATE drafts SET blind_check = ?2 WHERE id = ?1 AND status = ?3",
+        params![id, serde_json::to_string(verdicts)?, DraftStatus::Review],
     )?;
     Ok(())
 }
 
 pub fn set_package(conn: &Connection, id: &DraftId, package: &Package) -> AppResult<()> {
     conn.execute(
-        "UPDATE drafts SET package = ?2 WHERE id = ?1 AND status = 'review'",
-        params![id, serde_json::to_string(package)?],
+        "UPDATE drafts SET package = ?2 WHERE id = ?1 AND status = ?3",
+        params![id, serde_json::to_string(package)?, DraftStatus::Review],
     )?;
     Ok(())
 }
@@ -152,8 +139,8 @@ pub fn set_package(conn: &Connection, id: &DraftId, package: &Package) -> AppRes
 /// can never be overwritten by a late write.
 pub fn set_status(conn: &Connection, id: &DraftId, status: DraftStatus) -> AppResult<()> {
     let changed = conn.execute(
-        "UPDATE drafts SET status = ?2 WHERE id = ?1 AND status = 'review'",
-        params![id, status.as_str()],
+        "UPDATE drafts SET status = ?2 WHERE id = ?1 AND status = ?3",
+        params![id, status, DraftStatus::Review],
     )?;
     if changed == 0 {
         return Err(AppError::Invalid(

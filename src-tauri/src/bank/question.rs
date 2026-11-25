@@ -15,6 +15,7 @@ use ts_rs::TS;
 
 use super::identity::{fingerprint, js_trim, option_id};
 use crate::ids::{DraftId, QuestionId};
+use crate::images::ImageFormat;
 
 /// Number of options in a multiple-choice question.
 pub const MULTIPLE_OPTIONS: usize = 5;
@@ -44,22 +45,10 @@ pub enum QuestionType {
     Boolean,
 }
 
-impl QuestionType {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Multiple => "multiple",
-            Self::Boolean => "boolean",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "multiple" => Some(Self::Multiple),
-            "boolean" => Some(Self::Boolean),
-            _ => None,
-        }
-    }
-}
+crate::enum_text::stored_enum!(QuestionType {
+        Multiple => "multiple",
+        Boolean => "boolean",
+});
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -169,14 +158,9 @@ fn too_long(text: &str, max: usize) -> bool {
     text.chars().count() > max
 }
 
-/// `^[a-f0-9]{24,64}\.(png|jpg|jpeg|webp)$`
+/// Whether a name matches the pattern allowed in the image store.
 pub fn is_valid_image_name(name: &str) -> bool {
-    let Some((stem, extension)) = name.split_once('.') else {
-        return false;
-    };
-    (24..=64).contains(&stem.len())
-        && stem.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-        && matches!(extension, "png" | "jpg" | "jpeg" | "webp")
+    ImageFormat::from_name(name).is_some()
 }
 
 /// Every rule a question must follow. Returns pt-BR problems; empty means valid.

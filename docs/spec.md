@@ -51,9 +51,10 @@ All UI text is in Portuguese. There are no accounts and no server.
 ## 3. Feature set
 
 ### 3.1 Bank and taxonomy
-- **Topic tree:** area › matter › topic. Browse it with counts of questions, answered questions and accuracy.
+- **Topic tree:** area › matter › topic. Every level shows its question count, coverage and an achievement bar, computed like topic strength (§3.4). Each topic has a *Resolver* button that opens the session dialog.
 - **Question fields:** `type` (`multiple` or `boolean`), stem, options (5 for multiple choice, Certo/Errado for boolean), answer key, explanation, references, topics (one or more paths), image (migrated only) with alt text, `annulled`, provenance (agent, model, date, blind-check verdict). Questions carry no contest or board of their own; see Collections below.
 - **Collections** are fixed question lists with optional contest and board tags: the 352 migrated *cadernos*, plus one collection per approved package.
+- **Collection cards** show the tags, the question count, the date and achievement of the latest finished attempt (scored with the current keys), and one button: *Resolver* to start a session or *Continuar* for the attempt in progress.
 - **Deduplication** works as today (`N-C5`): canonical option IDs plus a content fingerprint. An answer-key conflict blocks import.
 - **Dropped:** `difficulty`, generic `tags`, `objectives`, the versions table, syllabus, taxonomy merges and aliases (`U-C1`, `U-C2`, `U-C6`, `O-C3`).
 

@@ -9,14 +9,6 @@
   text-decoration: underline;
 }
 
-.tree-leaf .tree-name {
-  flex: 1;
-}
-
-.tree-leaf .link-button {
-  font-size: var(--text-sm);
-}
-
 .modal-footer .primary:only-child {
   margin-left: auto;
 }

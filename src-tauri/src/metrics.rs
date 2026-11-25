@@ -15,7 +15,7 @@
 //! * **Contest and board** filters match questions that belong to a collection with that tag.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use rusqlite::{Connection, named_params};
 use serde::{Deserialize, Serialize};
@@ -58,6 +58,8 @@ pub struct PerformanceQuery {
 pub struct GroupStats {
     /// Outcomes of the latest answers: achievement and accuracy live here.
     pub score: Score,
+    /// Distinct questions in the group, annulled ones included.
+    pub questions: u32,
     /// Questions answered (correct + wrong) under the current key.
     pub answered: u32,
     /// Questions in the group that aren't annulled.
@@ -164,6 +166,7 @@ impl Acc {
             coverage: Score::ratio(answered, self.available),
             small_sample: answered < SMALL_SAMPLE,
             score: self.score,
+            questions: u32::try_from(self.seen.len()).unwrap_or(u32::MAX),
             answered,
             available: self.available,
         }
@@ -379,19 +382,18 @@ fn sort_areas(areas: &mut [AreaStats]) {
     areas.sort_by(|a, b| weakest_first((&a.stats, &a.name), (&b.stats, &b.name)));
 }
 
-/// *Acerto entre respondidas* per topic id for the Banco tree, over all finished attempts.
-/// Topics without an answer are absent.
-pub fn topic_accuracy(conn: &Connection) -> AppResult<HashMap<TopicId, f64>> {
-    let mut topics = HashMap::<TopicId, Score>::new();
-    visit_topic_results(conn, &PerformanceQuery::default(), |_, topic_id, _, row| {
-        if let Some(outcome) = row.outcome {
-            topics.entry(topic_id).or_default().record(outcome);
-        }
-    })?;
-    Ok(topics
-        .into_iter()
-        .filter_map(|(id, score)| Some((id, score.accuracy?)))
-        .collect())
+/// Strength of every area, matter and topic for the Banco tree, over all finished attempts
+/// in either mode. Unlike [`performance`], groups keep name order.
+pub fn bank_strength(conn: &Connection) -> AppResult<Vec<AreaStats>> {
+    let mut groups = StrengthGroups::default();
+    visit_topic_results(
+        conn,
+        &PerformanceQuery::default(),
+        |id, topic_id, path, row| {
+            groups.add(id, topic_id, path, row);
+        },
+    )?;
+    Ok(build_areas(groups.areas))
 }
 
 fn trend(conn: &Connection, query: &PerformanceQuery) -> AppResult<Vec<WeekPoint>> {

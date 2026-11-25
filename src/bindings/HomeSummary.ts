@@ -2,6 +2,7 @@
 import type { ActiveAttempt } from "./ActiveAttempt";
 import type { AreaSummary } from "./AreaSummary";
 import type { GroupStats } from "./GroupStats";
+import type { WeakTopic } from "./WeakTopic";
 
 /**
  * The home page: numbers and what is waiting for the user.
@@ -15,6 +16,11 @@ questions: number, overall: GroupStats,
  * Weakest first.
  */
 areas: Array<AreaSummary>, 
+/**
+ * The topic with the lowest achievement among those with something evaluated: the
+ * home page suggests training it when nothing more urgent waits.
+ */
+weakestTopic: WeakTopic | null, 
 /**
  * Unfinished attempts to resume, newest first.
  */

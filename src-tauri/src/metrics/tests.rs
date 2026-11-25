@@ -851,6 +851,23 @@ fn home_summarizes_the_bank() {
 }
 
 #[test]
+fn home_suggests_the_weakest_evaluated_topic() {
+    let weakest = home_with_bank_activity().weakest_topic.map(|t| t.topic);
+    assert_eq!(
+        weakest.as_deref(),
+        Some("Controle"),
+        "Crase has nothing evaluated"
+    );
+}
+
+#[test]
+fn home_has_no_weakest_topic_before_any_answer() {
+    let f = fixture(&[("q1", &[D])]);
+    let home = f.db.with(|c| home(c, T0)).unwrap();
+    assert_eq!(home.weakest_topic, None);
+}
+
+#[test]
 fn home_summarizes_due_reviews() {
     let home = home_with_bank_activity();
     assert_eq!((home.due_reviews, home.due_in_open_attempt), (1, 1));

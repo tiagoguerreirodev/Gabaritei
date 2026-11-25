@@ -465,6 +465,9 @@ pub struct HomeSummary {
     pub overall: GroupStats,
     /// Weakest first.
     pub areas: Vec<AreaSummary>,
+    /// The topic with the lowest achievement among those with something evaluated: the
+    /// home page suggests training it when nothing more urgent waits.
+    pub weakest_topic: Option<WeakTopic>,
     /// Unfinished attempts to resume, newest first.
     pub active_attempts: Vec<ActiveAttempt>,
     /// Spaced-repetition reviews due at `now` (counts rows of `review_state`, filled by #21).
@@ -478,17 +481,22 @@ pub struct HomeSummary {
 
 /// The home summary at `now` (an RFC 3339 UTC timestamp).
 pub fn home(conn: &Connection, now: &str) -> AppResult<HomeSummary> {
-    let mut overall = Acc::default();
-    let mut area_groups = BTreeMap::<String, Acc>::new();
-    visit_topic_results(conn, &PerformanceQuery::default(), |id, _, path, row| {
-        overall.add(id, row);
-        area_groups.entry(path.area).or_default().add(id, row);
-    })?;
-    let mut areas: Vec<_> = area_groups
+    let mut groups = StrengthGroups::default();
+    visit_topic_results(
+        conn,
+        &PerformanceQuery::default(),
+        |id, topic_id, path, row| {
+            groups.add(id, topic_id, path, row);
+        },
+    )?;
+    let overall = groups.overall.stats();
+    let areas = build_areas(groups.areas);
+    let weakest_topic = weakest_topics(&areas).into_iter().next();
+    let mut areas: Vec<_> = areas
         .into_iter()
-        .map(|(name, group)| AreaSummary {
-            name,
-            stats: group.stats(),
+        .map(|area| AreaSummary {
+            name: area.name,
+            stats: area.stats,
         })
         .collect();
     areas.sort_by(|a, b| weakest_first((&a.stats, &a.name), (&b.stats, &b.name)));
@@ -497,8 +505,9 @@ pub fn home(conn: &Connection, now: &str) -> AppResult<HomeSummary> {
     };
     Ok(HomeSummary {
         questions: count("SELECT COUNT(*) FROM questions", &[])?,
-        overall: overall.stats(),
+        overall,
         areas,
+        weakest_topic,
         active_attempts: attempts::active(conn)?,
         due_reviews: crate::learning::due_count(conn, now)?,
         due_in_open_attempt: crate::learning::due_in_open_attempt(conn, now)?,

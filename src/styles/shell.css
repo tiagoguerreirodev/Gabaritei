@@ -428,3 +428,12 @@ button {
     padding: var(--space-6) var(--space-5);
   }
 }
+
+/* Focus mode (an unfinished attempt is open): no sidebar, the page is only the exam. */
+.shell.focus-mode {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.shell .sidebar[hidden] {
+  display: none;
+}

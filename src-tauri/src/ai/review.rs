@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::agent::{Agent, Effort};
-use super::blind_check::{self, VerdictState};
+use super::blind_check::{BlindCheck, VerdictState};
 use super::draft::{self, Draft, DraftStatus};
 use super::draft_files;
 use super::generate::{DraftCheck, DraftProblem, check_draft, draft_inputs};
@@ -161,17 +161,16 @@ struct ReviewStates {
 }
 
 fn states(draft: &Draft) -> AppResult<ReviewStates> {
-    let check = blind_check::stored(draft)?;
-    let failed = check.as_ref().and_then(|c| c.failed.clone());
-    let pending = check.as_ref().is_some_and(|c| c.pending);
+    let check = draft.blind_check.as_ref();
+    let failed = check.and_then(BlindCheck::failure).map(str::to_owned);
+    let pending = check.is_some_and(BlindCheck::is_pending);
     let lines = draft
         .package
         .questions
         .iter()
         .map(|question| {
             check
-                .as_ref()
-                .and_then(|c| c.verdicts.iter().find(|v| v.question_id == question.id))
+                .and_then(|c| c.verdicts().iter().find(|v| v.question_id == question.id))
                 .map_or(LineState::Unchecked, |verdict| match verdict.state {
                     VerdictState::Agreed => LineState::Agreed,
                     VerdictState::Fixed => LineState::Fixed,

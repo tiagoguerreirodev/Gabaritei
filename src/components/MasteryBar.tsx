@@ -1,4 +1,4 @@
-import { formatPercent } from "../pages/solve/format";
+import { formatPercent } from "../format";
 
 /**
  * Achievement of one group as a horizontal bar plus its number. The value is the backend's

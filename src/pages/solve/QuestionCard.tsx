@@ -1,11 +1,16 @@
 import { For, Show, createEffect, createSignal, on, onCleanup } from "solid-js";
+import type { FeedbackMode } from "../../bindings/FeedbackMode";
 import type { RecheckView } from "../../bindings/RecheckView";
 import type { ResponseView } from "../../bindings/ResponseView";
 import QuestionImage from "../../components/QuestionImage";
 import RichText from "../../components/RichText";
-import { optionLetters, outcomeText } from "./format";
+import { optionLetters } from "../../format";
+import { outcomeText } from "../../labels";
 import RecheckPanel from "./RecheckPanel";
+import type { OptionAction } from "./useResolverShortcuts";
 import { showError } from "../../components/toasts";
+
+const ANSWER_POP_MS = 600;
 
 /**
  * One question: stem, image, options with eliminate, flag, and, once revealed, the key and
@@ -16,23 +21,21 @@ export default function QuestionCard(props: {
   question: ResponseView;
   number: number;
   total: number;
-  /** No changes allowed (finished attempt, or a revealed Study question). */
-  locked: boolean;
-  /** The attempt is finished: the flag can't change either. */
-  finished: boolean;
-  /** `X` was pressed: the next letter eliminates instead of answering. */
-  eliminating: boolean;
+  feedbackMode: FeedbackMode;
+  finishedAt: string | null;
+  /** `X` changes the next shortcut from answering to eliminating. */
+  optionAction: OptionAction;
   /** Estudo: the option marked but not yet confirmed. */
   pending: string | null;
-  /** Estudo: choosing only marks an option; the button or Enter sends the answer. */
-  confirmRequired: boolean;
   /** Chooses an option: answers it, or only marks it when confirmation is required. */
   onAnswer: (optionId: string) => void;
   onConfirm: () => void;
   onEliminate: (optionId: string) => void;
   onFlag: () => void;
-  /** Annuls the revealed question, or restores it with `false`. */
-  onAnnul: (annulled: boolean) => void;
+  /** Annuls the revealed question. */
+  onAnnul: () => void;
+  /** Restores an annulled question. */
+  onUnannul: () => void;
   /** Asks the AI to re-check the key; resolves with its proposal. */
   onRecheck: () => Promise<RecheckView>;
   onRecheckApply: () => void;
@@ -41,6 +44,8 @@ export default function QuestionCard(props: {
   /** Asks the AI to write the missing explanation. */
   onExplain: () => Promise<void>;
 }) {
+  const finished = () => props.finishedAt !== null;
+  const locked = () => finished() || props.question.reveal !== null;
   let revealSection: HTMLElement | undefined;
   // The right-answer pop plays only while this is set: right after a confirmation, never on
   // navigation or when reviewing a finished attempt.
@@ -78,11 +83,11 @@ export default function QuestionCard(props: {
     on(
       () => [props.question.position, props.question.reveal === null] as const,
       ([position, hidden], previous) => {
-        if (previous && previous[0] === position && previous[1] && !hidden && !props.finished) {
+        if (previous && previous[0] === position && previous[1] && !hidden && !finished()) {
           queueMicrotask(() => revealSection?.focus());
           setPopping(true);
           clearTimeout(popTimer);
-          popTimer = setTimeout(() => setPopping(false), 600);
+          popTimer = setTimeout(() => setPopping(false), ANSWER_POP_MS);
         }
       },
     ),
@@ -105,7 +110,7 @@ export default function QuestionCard(props: {
           type="button"
           class="flag-button"
           aria-pressed={props.question.flagged}
-          disabled={props.finished}
+          disabled={finished()}
           onClick={() => props.onFlag()}
           title="Marcar para revisar (F)"
         >
@@ -119,7 +124,7 @@ export default function QuestionCard(props: {
           <QuestionImage name={image()} alt={props.question.imageAlt ?? "Figura de apoio"} />
         )}
       </Show>
-      <Show when={props.eliminating}>
+      <Show when={props.optionAction === "eliminate"}>
         <p class="hint" role="status">
           Escolha a letra da alternativa a eliminar.
         </p>
@@ -129,7 +134,7 @@ export default function QuestionCard(props: {
           {(option, index) => {
             const letter = () => letters()[index()];
             // A mark that was never confirmed is not an answer once the question is locked.
-            const marked = () => !props.locked && props.pending === option.id;
+            const marked = () => !locked() && props.pending === option.id;
             const selected = () => props.question.choice === option.id || marked();
             const eliminated = () => props.question.eliminated.includes(option.id);
             const isKey = () => reveal()?.answerId === option.id;
@@ -151,7 +156,7 @@ export default function QuestionCard(props: {
                   class="option-choose"
                   data-option-id={option.id}
                   aria-pressed={selected()}
-                  disabled={props.locked}
+                  disabled={locked()}
                   onClick={() => props.onAnswer(option.id)}
                 >
                   <span class="option-bubble">
@@ -174,7 +179,7 @@ export default function QuestionCard(props: {
                   class="icon-button option-eliminate"
                   aria-label={`${eliminated() ? "Restaurar" : "Eliminar"} alternativa ${letter()}`}
                   aria-pressed={eliminated()}
-                  disabled={props.locked}
+                  disabled={locked()}
                   onClick={() => props.onEliminate(option.id)}
                 >
                   ✕
@@ -184,7 +189,7 @@ export default function QuestionCard(props: {
           }}
         </For>
       </ol>
-      <Show when={props.confirmRequired && !props.locked}>
+      <Show when={props.feedbackMode === "study" && !locked()}>
         <div class="confirm-row">
           <button
             type="button"
@@ -249,7 +254,10 @@ export default function QuestionCard(props: {
               onCancel={props.onAiCancel}
             />
             <div class="reveal-actions">
-              <button type="button" onClick={() => props.onAnnul(!revealed().annulled)}>
+              <button
+                type="button"
+                onClick={() => (revealed().annulled ? props.onUnannul() : props.onAnnul())}
+              >
                 {revealed().annulled ? "Desfazer anulação" : "Anular questão"}
               </button>
               <span class="muted">

@@ -46,7 +46,9 @@ export default function GenerationProgress() {
         </For>
       </ol>
       <p class="muted">A etapa de resolver contestações só acontece se houver contestações.</p>
-      <CancelGeneration />
+      <Show when={generationStatus()?.canCancel}>
+        <CancelGeneration />
+      </Show>
     </div>
   );
 }

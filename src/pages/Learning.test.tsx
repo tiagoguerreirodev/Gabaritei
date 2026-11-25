@@ -11,6 +11,7 @@ const past = new Date(Date.now() - 3 * 86_400_000).toISOString();
 
 const overview: LearningOverview = {
   due: 1,
+  refreshAt: null,
   dueInOpenAttempt: 0,
   upcoming: 1,
   errors: 1,
@@ -20,7 +21,7 @@ const overview: LearningOverview = {
     {
       questionId: "q-secret-id",
       topics: [path],
-      dueAt: past,
+      review: { at: past, state: "overdue" },
       isError: true,
       lastAttemptId: "att-3",
       lastAnsweredAt: past,
@@ -28,7 +29,7 @@ const overview: LearningOverview = {
     {
       questionId: "q2",
       topics: [{ area: "Português", matter: "Gramática", topic: "Crase" }],
-      dueAt: future,
+      review: { at: future, state: "upcoming" },
       isError: false,
       lastAttemptId: "att-4",
       lastAnsweredAt: past,
@@ -70,9 +71,7 @@ describe("Erros e revisões", () => {
   });
 
   it("says a review due later today is due today", async () => {
-    const later = new Date();
-    later.setHours(23, 59, 0, 0);
-    const soon = { ...overview.items[1]!, dueAt: later.toISOString() };
+    const soon = { ...overview.items[1]!, review: { at: past, state: "today" } };
     mockIPC(() => ({ ...overview, items: [soon] }));
     render(() => <Learning />);
     expect(await screen.findByText(/Vence hoje/)).toBeVisible();

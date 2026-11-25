@@ -320,10 +320,10 @@ fn run_is_allowed_when_the_agent_is_missing_from_the_catalog() {
 #[test]
 fn cached_is_empty_until_the_lists_are_loaded() {
     let (cache, loads) = cache_with(ready(Agent::Codex, "m1"), Duration::ZERO);
-    assert!(cache.cached().is_none());
+    assert!(cache.cached(&CliPaths::default()).is_none());
     assert_eq!(loads.load(Ordering::SeqCst), 0);
     cache.get(&CliPaths::default());
-    assert!(cache.cached().is_some());
+    assert!(cache.cached(&CliPaths::default()).is_some());
 }
 
 #[test]
@@ -333,13 +333,18 @@ fn loaded_lists_block_a_stale_role_and_unloaded_ones_never_load_anything() {
     let listed = role(Agent::Codex, "m1", Effort::Low);
 
     // Nothing loaded yet: no check, and no CLI call from a command that must not block.
-    assert!(ensure_cached_listed(&cache, &[(&stale, "Gerar questões")]).is_ok());
+    assert!(
+        ensure_cached_listed(&cache, &CliPaths::default(), &[(&stale, "Gerar questões")]).is_ok()
+    );
     assert_eq!(loads.load(Ordering::SeqCst), 0);
 
     cache.get(&CliPaths::default());
-    assert!(ensure_cached_listed(&cache, &[(&listed, "Gerar questões")]).is_ok());
+    assert!(
+        ensure_cached_listed(&cache, &CliPaths::default(), &[(&listed, "Gerar questões")]).is_ok()
+    );
     let error = ensure_cached_listed(
         &cache,
+        &CliPaths::default(),
         &[
             (&listed, "Gerar questões"),
             (&stale, "Conferência às cegas"),
@@ -362,14 +367,14 @@ fn cached_does_not_wait_for_a_load_in_progress() {
     };
     std::thread::sleep(Duration::from_millis(80));
     let started = std::time::Instant::now();
-    assert!(cache.cached().is_none());
+    assert!(cache.cached(&CliPaths::default()).is_none());
     assert!(
         started.elapsed() < Duration::from_millis(200),
         "cached() waited {:?} for the load",
         started.elapsed()
     );
     loading.join().unwrap();
-    assert!(cache.cached().is_some());
+    assert!(cache.cached(&CliPaths::default()).is_some());
 }
 
 #[test]
@@ -377,7 +382,7 @@ fn clear_forgets_the_lists_so_the_next_get_reads_them_again() {
     let (cache, loads) = cache_with(ready(Agent::Codex, "m1"), Duration::ZERO);
     cache.get(&CliPaths::default());
     cache.clear();
-    assert!(cache.cached().is_none());
+    assert!(cache.cached(&CliPaths::default()).is_none());
     cache.get(&CliPaths::default());
     assert_eq!(loads.load(Ordering::SeqCst), 2);
 }
@@ -415,4 +420,131 @@ fn fast_is_allowed_when_the_list_is_unavailable() {
         models: Vec::new(),
     };
     assert!(ensure_listed(&catalog_of(unavailable), &config, "Gerar questões").is_ok());
+}
+
+#[test]
+fn a_catalog_for_an_old_cli_path_does_not_supply_editor_choices() {
+    let (cache, _) = cache_with(ready(Agent::Codex, "m1"), Duration::ZERO);
+    cache.get(&CliPaths::default());
+    let changed = CliPaths {
+        codex: Some("/opt/new-codex".into()),
+        claude: None,
+    };
+    let config = role(Agent::Codex, "new-model", Effort::Low);
+
+    assert_eq!(
+        cache.role_options(&changed, &config),
+        Catalog::default().role_options(&config)
+    );
+}
+
+#[test]
+fn fallback_efforts_follow_each_agents_cli() {
+    assert_eq!(fallback_efforts(Agent::Codex), Effort::ALL);
+    use Effort::{High, Low, Max, Medium, Xhigh};
+    assert_eq!(
+        fallback_efforts(Agent::Claude),
+        [Low, Medium, High, Xhigh, Max]
+    );
+}
+
+#[test]
+fn a_model_with_no_efforts_offers_other_models_efforts_in_rank_order() {
+    let mut list = ready(Agent::Codex, "bare");
+    list.models[0].efforts.clear();
+    list.models.extend([
+        ModelOption {
+            id: "a".into(),
+            label: "A".into(),
+            efforts: vec![Effort::Ultra, Effort::Medium],
+            supports_fast: false,
+        },
+        ModelOption {
+            id: "b".into(),
+            label: "B".into(),
+            efforts: vec![Effort::High, Effort::Medium],
+            supports_fast: false,
+        },
+    ]);
+    let config = role(Agent::Codex, "bare", Effort::Max);
+
+    assert_eq!(
+        catalog_of(list).role_options(&config).efforts,
+        [Effort::Medium, Effort::High, Effort::Ultra]
+    );
+}
+
+#[test]
+fn model_switch_keeps_a_supported_effort() {
+    let catalog = catalog_of(ready(Agent::Codex, "m1"));
+    let config = role(Agent::Codex, "old", Effort::High);
+    let next = catalog.change_role(&config, &RoleChange::Model { model: "m1".into() });
+
+    assert_eq!(next, role(Agent::Codex, "m1", Effort::High));
+}
+
+#[test]
+fn an_equidistant_effort_switch_chooses_the_higher_effort() {
+    let catalog = catalog_of(ready(Agent::Codex, "m1"));
+    let config = role(Agent::Codex, "old", Effort::Medium);
+    let next = catalog.change_role(&config, &RoleChange::Model { model: "m1".into() });
+
+    assert_eq!(next.effort, Effort::High);
+}
+
+#[test]
+fn model_switch_clears_fast_when_the_next_model_has_no_fast_tier() {
+    let catalog = fast_catalog(false);
+    let mut config = role(Agent::Codex, "old", Effort::High);
+    config.fast = true;
+    let next = catalog.change_role(&config, &RoleChange::Model { model: "m1".into() });
+
+    assert!(!next.fast);
+}
+
+#[test]
+fn model_switch_keeps_fast_when_the_next_model_supports_it() {
+    let catalog = fast_catalog(true);
+    let mut config = role(Agent::Codex, "old", Effort::High);
+    config.fast = true;
+    let next = catalog.change_role(&config, &RoleChange::Model { model: "m1".into() });
+
+    assert!(next.fast);
+}
+
+#[test]
+fn agent_switch_without_a_list_leaves_the_model_for_the_user_to_type() {
+    let catalog = catalog_of(ready(Agent::Codex, "m1"));
+    let mut config = role(Agent::Codex, "m1", Effort::Ultra);
+    config.fast = true;
+    let next = catalog.change_role(
+        &config,
+        &RoleChange::Agent {
+            agent: Agent::Claude,
+        },
+    );
+
+    assert_eq!(next, role(Agent::Claude, "", Effort::Max));
+}
+
+#[test]
+fn fast_stays_visible_when_model_support_is_unknown() {
+    let catalog = Catalog::default();
+    let config = role(Agent::Codex, "m1", Effort::Low);
+
+    assert!(catalog.role_options(&config).show_fast);
+}
+
+#[test]
+fn a_model_typed_without_a_list_keeps_its_effort() {
+    let catalog = Catalog::default();
+    let config = role(Agent::Claude, "old", Effort::Max);
+
+    let next = catalog.change_role(
+        &config,
+        &RoleChange::Model {
+            model: "new".into(),
+        },
+    );
+    assert_eq!(next, role(Agent::Claude, "new", Effort::Max));
 }

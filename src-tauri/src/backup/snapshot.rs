@@ -16,6 +16,7 @@ use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::RestoreCleanup;
 use crate::bank::question::is_valid_image_name;
 use crate::db::{self, Database};
 use crate::error::{AppError, AppResult};
@@ -26,8 +27,12 @@ pub const MANIFEST_FILE: &str = "manifest.json";
 pub const DATABASE_FILE: &str = "gabaritei.sqlite";
 /// Images folder inside a snapshot.
 pub const IMAGES_DIR: &str = "images";
+/// Prefix of image paths in the manifest and the data file.
+pub(super) const IMAGES_PREFIX: &str = "images/";
 /// Version of the manifest layout.
 pub const FORMAT: u32 = 1;
+/// SQLite pages transferred by each step of an online backup.
+const SQLITE_PAGE_BATCH: i32 = 256;
 
 /// Shown whenever a snapshot can't be trusted. Nothing was changed.
 pub const CORRUPT_MESSAGE: &str = "Os dados estão corrompidos ou incompletos. Nada foi alterado.";
@@ -87,7 +92,7 @@ fn copy_database(conn: &Connection, dest: &Path) -> AppResult<()> {
     let mut target = Connection::open(dest)?;
     {
         let backup = Backup::new(conn, &mut target)?;
-        backup.run_to_completion(256, Duration::ZERO, None)?;
+        backup.run_to_completion(SQLITE_PAGE_BATCH, Duration::ZERO, None)?;
     }
     let _mode: String =
         target.pragma_update_and_check(None, "journal_mode", "delete", |row| row.get(0))?;
@@ -158,7 +163,7 @@ fn copy_new_images(
             .filter_map(Result::ok)
             .filter_map(|entry| entry.file_name().into_string().ok())
             .filter(|name| is_valid_image_name(name))
-            .filter(|name| !done.contains(format!("{IMAGES_DIR}/{name}").as_str()))
+            .filter(|name| !done.contains(format!("{IMAGES_PREFIX}{name}").as_str()))
             .collect::<Vec<_>>(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(error) => return Err(error.into()),
@@ -170,7 +175,7 @@ fn copy_new_images(
         fs::copy(images_dir.join(&name), &target)?;
         let (sha256, size) = hash_file(&target)?;
         files.push(ManifestFile {
-            path: format!("{IMAGES_DIR}/{name}"),
+            path: format!("{IMAGES_PREFIX}{name}"),
             sha256,
             size,
         });
@@ -229,7 +234,7 @@ pub fn read_manifest(dir: &Path) -> AppResult<Manifest> {
 pub fn is_allowed_path(path: &str) -> bool {
     path == DATABASE_FILE
         || path
-            .strip_prefix("images/")
+            .strip_prefix(IMAGES_PREFIX)
             .is_some_and(is_valid_image_name)
 }
 
@@ -368,9 +373,9 @@ pub fn stage(dir: &Path) -> AppResult<Staged> {
     if foreign != 0 {
         return Err(corrupt());
     }
-    db::prepare_restored(&mut conn).map_err(|error| match error {
+    db::prepare_connection(&mut conn).map_err(|error| match error {
         AppError::Invalid(_) => error,
-        _ => corrupt(),
+        AppError::Internal(_) => corrupt(),
     })?;
     if read_schema(&conn).map_err(|_| corrupt())? != expected_schema()? {
         return Err(corrupt());
@@ -385,7 +390,7 @@ pub fn stage(dir: &Path) -> AppResult<Staged> {
 pub fn copy_images(images_dir: &Path, dir: &Path, staged: &Staged) -> AppResult<()> {
     fs::create_dir_all(images_dir)?;
     for file in &staged.manifest.files {
-        let Some(name) = file.path.strip_prefix("images/") else {
+        let Some(name) = file.path.strip_prefix(IMAGES_PREFIX) else {
             continue;
         };
         let target = images_dir.join(name);
@@ -408,9 +413,8 @@ pub fn copy_images(images_dir: &Path, dir: &Path, staged: &Staged) -> AppResult<
 /// place (see [`copy_images`]), so the restored database never points at a missing file, and
 /// [`ensure_replaceable`] must have passed.
 ///
-/// On the staged copy only, this computer's own settings are put back, what derives from the
-/// answers is rebuilt, and a blind check that was running in the replaced data is marked as
-/// interrupted. Last, SQLite copies the staged pages into the live connection inside one write
+/// On the staged copy only, this computer's own settings are put back and application-specific
+/// cleanup runs. Last, SQLite copies the staged pages into the live connection inside one write
 /// transaction, so a failure leaves the old data and a reader never sees a half-restored
 /// database.
 ///
@@ -419,17 +423,21 @@ pub fn copy_images(images_dir: &Path, dir: &Path, staged: &Staged) -> AppResult<
 ///
 /// The caller holds the database lock (see [`Database::with`]) and passes the connection, so a
 /// safety backup of the old data can be made under the same lock.
-pub fn commit(conn: &mut Connection, staged: &Staged, keep_local: &[&str]) -> AppResult<()> {
+pub(super) fn commit(
+    conn: &mut Connection,
+    staged: &Staged,
+    keep_local: &[db::SettingKey],
+    cleanup: RestoreCleanup,
+) -> AppResult<()> {
     {
         let mut target = Connection::open(staged.database())?;
-        for key in keep_local {
+        for &key in keep_local {
             let local = db::get_raw_setting(conn, key)?;
             db::put_raw_setting(&target, key, local.as_deref())?;
         }
         {
             let tx = target.transaction()?;
-            crate::ai::blind_check::recover_interrupted(&tx)?;
-            crate::learning::refresh_all(&tx)?;
+            cleanup(&tx)?;
             tx.commit()?;
         }
         let integrity: String =
@@ -437,9 +445,9 @@ pub fn commit(conn: &mut Connection, staged: &Staged, keep_local: &[&str]) -> Ap
         if integrity != "ok" {
             return Err(corrupt());
         }
-        Backup::new(&target, conn)?.run_to_completion(256, Duration::ZERO, None)?;
+        Backup::new(&target, conn)?.run_to_completion(SQLITE_PAGE_BATCH, Duration::ZERO, None)?;
         // The pages came from a file with its own journal mode.
-        db::prepare_restored(conn)
+        db::prepare_connection(conn)
     }
 }
 

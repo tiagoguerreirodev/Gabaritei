@@ -4,7 +4,7 @@ import type { Agent } from "../../bindings/Agent";
 import type { CliPaths } from "../../bindings/CliPaths";
 import type { CliStatus } from "../../bindings/CliStatus";
 import { errorMessage } from "../../components/states";
-import { agentLabels, agents } from "./labels";
+import { agentLabels, agents } from "../../labels";
 
 /** Where each CLI is, with a test button for its version and login state. */
 export default function AgentsSection(props: {

@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { AiSettingsInput } from "../bindings/AiSettingsInput";
 import type { Catalog } from "../bindings/Catalog";
+import type { RoleConfig } from "../bindings/RoleConfig";
+import type { RoleOptions } from "../bindings/RoleOptions";
 import { resetCatalog } from "../catalog";
 import { Toaster, dismissToast } from "../components/toasts";
 import Settings from "./Settings";
@@ -22,6 +24,7 @@ function backend(
   importing?: Promise<boolean>,
   backingUp?: Promise<unknown>,
   catalog?: Catalog,
+  loadLegacyStatus = () => ({ report: null, bankEmpty: false }),
 ) {
   const calls: { command: string; args: unknown }[] = [];
   let stored = initial;
@@ -32,17 +35,19 @@ function backend(
         return {
           folder: "/dados/backups",
           isDefaultFolder: true,
-          backups: [
-            {
-              name: "backup-20261118-100000-000",
-              kind: "backup",
-              createdAt: "2026-11-18T10:00:00.000Z",
-              sizeBytes: 1024,
-            },
-          ],
+          listing: {
+            state: "ready",
+            backups: [
+              {
+                name: "backup-20261118-100000-000",
+                kind: "backup",
+                createdAt: "2026-11-18T10:00:00.000Z",
+                sizeBytes: 1024,
+              },
+            ],
+          },
           lastError: null,
           leftBehind: null,
-          folderUnavailable: false,
         };
       case "data_folder":
         return "/home/dados/gabaritei";
@@ -51,12 +56,26 @@ function backend(
       case "import_data":
         return importing ?? false;
       case "legacy_import_status":
-        return { report: null, bankEmpty: false };
+        return loadLegacyStatus();
       case "ai_catalog":
         if (!catalog) throw new Error("no catalog");
         return catalog;
       case "ai_settings":
         return stored;
+      case "ai_role_options": {
+        const { config } = args as { config: RoleConfig };
+        const options: RoleOptions = {
+          efforts: ["low", "xhigh", "ultra"],
+          showFast: true,
+          problem:
+            config.model === "antigo"
+              ? "O modelo “antigo” não está mais disponível. Escolha outro."
+              : null,
+        };
+        return options;
+      }
+      case "ai_change_role":
+        return { ...role, agent: "claude", model: "" };
       case "save_ai_settings": {
         const { input } = args as { input: AiSettingsInput };
         stored = { ...input, hasRemnoteToken: stored.hasRemnoteToken };
@@ -116,6 +135,25 @@ beforeEach(() => {
 });
 
 describe("Configurações", () => {
+  it("lets the user retry loading the legacy import status", async () => {
+    const loadLegacyStatus = vi.fn(() => ({ report: null, bankEmpty: false }));
+    loadLegacyStatus.mockImplementationOnce(() => {
+      throw new Error("Falhou ao consultar o banco antigo.");
+    });
+    backend(defaults, undefined, undefined, undefined, loadLegacyStatus);
+    const user = userEvent.setup();
+    render(() => <Settings />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Falhou ao consultar o banco antigo.",
+    );
+    await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
+
+    expect(await screen.findByRole("heading", { name: "Banco do Caderno Local" })).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(loadLegacyStatus).toHaveBeenCalledTimes(2);
+  });
+
   it("shows the four roles with the defaults", async () => {
     backend();
     render(() => <Settings />);
@@ -159,6 +197,9 @@ describe("Configurações", () => {
       "claude",
     );
     // Switching the agent clears the model, so the old agent's name is never kept.
+    await waitFor(() =>
+      expect(screen.getByLabelText("Modelo: Explicação sob demanda")).toHaveValue(""),
+    );
     await user.type(screen.getByLabelText("Modelo: Explicação sob demanda"), "claude-sonnet-5-5");
     await user.click(screen.getByRole("button", { name: "Salvar configurações" }));
 
@@ -276,25 +317,35 @@ describe("Configurações", () => {
     );
   });
 
-  it("warns that the Codex config mode cannot limit RemNote tools", async () => {
-    backend({ ...defaults, remnote: { mode: "codexConfig", url: "", tools: [] } });
+  it("offers only a direct server connection in RemNote settings", async () => {
+    backend(defaults);
     render(() => <Settings />);
-    expect(await screen.findByRole("note")).toBeTruthy();
-    expect(screen.getByRole("note").textContent).toMatch(/não consegue limitar/);
+    const modes = within(await screen.findByRole("group", { name: "Como conectar" }));
+    expect(modes.getAllByRole("radio")).toHaveLength(2);
+    expect(modes.getByRole("radio", { name: "Desligado" })).toBeChecked();
+    expect(modes.getByRole("radio", { name: "Servidor MCP (endereço e token)" })).toBeEnabled();
   });
 
-  it("feeds the model and effort selectors from the catalog, and reloads them on Atualizar", async () => {
-    const calls = backend(defaults, undefined, undefined, listed);
-    const user = userEvent.setup();
+  it("shows the models and efforts provided by the catalog", async () => {
+    backend(defaults, undefined, undefined, listed);
     render(() => <Settings />);
     const model = await screen.findByRole("combobox", { name: "Modelo: Gerar questões" });
     expect(within(model).getByRole("option", { name: "GPT-6.2-Sol" })).toBeTruthy();
     const effort = screen.getByRole("combobox", { name: "Esforço: Gerar questões" });
-    expect(
-      within(effort)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["Baixo", "Extra alto", "Ultra"]);
+    await waitFor(() => {
+      expect(
+        within(effort)
+          .getAllByRole("option")
+          .map((o) => o.textContent),
+      ).toEqual(["Baixo", "Extra alto", "Ultra"]);
+    });
+  });
+
+  it("reloads the model lists on Atualizar", async () => {
+    const calls = backend(defaults, undefined, undefined, listed);
+    const user = userEvent.setup();
+    render(() => <Settings />);
+    await screen.findByRole("combobox", { name: "Modelo: Gerar questões" });
 
     await user.click(screen.getByRole("button", { name: "Atualizar listas" }));
     await waitFor(() => {

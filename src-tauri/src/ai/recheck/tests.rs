@@ -1,26 +1,31 @@
 #![cfg_attr(not(unix), allow(dead_code, unused_imports))] // fake CLIs need `sh`
 
 use super::*;
-use crate::ai::settings::AiSettingsInput;
 use crate::attempts::{
     self, FeedbackMode, Outcome, SessionSource, SessionStart, answer as answer_question, finish,
 };
 use crate::bank::import_questions;
 use crate::bank::question::tests::multiple;
+use crate::bank::store::load_question;
+use crate::ids::QuestionId;
+use rand::SeedableRng;
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 const T0: &str = "2026-11-20T10:00:00.000Z";
+const T1: &str = "2026-11-20T11:00:00.000Z";
 
 struct World {
     dir: tempfile::TempDir,
     db: Database,
     secrets: Secrets,
     jobs: OnDemand,
-    question_id: String,
+    clis: ResolvedClis,
+    question_id: QuestionId,
     old_key: String,
     other_option: String,
+    rng: std::cell::RefCell<rand::rngs::StdRng>,
 }
 
 /// A fake `codex exec` that records its prompt and answers with `answer.json`.
@@ -61,8 +66,8 @@ fn world(answer: impl FnOnce(&str, &str) -> Value) -> World {
                 .id
                 .clone();
             tx.execute(
-                "INSERT INTO collections (id, title, kind, created_at) VALUES ('c1', 'Caderno', 'imported', ?1)",
-                params![T0],
+                "INSERT INTO collections (id, title, kind, created_at) VALUES ('c1', 'Caderno', ?1, ?2)",
+                params![crate::bank::catalog::CollectionKind::Imported, T0],
             )?;
             tx.execute(
                 "INSERT INTO collection_items (collection_id, position, question_id) VALUES ('c1', 0, ?1)",
@@ -86,31 +91,20 @@ fn world(answer: impl FnOnce(&str, &str) -> Value) -> World {
     )
     .unwrap();
     let cli = fake_codex(dir.path());
-    db.with(|conn| {
-        let mut current = settings::load(conn, &secrets)?;
-        current.cli_paths.codex = Some(cli.to_string_lossy().into_owned());
-        settings::save(
-            conn,
-            AiSettingsInput {
-                cli_paths: current.cli_paths,
-                roles: current.roles,
-                remnote: current.remnote,
-            },
-        )
-    })
-    .unwrap();
     World {
         dir,
         db,
         secrets,
         jobs: OnDemand::default(),
+        clis: ResolvedClis::new(None, Some(cli)),
         question_id,
         old_key,
         other_option,
+        rng: rand::rngs::StdRng::seed_from_u64(1).into(),
     }
 }
 
-fn start(world: &World, mode: FeedbackMode) -> String {
+fn start(world: &World, mode: FeedbackMode) -> AttemptId {
     world
         .db
         .transaction(|tx| {
@@ -123,13 +117,14 @@ fn start(world: &World, mode: FeedbackMode) -> String {
                     feedback_mode: mode,
                 },
                 T0,
+                &mut *world.rng.borrow_mut(),
             )
         })
         .unwrap()
         .id
 }
 
-fn answer_with(world: &World, attempt: &str, option: &str) {
+fn answer_with(world: &World, attempt: &AttemptId, option: &str) {
     world
         .db
         .transaction(|tx| answer_question(tx, attempt, 0, Some(option), T0))
@@ -142,15 +137,44 @@ fn calls(world: &World) -> usize {
         .unwrap_or(0)
 }
 
-fn ask_it(world: &World, attempt: &str) -> AppResult<RecheckView> {
-    ask_recheck(&world.db, &world.secrets, &world.jobs, attempt, 0)
+fn ask_it(world: &World, attempt: &AttemptId) -> AppResult<RecheckView> {
+    ask_recheck(
+        &world.db,
+        &world.secrets,
+        &world.clis,
+        &world.jobs,
+        attempt,
+        0,
+        &CancelToken::new(),
+    )
+}
+
+fn confirm(world: &World, attempt: &AttemptId) -> AppResult<attempts::AttemptView> {
+    world
+        .db
+        .transaction(|tx| apply(tx, &world.jobs, attempt, 0, T1))
+}
+
+fn answered_attempt(world: &World) -> AttemptId {
+    let attempt = start(world, FeedbackMode::Study);
+    answer_with(world, &attempt, &world.old_key);
+    attempt
+}
+
+fn finish_attempt(world: &World) -> AttemptId {
+    let attempt = answered_attempt(world);
+    world
+        .db
+        .transaction(|tx| finish(tx, &attempt, 1, T0))
+        .unwrap();
+    attempt
 }
 
 fn wrong_answer(_old: &str, new: &str) -> Value {
     json!({ "verdict": "wrong", "correctedKey": new, "reasoning": "O art. 5º diz outra coisa.", "sources": ["CF/88, art. 5º"] })
 }
 
-fn outcome_of(world: &World, attempt: &str) -> Outcome {
+fn outcome_of(world: &World, attempt: &AttemptId) -> Outcome {
     let view = world.db.with(|conn| attempts::load(conn, attempt)).unwrap();
     view.questions[0].reveal.as_ref().unwrap().outcome
 }
@@ -170,11 +194,24 @@ fn review_interval(world: &World) -> Option<i64> {
         .unwrap()
 }
 
-fn errors_of(world: &World) -> Vec<String> {
+fn errors_of(world: &World) -> Vec<QuestionId> {
     world
         .db
-        .with(|conn| crate::learning::error_questions(conn, false, 100))
+        .with(|conn| {
+            crate::learning::error_questions(conn, crate::learning::ErrorFilter::WrongOnly, 100)
+        })
         .unwrap()
+}
+
+fn mark_disputed(world: &World) {
+    world.db.with(|conn| {
+        conn.execute(
+            "UPDATE questions SET provenance = json_set(provenance, '$.disputed', json('true'), '$.source', ?2, '$.draftId', 'd1') WHERE id = ?1",
+            params![world.question_id, "generated"],
+        )?;
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[cfg(unix)]
@@ -183,7 +220,8 @@ mod flow {
 
     #[test]
     fn it_is_refused_before_the_answer_is_revealed() {
-        let w = world(wrong_answer);
+        let mut w = world(wrong_answer);
+        w.clis = ResolvedClis::new(None, None);
         let attempt = start(&w, FeedbackMode::Exam);
         answer_with(&w, &attempt, &w.old_key);
         let error = ask_it(&w, &attempt).unwrap_err();
@@ -192,34 +230,71 @@ mod flow {
     }
 
     #[test]
-    fn a_confirmed_correction_changes_the_key_and_rescores_past_attempts() {
+    fn asking_returns_the_proposal_without_changing_the_key() {
+        let w = world(wrong_answer);
+        let attempt = answered_attempt(&w);
+
+        assert_eq!(
+            ask_it(&w, &attempt).unwrap(),
+            RecheckView {
+                verdict: RecheckVerdict::Wrong,
+                corrected_key: Some(w.other_option.clone()),
+                reasoning: "O art. 5º diz outra coisa.".into(),
+                sources: vec!["CF/88, art. 5º".into()],
+            }
+        );
+        assert_eq!(outcome_of(&w, &attempt), Outcome::Correct);
+    }
+
+    #[test]
+    fn confirming_a_correction_rescores_past_attempts() {
+        let w = world(wrong_answer);
+        let first = finish_attempt(&w);
+        let attempt = finish_attempt(&w);
+        assert_eq!(outcome_of(&w, &attempt), Outcome::Correct);
+
+        ask_it(&w, &attempt).unwrap();
+        confirm(&w, &attempt).unwrap();
+
+        assert_eq!(outcome_of(&w, &first), Outcome::Wrong);
+        assert_eq!(outcome_of(&w, &attempt), Outcome::Wrong);
+    }
+
+    #[test]
+    fn confirming_a_correction_refreshes_the_review_interval() {
         let w = world(wrong_answer);
         // Two hits in a row put the review on the second rung.
-        let first = start(&w, FeedbackMode::Study);
-        answer_with(&w, &first, &w.old_key);
-        w.db.transaction(|tx| finish(tx, &first, 1, T0)).unwrap();
-        let attempt = start(&w, FeedbackMode::Study);
-        answer_with(&w, &attempt, &w.old_key);
-        w.db.transaction(|tx| finish(tx, &attempt, 1, T0)).unwrap();
-        assert_eq!(outcome_of(&w, &attempt), Outcome::Correct);
+        finish_attempt(&w);
+        let attempt = finish_attempt(&w);
         assert_eq!(review_interval(&w), Some(3), "two hits move the review up");
+
+        ask_it(&w, &attempt).unwrap();
+        confirm(&w, &attempt).unwrap();
+
+        assert_eq!(review_interval(&w), Some(1), "both answers are now misses");
+    }
+
+    #[test]
+    fn confirming_a_correction_refreshes_the_error_notebook() {
+        let w = world(wrong_answer);
+        let attempt = finish_attempt(&w);
         assert!(errors_of(&w).is_empty());
 
-        let view = ask_it(&w, &attempt).unwrap();
-        assert_eq!(view.verdict, RecheckVerdict::Wrong);
-        assert_eq!(view.corrected_key.as_deref(), Some(w.other_option.as_str()));
-        assert_eq!(view.sources, ["CF/88, art. 5º"]);
-        // Asking changes nothing by itself.
-        assert_eq!(outcome_of(&w, &attempt), Outcome::Correct);
+        ask_it(&w, &attempt).unwrap();
+        confirm(&w, &attempt).unwrap();
 
-        w.db.transaction(|tx| apply(tx, &w.jobs, &attempt, 0, "2026-11-20T11:00:00.000Z"))
-            .unwrap();
-        // The attempt that was right under the old key is now wrong, without being redone.
-        assert_eq!(outcome_of(&w, &attempt), Outcome::Wrong);
-        // Reviews and the error notebook follow the corrected key too (#50).
-        assert_eq!(review_interval(&w), Some(1), "both answers are now misses");
         assert_eq!(errors_of(&w), std::slice::from_ref(&w.question_id));
-        let (old, new, reason, source): (String, String, String, String) = w
+    }
+
+    #[test]
+    fn confirming_a_correction_records_the_key_change() {
+        let w = world(wrong_answer);
+        mark_disputed(&w);
+        let attempt = answered_attempt(&w);
+        ask_it(&w, &attempt).unwrap();
+        confirm(&w, &attempt).unwrap();
+
+        let audit: (String, String, String, String) = w
             .db
             .with(|conn| {
                 Ok(conn.query_row(
@@ -229,13 +304,19 @@ mod flow {
                 )?)
             })
             .unwrap();
-        assert_eq!((old, new), (w.old_key.clone(), w.other_option.clone()));
-        assert!(reason.contains("art. 5º"));
-        assert_eq!(source, "recheck:codex/gpt-6.2-sol");
+        assert_eq!(
+            audit,
+            (
+                w.old_key,
+                w.other_option,
+                "O art. 5º diz outra coisa.".into(),
+                "recheck:codex/gpt-6.2-sol".into(),
+            )
+        );
     }
 
     #[test]
-    fn the_recheck_prompt_carries_the_key_and_explanation() {
+    fn the_recheck_prompt_uses_the_revealed_answer() {
         let w = world(wrong_answer);
         let attempt = start(&w, FeedbackMode::Study);
         answer_with(&w, &attempt, &w.old_key);
@@ -259,39 +340,28 @@ mod flow {
     }
 
     #[test]
-    fn applying_a_new_key_clears_the_disputed_flag_and_keeps_the_history() {
+    fn confirming_a_correction_clears_the_disputed_flag() {
         let w = world(wrong_answer);
-        w.db.with(|conn| {
-            conn.execute(
-                "UPDATE questions SET provenance = json_set(provenance, '$.disputed', json('true'), '$.source', 'generated', '$.draftId', 'd1') WHERE id = ?1",
-                params![w.question_id],
-            )?;
-            Ok(())
-        })
-        .unwrap();
-        let attempt = start(&w, FeedbackMode::Study);
-        answer_with(&w, &attempt, &w.old_key);
+        mark_disputed(&w);
+        let attempt = answered_attempt(&w);
         ask_it(&w, &attempt).unwrap();
-        w.db.transaction(|tx| apply(tx, &w.jobs, &attempt, 0, "2026-11-20T11:00:00.000Z"))
-            .unwrap();
-        let (provenance, changes): (String, i64) =
+        confirm(&w, &attempt).unwrap();
+        let provenance: String =
             w.db.with(|conn| {
                 Ok(conn.query_row(
-                    "SELECT provenance, (SELECT COUNT(*) FROM key_changes WHERE question_id = ?1)
-                     FROM questions WHERE id = ?1",
+                    "SELECT provenance FROM questions WHERE id = ?1",
                     params![w.question_id],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+                    |r| r.get(0),
                 )?)
             })
             .unwrap();
         let provenance: Value = serde_json::from_str(&provenance).unwrap();
         assert!(provenance.get("disputed").is_none(), "{provenance}");
         assert_eq!(provenance["source"], "generated", "other provenance stays");
-        assert_eq!(changes, 1, "the key change stays in the history");
     }
 
     #[test]
-    fn dismissing_keeps_the_key_and_forgets_the_proposal() {
+    fn dismissing_a_proposal_leaves_the_key_unchanged() {
         let w = world(wrong_answer);
         let attempt = start(&w, FeedbackMode::Study);
         answer_with(&w, &attempt, &w.old_key);
@@ -313,20 +383,31 @@ mod flow {
     }
 
     #[test]
-    fn a_correct_or_ambiguous_verdict_proposes_no_change() {
-        for verdict in ["correct", "ambiguous"] {
-            let w = world(
-                |_, _| json!({ "verdict": verdict, "correctedKey": "", "reasoning": "Está ok.", "sources": [] }),
-            );
-            let attempt = start(&w, FeedbackMode::Study);
-            answer_with(&w, &attempt, &w.old_key);
-            let view = ask_it(&w, &attempt).unwrap();
-            assert_eq!(view.corrected_key, None);
-            let error =
-                w.db.transaction(|tx| apply(tx, &w.jobs, &attempt, 0, T0))
-                    .unwrap_err();
-            assert!(error.to_string().contains("não propõe trocar"), "{verdict}");
-        }
+    fn a_correct_verdict_proposes_no_change() {
+        assert_no_correction(RecheckVerdict::Correct);
+    }
+
+    #[test]
+    fn an_ambiguous_verdict_proposes_no_change() {
+        assert_no_correction(RecheckVerdict::Ambiguous);
+    }
+
+    fn assert_no_correction(verdict: RecheckVerdict) {
+        let w = world(
+            |_, _| json!({ "verdict": verdict, "correctedKey": "", "reasoning": "Está ok.", "sources": [] }),
+        );
+        let attempt = answered_attempt(&w);
+        assert_eq!(
+            ask_it(&w, &attempt).unwrap(),
+            RecheckView {
+                verdict,
+                corrected_key: None,
+                reasoning: "Está ok.".into(),
+                sources: vec![],
+            }
+        );
+        let error = confirm(&w, &attempt).unwrap_err();
+        assert!(error.to_string().contains("não propõe trocar"));
     }
 
     #[test]
@@ -357,6 +438,51 @@ mod flow {
         let attempt = start(&w, FeedbackMode::Study);
         answer_with(&w, &attempt, &w.old_key);
         assert!(ask_it(&w, &attempt).is_err());
+    }
+
+    #[test]
+    fn sources_at_the_bank_limits_are_accepted() {
+        let mut sources: Vec<_> = (1..50).map(|index| format!("Fonte {index}")).collect();
+        sources.push("á".repeat(2_000));
+        let w = world(|_, _| {
+            json!({
+                "verdict": "correct",
+                "correctedKey": "",
+                "reasoning": "Está ok.",
+                "sources": sources
+            })
+        });
+        let attempt = start(&w, FeedbackMode::Study);
+        answer_with(&w, &attempt, &w.old_key);
+
+        assert_eq!(ask_it(&w, &attempt).unwrap().sources, sources);
+    }
+
+    #[test]
+    fn too_many_sources_are_refused() {
+        assert_invalid_sources(vec!["Fonte".to_owned(); 51]);
+    }
+
+    #[test]
+    fn a_source_over_the_length_limit_is_refused() {
+        assert_invalid_sources(vec!["á".repeat(2_001)]);
+    }
+
+    fn assert_invalid_sources(sources: Vec<String>) {
+        let w = world(|_, _| {
+            json!({
+                "verdict": "correct",
+                "correctedKey": "",
+                "reasoning": "Está ok.",
+                "sources": sources
+            })
+        });
+        let attempt = answered_attempt(&w);
+
+        let error = ask_it(&w, &attempt).unwrap_err();
+
+        assert!(error.to_string().contains("fontes inválidas"), "{error}");
+        assert!(w.jobs.take(&w.question_id).is_none());
     }
 
     #[test]
@@ -393,10 +519,15 @@ mod flow {
 }
 
 #[test]
-fn the_recheck_schema_is_strict_and_matches_its_snapshot() {
-    let schema = crate::ai::blind_check::schema_of::<RecheckAnswer>();
+fn the_recheck_schema_is_strict() {
+    let schema = crate::ai::task::schema_of::<RecheckAnswer>();
     assert_eq!(schema["additionalProperties"], json!(false));
     assert!(!schema.to_string().contains("anyOf"));
+}
+
+#[test]
+fn the_recheck_schema_matches_its_snapshot() {
+    let schema = crate::ai::task::schema_of::<RecheckAnswer>();
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("schemas/recheck.schema.json");
     let generated = serde_json::to_string_pretty(&schema).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {

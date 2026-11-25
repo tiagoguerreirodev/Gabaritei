@@ -4,7 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DraftSummary } from "../bindings/DraftSummary";
+import type { GenerationStatus } from "../bindings/GenerationStatus";
 import { Toaster } from "../components/toasts";
+import { applyGenerationStatus, resetGenerationWatch } from "../generation";
 import ReviewPackage from "./ReviewPackage";
 
 const summary: DraftSummary = {
@@ -45,6 +47,8 @@ const summary: DraftSummary = {
   fixed: 1,
   disputed: 1,
   unchecked: 0,
+  confirmed: 3,
+  needsCheck: false,
   checkFailed: null,
   checking: false,
 };
@@ -68,6 +72,11 @@ function backend(current: DraftSummary = summary) {
             checking: false,
           },
         ];
+      case "draft_import_all":
+        return {
+          kind: "imported",
+          result: { collectionId: "c9", title: "Coleção nova", imported: 3, merged: 1, skipped: 0 },
+        };
       case "draft_import":
         return { collectionId: "c9", title: "Coleção nova", imported: 3, merged: 1, skipped: 0 };
       case "draft_discard":
@@ -101,32 +110,130 @@ function renderAt(path: string) {
 
 beforeEach(() => {
   window.location.hash = "";
+  resetGenerationWatch();
 });
 
 describe("Revisar pacote", () => {
-  it("shows counts and one line per question, with content only for the flagged one", async () => {
+  describe("when a new check reports progress before the previous finish", () => {
+    const checking: GenerationStatus = {
+      revision: 2,
+      runRevision: 1,
+      running: true,
+      startedAt: summary.createdAt,
+      kind: "recheck",
+      stage: "checking",
+      stages: [],
+      canCancel: true,
+      cancelDiscardsDraft: false,
+      progress: null,
+      outcome: null,
+      outcomeKind: null,
+    };
+
+    function reportNextCheck() {
+      applyGenerationStatus({ ...checking, revision: 5, runRevision: 4 });
+      applyGenerationStatus({
+        ...checking,
+        revision: 3,
+        runRevision: 3,
+        running: false,
+        startedAt: null,
+        kind: null,
+        stage: "preparing",
+        canCancel: false,
+        outcome: { kind: "draft", draftId: summary.id },
+        outcomeKind: "recheck",
+      });
+    }
+
+    it("refreshes the open package with the completed check's verdicts", async () => {
+      let current: DraftSummary = {
+        ...summary,
+        checking: true,
+        lines: [{ position: 1, state: "unchecked", hasProblem: false, content: null }],
+      };
+      mockIPC((command) => {
+        if (command === "draft_summary") return current;
+        throw new Error(`Unexpected command: ${command}`);
+      });
+      applyGenerationStatus(checking);
+      renderAt("/revisar-pacote?id=d1");
+      expect(await screen.findByText(/ainda está em andamento/)).toBeVisible();
+
+      current = summary;
+      reportNextCheck();
+
+      expect(await screen.findByText("Q1 · conferida")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Importar tudo" })).toBeEnabled();
+    });
+
+    it("refreshes checking indicators for packages in the waiting list", async () => {
+      let isChecking = true;
+      mockIPC((command) => {
+        if (command !== "drafts_waiting") throw new Error(`Unexpected command: ${command}`);
+        return [
+          {
+            id: summary.id,
+            topic: summary.topic,
+            count: summary.count,
+            createdAt: summary.createdAt,
+            disputed: summary.disputed,
+            checking: isChecking,
+          },
+        ];
+      });
+      applyGenerationStatus(checking);
+      renderAt("/revisar-pacote");
+      expect(await screen.findByText(/conferindo…/)).toBeVisible();
+
+      isChecking = false;
+      reportNextCheck();
+
+      await waitFor(() => expect(screen.queryByText(/conferindo…/)).not.toBeInTheDocument());
+    });
+  });
+
+  async function openSummary() {
     backend();
     renderAt("/revisar-pacote?id=d1");
 
     await screen.findByRole("heading", { name: /Direito › Constitucional/ });
+  }
+
+  it("shows the package format and duplicate counts", async () => {
+    await openSummary();
     expect(screen.getByText(/4 questões, 3 de múltipla escolha, 1 Certo\/Errado/)).toBeVisible();
+    expect(screen.getByText(/1 já existem no banco/)).toBeVisible();
+  });
+
+  it("lists each question with its blind-check verdict", async () => {
+    await openSummary();
     const lines = within(screen.getByRole("list", { name: "Questões do pacote" }));
     expect(lines.getByText("Q1 · conferida")).toBeVisible();
     expect(lines.getByText("Q2 · contestada")).toBeVisible();
     expect(lines.getByText("Q3 · corrigida e conferida")).toBeVisible();
-    expect(screen.getByText(/1 já existem no banco/)).toBeVisible();
+    expect(lines.getByText("Q4 · conferida")).toBeVisible();
+  });
 
+  it("shows the stem and options only for a flagged question", async () => {
+    await openSummary();
     // The flagged question shows its stem and options, and only it.
     expect(screen.getByText("Enunciado da questão contestada?")).toBeInTheDocument();
     expect(screen.getByText("Alternativa dois")).toBeInTheDocument();
     expect(screen.getByText("B")).toBeInTheDocument();
     expect(document.querySelectorAll("details")).toHaveLength(1);
+  });
 
-    // No key, explanation or reference is rendered, and nothing can be answered here.
+  it("keeps answer keys, explanations and references off the preview", async () => {
+    await openSummary();
     const text = document.body.textContent ?? "";
     for (const secret of ["Gabarito", "Explicação", "Referências", "answerId"]) {
       expect(text).not.toContain(secret);
     }
+  });
+
+  it("does not let the user answer a question in the preview", async () => {
+    await openSummary();
     expect(document.querySelector("textarea, [role=radio], [role=radiogroup]")).toBeNull();
     const inputs = [...document.querySelectorAll("input")];
     expect(inputs).toHaveLength(1);
@@ -181,14 +288,11 @@ describe("Revisar pacote", () => {
     await user.click(await screen.findByRole("button", { name: "Importar tudo" }));
 
     await screen.findByRole("heading", { name: "Banco" });
-    expect(calls.find((c) => c.command === "draft_import")?.args).toEqual({
-      id: "d1",
-      mode: "all",
-    });
+    expect(calls.find((c) => c.command === "draft_import_all")?.args).toEqual({ id: "d1" });
     expect(await screen.findByText(/3 questões importadas para “Coleção nova”/)).toBeVisible();
     // The banner and the sidebar count are read again once the draft is gone.
     const commands = calls.map((c) => c.command);
-    expect(commands.slice(commands.indexOf("draft_import"))).toContain("drafts_waiting");
+    expect(commands.slice(commands.indexOf("draft_import_all"))).toContain("drafts_waiting");
   });
 
   it("imports only the confirmed questions", async () => {
@@ -215,6 +319,14 @@ describe("Revisar pacote", () => {
     // It comes before the package details.
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
     expect(headings[0]).toBe("Resumo da conferência");
+  });
+
+  it("includes the verdict counts above the question lines", async () => {
+    await openSummary();
+    const checks = within(screen.getByRole("region", { name: "Conferência às cegas" }));
+    expect(
+      checks.getByText("2 conferidas, 1 corrigidas e conferidas, 1 contestadas."),
+    ).toBeVisible();
   });
 
   describe("curating flagged questions", () => {
@@ -259,23 +371,36 @@ describe("Revisar pacote", () => {
       expect(lines.getByText("Q1 · conferida")).toBeVisible();
     });
 
-    it("expands and collapses every flagged line, never showing key or explanation", async () => {
+    async function openFlaggedSummary() {
       backend(two);
       const user = userEvent.setup();
       renderAt("/revisar-pacote?id=d1");
       await screen.findByText("Q2 · contestada");
-      const open = () => document.querySelectorAll("details[open]").length;
-      expect(open()).toBe(0);
+      return user;
+    }
 
+    it("opens every flagged question when asked to expand all", async () => {
+      const user = await openFlaggedSummary();
+      expect(document.querySelectorAll("details[open]")).toHaveLength(0);
       await user.click(screen.getByRole("button", { name: "Expandir todas" }));
-      expect(open()).toBe(2);
+      expect(document.querySelectorAll("details[open]")).toHaveLength(2);
       expect(screen.getByText("Opção A de Segundo enunciado")).toBeVisible();
+    });
+
+    it("closes every flagged question when asked to collapse all", async () => {
+      const user = await openFlaggedSummary();
+      await user.click(screen.getByRole("button", { name: "Expandir todas" }));
+      await user.click(screen.getByRole("button", { name: "Recolher todas" }));
+      expect(document.querySelectorAll("details[open]")).toHaveLength(0);
+    });
+
+    it("keeps keys and explanations hidden even when all flagged lines are open", async () => {
+      const user = await openFlaggedSummary();
+      await user.click(screen.getByRole("button", { name: "Expandir todas" }));
+      expect(document.querySelectorAll("details[open]")).toHaveLength(2);
       for (const secret of ["Gabarito", "Explicação", "Referências", "answerId"]) {
         expect(document.body.textContent ?? "").not.toContain(secret);
       }
-
-      await user.click(screen.getByRole("button", { name: "Recolher todas" }));
-      expect(open()).toBe(0);
     });
 
     it("hides the toolbar when nothing is flagged", async () => {
@@ -320,6 +445,8 @@ describe("Revisar pacote", () => {
       fixed: 0,
       disputed: 0,
       unchecked: 4,
+      needsCheck: true,
+      confirmed: 0,
       checkFailed: "A conferência não respondeu todas as questões.",
     });
     const user = userEvent.setup();
@@ -338,6 +465,8 @@ describe("Revisar pacote", () => {
       fixed: 0,
       disputed: 0,
       unchecked: 4,
+      needsCheck: true,
+      confirmed: 0,
     });
     const user = userEvent.setup();
     renderAt("/revisar-pacote?id=d1");
@@ -355,6 +484,8 @@ describe("Revisar pacote", () => {
       fixed: 0,
       disputed: 0,
       unchecked: 4,
+      needsCheck: true,
+      confirmed: 0,
     });
     renderAt("/revisar-pacote?id=d1");
     expect(await screen.findByText(/ainda está em andamento/)).toBeVisible();
@@ -367,42 +498,40 @@ describe("Revisar pacote", () => {
     expect(screen.queryByText(/0 conferidas/)).not.toBeInTheDocument();
   });
 
-  it("checks the unchecked questions before importing everything", async () => {
-    const unchecked: DraftSummary = {
-      ...summary,
-      lines: summary.lines.map((line) => ({ ...line, state: "unchecked" as const })),
-      agreed: 0,
-      fixed: 0,
-      disputed: 0,
-      unchecked: 4,
-    };
-    let checked = false;
-    const calls: string[] = [];
+  async function checkThenImport() {
+    const calls = backend({ ...summary, needsCheck: true });
+    const user = userEvent.setup();
+    renderAt("/revisar-pacote?id=d1");
+    await user.click(await screen.findByRole("button", { name: "Conferir e importar tudo" }));
+    return calls;
+  }
+
+  it("opens the bank when the checked package has been imported", async () => {
+    await checkThenImport();
+    expect(await screen.findByRole("heading", { name: "Banco" })).toBeVisible();
+  });
+
+  it("submits one check-and-import request without polling", async () => {
+    const calls = await checkThenImport();
+    await screen.findByRole("heading", { name: "Banco" });
+    expect(calls.filter((c) => c.command === "draft_import_all").map((c) => c.args)).toEqual([
+      { id: "d1" },
+    ]);
+    const commands = calls.map((c) => c.command);
+    expect(commands).not.toContain("blind_check_start");
+    expect(commands).not.toContain("generation_status");
+    expect(commands).not.toContain("draft_import");
+  });
+
+  it("shows a refused check request without promising automatic import", async () => {
+    let refuse: (error: Error) => void = () => undefined;
+    const response = new Promise<never>((_, reject) => (refuse = reject));
     mockIPC((command) => {
-      calls.push(command);
       switch (command) {
         case "draft_summary":
-          return checked ? summary : unchecked;
-        case "blind_check_start":
-          checked = true;
-          return null;
-        case "generation_status":
-          return {
-            running: false,
-            startedAt: null,
-            kind: null,
-            stage: "preparing",
-            progress: null,
-            outcome: null,
-          };
-        case "generation_dismiss":
-          return null;
-        case "draft_import":
-          return { collectionId: "c9", title: "Coleção nova", imported: 4, merged: 0, skipped: 0 };
-        case "collections":
-          return { items: [], total: 0, page: 0, pageSize: 20, contests: [], boards: [] };
-        case "topics_tree":
-          return { areas: [], questions: 0 };
+          return { ...summary, needsCheck: true };
+        case "draft_import_all":
+          return response;
         default:
           throw new Error(`Unexpected command: ${command}`);
       }
@@ -410,21 +539,21 @@ describe("Revisar pacote", () => {
     const user = userEvent.setup();
     renderAt("/revisar-pacote?id=d1");
     await user.click(await screen.findByRole("button", { name: "Conferir e importar tudo" }));
+    expect(screen.getByText("Solicitando conferência e importação…")).toBeVisible();
 
-    await screen.findByRole("heading", { name: "Banco" });
-    // The check runs first, then the import.
-    expect(calls.indexOf("blind_check_start")).toBeGreaterThan(-1);
-    expect(calls.indexOf("draft_import")).toBeGreaterThan(calls.indexOf("blind_check_start"));
+    const busy = "Já existe uma geração em andamento. Espere terminar ou cancele.";
+    refuse(new Error(busy));
+
+    expect(await screen.findByText(busy)).toBeVisible();
+    expect(screen.queryByText(/A importação segue sozinha/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Solicitando conferência e importação…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Conferir e importar tudo" })).toBeEnabled();
   });
 
-  it("imports nothing when the check of the unchecked questions fails again", async () => {
+  it("refreshes the package after the backend reports a failed check", async () => {
     const failed: DraftSummary = {
       ...summary,
-      lines: summary.lines.map((line) => ({ ...line, state: "unchecked" as const })),
-      agreed: 0,
-      fixed: 0,
-      disputed: 0,
-      unchecked: 4,
+      needsCheck: true,
       checkFailed: "A conferência não respondeu todas as questões.",
     };
     const calls: string[] = [];
@@ -433,18 +562,8 @@ describe("Revisar pacote", () => {
       switch (command) {
         case "draft_summary":
           return failed;
-        case "blind_check_start":
-        case "generation_dismiss":
-          return null;
-        case "generation_status":
-          return {
-            running: false,
-            startedAt: null,
-            kind: null,
-            stage: "preparing",
-            progress: null,
-            outcome: null,
-          };
+        case "draft_import_all":
+          return { kind: "pending", message: "A conferência não terminou. Nada foi importado." };
         default:
           throw new Error(`Unexpected command: ${command}`);
       }
@@ -452,8 +571,18 @@ describe("Revisar pacote", () => {
     const user = userEvent.setup();
     renderAt("/revisar-pacote?id=d1");
     await user.click(await screen.findByRole("button", { name: "Conferir e importar tudo" }));
-    expect(await screen.findByText(/Nada foi importado/)).toBeVisible();
-    expect(calls).not.toContain("draft_import");
+    expect(
+      await screen.findByText("A conferência não terminou. Nada foi importado."),
+    ).toBeVisible();
+    expect(calls).toEqual(["draft_summary", "draft_import_all", "draft_summary"]);
+  });
+
+  it("uses the backend's confirmed count to enable importing confirmed questions", async () => {
+    backend({ ...summary, confirmed: 0 });
+    renderAt("/revisar-pacote?id=d1");
+
+    const button = await screen.findByRole("button", { name: "Importar só as confirmadas" });
+    expect(button).toBeDisabled();
   });
 
   it("lists the packages waiting when no package is chosen", async () => {

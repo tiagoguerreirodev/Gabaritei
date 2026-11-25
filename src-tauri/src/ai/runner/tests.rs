@@ -5,16 +5,19 @@
 #![cfg_attr(not(unix), allow(dead_code, unused_imports))] // fake CLIs need `sh`
 
 use super::*;
+use crate::ai::{claude, codex};
 use serde_json::json;
+use std::path::Path;
+use std::process::Command;
+use std::time::Instant;
 
 fn schema() -> Value {
     json!({ "type": "object", "required": ["answer"], "properties": { "answer": { "type": "string" } } })
 }
 
 fn spec(agent: Agent, cli: PathBuf) -> JobSpec {
-    let mut spec = JobSpec::new(agent, cli, "modelo-x".into(), Effort::Xhigh, schema());
-    spec.prompt = "pergunta".into();
-    spec.instructions = "instruções".into();
+    let mut spec = JobSpec::new(agent, cli, "modelo-x".into(), Effort::Xhigh, schema())
+        .with_input("instruções".into(), "pergunta".into());
     spec.timeout = Duration::from_secs(20);
     spec.grace = Duration::from_millis(300);
     spec
@@ -71,17 +74,25 @@ fn pid_is_alive(pid: u32) -> bool {
 mod fake_cli {
     use super::*;
 
-    #[test]
-    fn codex_success_returns_the_json_and_label_only_progress() {
+    fn successful_codex_run() -> (JobOutput, Vec<Progress>) {
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_codex(dir.path(), r#"{"answer":"pong"}"#);
         let (result, events) = run(&spec(Agent::Codex, cli));
-        let output = result.unwrap();
+        (result.unwrap(), events)
+    }
+
+    #[test]
+    fn codex_success_returns_the_output_file() {
+        let (output, _) = successful_codex_run();
         assert_eq!(output.value, json!({ "answer": "pong" }));
         assert_eq!(output.cost_usd, None);
+    }
+
+    #[test]
+    fn codex_progress_reports_fixed_labels() {
+        let (_, events) = successful_codex_run();
         assert_eq!(events.first().unwrap().kind, ProgressKind::Started);
         assert_eq!(events.last().unwrap().kind, ProgressKind::Writing);
-        // Model text never reaches the frontend through progress events.
         assert!(events.iter().all(|e| !e.label.contains("SEGREDO")));
     }
 
@@ -133,7 +144,7 @@ printf '{"args":"%s","stdin":"%s"}' "$all" "$input" > "$out""#,
     }
 
     #[test]
-    fn a_non_zero_exit_reports_the_code_and_the_last_stderr_line() {
+    fn a_non_zero_exit_reports_the_code_with_safe_details() {
         let dir = tempfile::tempdir().unwrap();
         let cli = write_script(
             dir.path(),
@@ -155,7 +166,7 @@ printf '{"args":"%s","stdin":"%s"}' "$all" "$input" > "$out""#,
     }
 
     #[test]
-    fn a_usage_limit_gets_a_fixed_hint_and_nothing_else() {
+    fn a_usage_limit_gets_a_fixed_hint() {
         let dir = tempfile::tempdir().unwrap();
         let cli = write_script(
             dir.path(),
@@ -192,7 +203,7 @@ exit 1"#,
     }
 
     #[test]
-    fn timeout_stops_the_run_and_its_children() {
+    fn timeout_stops_the_process_tree() {
         let dir = tempfile::tempdir().unwrap();
         let pidfile = dir.path().join("child.pid");
         let cli = write_script(
@@ -252,30 +263,56 @@ exit 1"#,
         assert!(started.elapsed() < Duration::from_secs(10));
     }
 
-    #[test]
-    fn attachments_and_schema_are_in_a_fresh_folder_that_is_removed_afterwards() {
-        let dir = tempfile::tempdir().unwrap();
-        let attachment = dir.path().join("Lei 8.112.md");
+    fn run_with_one_attachment(dir: &Path) -> (PathBuf, Value) {
+        let attachment = dir.join("Lei 8.112.md");
         std::fs::write(&attachment, "texto").unwrap();
         let cli = write_script(
-            dir.path(),
+            dir,
             "codex",
             r#"out=""
-while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift;; esac; shift; done
+profile=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) out="$2"; shift;;
+        default_permissions=*) profile="$1";;
+        --sandbox|--disable) exit 14;;
+    esac
+    shift
+done
+[ -n "$profile" ] || exit 15
 cat >/dev/null
 printf '{"cwd":"%s","files":"%s"}' "$(pwd)" "$(ls . anexos | tr '\n' ' ')" > "$out""#,
         );
         let mut job = spec(Agent::Codex, cli);
         job.attachments = vec![attachment.clone()];
         let value = run(&job).0.unwrap().value;
+        (attachment, value)
+    }
+
+    #[test]
+    fn an_attachment_job_stages_inputs_in_the_run_directory() {
+        if !codex::supports_attachment_profile() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let (attachment, value) = run_with_one_attachment(dir.path());
         let files = value["files"].as_str().unwrap();
         assert!(
             files.contains("schema.json") && files.contains("1-Lei_8.112.md"),
             "{files}"
         );
+        assert!(attachment.exists(), "the original attachment is untouched");
+    }
+
+    #[test]
+    fn an_attachment_job_cleans_up_its_run_directory() {
+        if !codex::supports_attachment_profile() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let (_, value) = run_with_one_attachment(dir.path());
         let cwd = Path::new(value["cwd"].as_str().unwrap());
         assert!(!cwd.exists(), "the run folder must be deleted");
-        assert!(attachment.exists(), "the original attachment is untouched");
     }
 
     #[test]
@@ -303,17 +340,31 @@ JSON"#
         )
     }
 
-    #[test]
-    fn claude_success_reads_structured_output_and_cost() {
+    fn successful_claude_run() -> (JobOutput, Vec<Progress>) {
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_claude(
             dir.path(),
             r#"{"type":"result","subtype":"success","is_error":false,"structured_output":{"answer":"pong"},"total_cost_usd":0.0273}"#,
         );
         let (result, events) = run(&spec(Agent::Claude, cli));
-        let output = result.unwrap();
+        (result.unwrap(), events)
+    }
+
+    #[test]
+    fn claude_success_reads_structured_output() {
+        let (output, _) = successful_claude_run();
         assert_eq!(output.value, json!({ "answer": "pong" }));
+    }
+
+    #[test]
+    fn claude_success_reads_the_reported_cost() {
+        let (output, _) = successful_claude_run();
         assert_eq!(output.cost_usd, Some(0.0273));
+    }
+
+    #[test]
+    fn claude_reports_progress_for_reads() {
+        let (_, events) = successful_claude_run();
         let kinds: Vec<_> = events.iter().map(|e| e.kind).collect();
         assert_eq!(kinds, [ProgressKind::Started, ProgressKind::Reading]);
     }
@@ -352,7 +403,7 @@ mod arguments {
         let work = Workdir::prepare(spec).unwrap();
         let plan = match spec.agent {
             Agent::Claude => claude::plan(spec, &work),
-            Agent::Codex => codex::plan(spec, &work),
+            Agent::Codex => codex::plan(spec, &work).unwrap(),
         };
         (
             plan.args
@@ -368,30 +419,64 @@ mod arguments {
     }
 
     #[test]
-    fn claude_is_read_only_isolated_and_never_bare() {
-        let (args, env) = plan_for(&spec(Agent::Claude, "claude".into()));
+    fn claude_allows_only_read_tools_in_the_run_folder() {
+        let (args, _) = plan_for(&spec(Agent::Claude, "claude".into()));
         assert!(has_pair(&args, "--tools", "Read,Grep,Glob"));
-        // File tools are scoped to the run folder.
         assert!(has_pair(
             &args,
             "--allowedTools",
             "Read(./**),Grep(./**),Glob(./**)"
         ));
         assert!(has_pair(&args, "--permission-mode", "dontAsk"));
+        for forbidden in ["Bash", "Edit", "Write", "NotebookEdit"] {
+            assert!(!args.iter().any(|a| a.contains(forbidden)), "{forbidden}");
+        }
+    }
+
+    #[test]
+    fn claude_isolates_job_settings() {
+        let (args, env) = plan_for(&spec(Agent::Claude, "claude".into()));
         assert!(has_pair(&args, "--setting-sources", ""));
-        assert!(args.contains(&"--model=modelo-x".to_owned()));
-        assert!(has_pair(&args, "--effort", "xhigh"));
-        assert!(has_pair(&args, "--output-format", "stream-json"));
         assert!(args.contains(&"--strict-mcp-config".to_owned()));
         assert!(args.contains(&"--no-session-persistence".to_owned()));
+        assert!(env.is_empty());
+    }
+
+    #[test]
+    fn claude_uses_the_subscription_login() {
+        let (args, _) = plan_for(&spec(Agent::Claude, "claude".into()));
         assert!(
             !args.contains(&"--bare".to_owned()),
             "bare mode skips the login"
         );
-        for forbidden in ["Bash", "Edit", "Write", "NotebookEdit"] {
-            assert!(!args.iter().any(|a| a.contains(forbidden)), "{forbidden}");
-        }
-        assert!(env.is_empty());
+    }
+
+    #[test]
+    fn claude_passes_the_requested_run_options() {
+        let (args, _) = plan_for(&spec(Agent::Claude, "claude".into()));
+        assert!(args.contains(&"--model=modelo-x".to_owned()));
+        assert!(has_pair(&args, "--effort", "xhigh"));
+        assert!(has_pair(&args, "--output-format", "stream-json"));
+    }
+
+    #[test]
+    fn claude_gets_the_checker_schema_without_its_dialect_declaration() {
+        let mut job = spec(Agent::Claude, "claude".into());
+        job.schema =
+            serde_json::from_str(include_str!("../../../schemas/checker.schema.json")).unwrap();
+        let (args, _) = plan_for(&job);
+        let sent = args
+            .windows(2)
+            .find(|pair| pair[0] == "--json-schema")
+            .map(|pair| serde_json::from_str::<Value>(&pair[1]).unwrap())
+            .expect("the JSON schema argument");
+
+        let mut expected = job.schema;
+        assert_eq!(
+            expected.as_object_mut().unwrap().remove("$schema"),
+            Some(json!("https://json-schema.org/draft/2020-12/schema"))
+        );
+        assert_eq!(sent, expected);
     }
 
     #[test]
@@ -439,7 +524,7 @@ mod arguments {
     #[test]
     fn claude_remnote_token_lives_only_in_the_temporary_config_file() {
         let mut job = spec(Agent::Claude, "claude".into());
-        job.remnote = Some(RemNoteAccess::Server {
+        job.remnote = Some(RemNoteAccess {
             url: "https://remnote.example/mcp".into(),
             token: "TOKEN-SECRETO".into(),
             tools: vec!["search".into(), "read_note".into()],
@@ -453,7 +538,7 @@ mod arguments {
             .collect();
         assert!(!args.iter().any(|a| a.contains("TOKEN-SECRETO")));
         assert!(plan.env.iter().all(|(_, v)| v != "TOKEN-SECRETO"));
-        let config = work.mcp_config.as_ref().unwrap();
+        let config = work.mcp_config().unwrap();
         let file = std::fs::read_to_string(config).unwrap();
         assert!(file.contains("TOKEN-SECRETO"));
         // Outside the working directory, so the agent's file tools (scoped to it) can't read it.
@@ -468,33 +553,108 @@ mod arguments {
     }
 
     #[test]
-    fn codex_is_read_only_ignores_user_config_and_closes_the_shell_without_attachments() {
+    fn codex_without_attachments_disables_shell_tools() {
         let (args, _) = plan_for(&spec(Agent::Codex, "codex".into()));
         assert!(has_pair(&args, "--sandbox", "read-only"));
-        assert!(args.contains(&"--model=modelo-x".to_owned()));
-        assert!(has_pair(&args, "-c", "model_reasoning_effort=xhigh"));
-        assert!(has_pair(&args, "-c", "web_search=disabled"));
         assert!(has_pair(&args, "--disable", "shell_tool"));
+        assert!(has_pair(&args, "--disable", "unified_exec"));
+        assert!(!args.iter().any(|a| a.contains("dangerously")));
+    }
+
+    #[test]
+    fn codex_isolates_job_settings() {
+        let (args, _) = plan_for(&spec(Agent::Codex, "codex".into()));
         assert!(args.contains(&"--ignore-user-config".to_owned()));
         assert!(args.contains(&"--strict-config".to_owned()));
         assert!(args.contains(&"--ephemeral".to_owned()));
-        assert!(!args.iter().any(|a| a.contains("dangerously")));
+    }
+
+    #[test]
+    fn codex_passes_the_requested_run_options() {
+        let (args, _) = plan_for(&spec(Agent::Codex, "codex".into()));
+        assert!(args.contains(&"--model=modelo-x".to_owned()));
+        assert!(has_pair(&args, "-c", "model_reasoning_effort=xhigh"));
+        assert!(has_pair(&args, "-c", "web_search=disabled"));
         assert_eq!(args[..2], ["exec".to_owned(), "-".to_owned()]);
     }
 
     #[test]
-    fn codex_keeps_its_read_only_shell_when_there_are_attachments() {
+    fn codex_attaches_files_through_a_scoped_profile() {
+        if !codex::supports_attachment_profile() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("a.txt");
         std::fs::write(&file, "x").unwrap();
-        let mut job = spec(Agent::Codex, "codex".into());
+        let cli = dir.path().join("codex");
+        std::fs::write(&cli, "fake CLI").unwrap();
+        let mut job = spec(Agent::Codex, cli.clone());
         job.attachments = vec![file];
         job.web = true;
-        let (args, _) = plan_for(&job);
-        assert!(!args.contains(&"shell_tool".to_owned()));
-        assert!(has_pair(&args, "--sandbox", "read-only"));
+        let work = Workdir::prepare(&job).unwrap();
+        let plan = codex::plan(&job, &work).unwrap();
+        let args: Vec<_> = plan
+            .args
+            .iter()
+            .map(|arg| arg.to_str().unwrap().to_owned())
+            .collect();
+        let run = work.path().canonicalize().unwrap();
+        let profile = run.file_name().unwrap().to_str().unwrap();
+        let cli = cli.canonicalize().unwrap();
+        let scratch = if cfg!(target_os = "macos") {
+            r#", "/private/tmp"="deny", "/private/var/tmp"="deny""#
+        } else {
+            ""
+        };
+        assert_eq!(plan.executable, cli);
+        assert!(has_pair(
+            &args,
+            "-c",
+            &format!("default_permissions={profile:?}")
+        ));
+        assert!(has_pair(
+            &args,
+            "-c",
+            &format!(
+                "permissions.{profile}.filesystem={{\":minimal\"=\"read\", {:?}=\"read\", {:?}=\"read\"{scratch}}}",
+                cli.to_str().unwrap(),
+                run.to_str().unwrap(),
+            ),
+        ));
+        assert!(has_pair(
+            &args,
+            "-c",
+            &format!("permissions.{profile}.network.enabled=false")
+        ));
+        assert!(has_pair(&args, "-c", r#"approval_policy="never""#));
+        assert!(args.iter().any(|arg| arg == "--strict-config"));
+        assert!(args.iter().any(|arg| arg == "--ignore-user-config"));
+        assert!(
+            args.iter()
+                .all(|arg| !matches!(arg.as_str(), "--sandbox" | "--disable"))
+        );
         // Web search is independent of the attachments (the owner decided so).
         assert!(has_pair(&args, "-c", "web_search=live"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn codex_on_windows_keeps_the_read_only_sandbox_with_attachments() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+        let mut job = spec(Agent::Codex, "codex.cmd".into());
+        job.attachments = vec![file];
+        let (args, _) = plan_for(&job);
+        assert!(has_pair(&args, "--sandbox", "read-only"));
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg.starts_with("default_permissions="))
+        );
+        assert!(!args.iter().any(|arg| arg == "--disable"));
+        assert!(args.iter().any(|arg| arg == "--ignore-user-config"));
+        assert!(has_pair(&args, "-c", r#"approval_policy="never""#));
     }
 
     #[test]
@@ -509,7 +669,7 @@ mod arguments {
     #[test]
     fn remnote_with_no_approved_tools_gives_codex_no_server() {
         let mut job = spec(Agent::Codex, "codex".into());
-        job.remnote = Some(RemNoteAccess::Server {
+        job.remnote = Some(RemNoteAccess {
             url: "https://remnote.example/mcp".into(),
             token: "t".into(),
             tools: Vec::new(),
@@ -522,13 +682,14 @@ mod arguments {
     #[test]
     fn codex_remnote_token_travels_in_the_environment_only() {
         let mut job = spec(Agent::Codex, "codex".into());
-        job.remnote = Some(RemNoteAccess::Server {
+        job.remnote = Some(RemNoteAccess {
             url: "https://remnote.example/mcp".into(),
             token: "TOKEN-SECRETO".into(),
             tools: vec!["search".into()],
         });
         let (args, env) = plan_for(&job);
         assert!(!args.iter().any(|a| a.contains("TOKEN-SECRETO")));
+        assert!(args.contains(&"--ignore-user-config".to_owned()));
         assert_eq!(
             env,
             [(codex::TOKEN_ENV.to_owned(), "TOKEN-SECRETO".to_owned())]
@@ -540,19 +701,10 @@ mod arguments {
     }
 
     #[test]
-    fn reusing_the_codex_config_keeps_the_users_config_loaded() {
-        let mut job = spec(Agent::Codex, "codex".into());
-        job.remnote = Some(RemNoteAccess::CodexConfig);
-        let (args, env) = plan_for(&job);
-        assert!(!args.contains(&"--ignore-user-config".to_owned()));
-        assert!(env.is_empty());
-    }
-
-    #[test]
-    fn debug_output_hides_the_prompt_and_the_token() {
+    fn debug_output_redacts_sensitive_inputs() {
         let mut job = spec(Agent::Claude, "claude".into());
         job.prompt = "GABARITO-SECRETO".into();
-        job.remnote = Some(RemNoteAccess::Server {
+        job.remnote = Some(RemNoteAccess {
             url: "https://x".into(),
             token: "TOKEN-SECRETO".into(),
             tools: Vec::new(),
@@ -601,7 +753,7 @@ mod arguments {
         assert!(is_valid_tool_name("read_note") && is_valid_tool_name("get-rem"));
 
         let mut claude_job = spec(Agent::Claude, "claude".into());
-        claude_job.remnote = Some(RemNoteAccess::Server {
+        claude_job.remnote = Some(RemNoteAccess {
             url: "https://remnote.example/mcp".into(),
             token: "t".into(),
             tools: vec!["search,Bash".into(), "ok_tool".into()],
@@ -618,7 +770,7 @@ mod arguments {
 
     #[test]
     fn write_like_tools_are_dropped_from_the_plan_for_both_agents() {
-        let remnote = Some(RemNoteAccess::Server {
+        let remnote = Some(RemNoteAccess {
             url: "https://remnote.example/mcp".into(),
             token: "t".into(),
             tools: vec!["search".into(), "create_note".into()],
@@ -672,7 +824,7 @@ mod arguments {
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
-        let file = work.instructions.as_ref().expect("instructions file");
+        let file = work.instructions().expect("instructions file");
         assert!(has_pair(
             &args,
             "--append-system-prompt-file",
@@ -684,13 +836,6 @@ mod arguments {
         assert!(!args.iter().any(|a| a.contains("linha um")));
         assert!(!args.iter().any(|a| a.contains(['\n', '\r'])));
         assert!(args.iter().map(String::len).sum::<usize>() < 4_000);
-    }
-
-    #[test]
-    fn attachment_names_are_made_safe() {
-        assert_eq!(sanitize("../../etc/passwd"), "_.._etc_passwd");
-        assert_eq!(sanitize(".bashrc"), "bashrc");
-        assert_eq!(sanitize("Lei 8.112 (1990).pdf"), "Lei_8.112__1990_.pdf");
     }
 }
 
@@ -741,7 +886,7 @@ mod windows_cmd {
     }
 
     #[test]
-    fn a_claude_cmd_shim_accepts_the_schema_and_multi_line_instructions() {
+    fn a_claude_cmd_shim_accepts_large_instructions_by_file() {
         let dir = tempfile::tempdir().unwrap();
         let cli = write_cmd(
             dir.path(),
@@ -769,7 +914,7 @@ echo {"type":"result","subtype":"success","is_error":false,"structured_output":{
     }
 
     #[test]
-    fn a_codex_cmd_shim_runs_and_writes_its_answer_file() {
+    fn a_codex_cmd_shim_writes_its_answer_file() {
         let dir = tempfile::tempdir().unwrap();
         let cli = write_cmd(
             dir.path(),

@@ -1,5 +1,5 @@
 use super::*;
-use crate::ai::blind_check::{BlindCheck, Confidence, Verdict, pending_record};
+use crate::ai::blind_check::{self, BlindCheck, Confidence, Verdict, pending_record};
 use crate::ai::draft::{DraftRequest, GenerationInfo};
 use crate::ai::generate::{GenerateRequest, GenerateSources};
 use crate::ai::roles::RoleSettings;
@@ -64,14 +64,9 @@ fn draft_of(id: &str, questions: Vec<Value>, verdicts: Option<Vec<Verdict>>) -> 
         },
         package: Package::parse(&json!({ "questions": questions, "notes": [] }).to_string())
             .unwrap(),
-        blind_check: verdicts.map(|verdicts| {
-            serde_json::to_value(BlindCheck {
-                verdicts,
-                failed: None,
-                info: None,
-                pending: false,
-            })
-            .unwrap()
+        blind_check: verdicts.map(|verdicts| BlindCheck::Done {
+            verdicts,
+            info: None,
         }),
     }
 }
@@ -100,11 +95,12 @@ fn mixed(db: &Database) -> Draft {
 }
 
 fn summary_of(db: &Database, id: &str) -> DraftSummary {
-    db.with(|conn| summary(conn, id)).unwrap()
+    db.with(|conn| summary(conn, &DraftId::from(id))).unwrap()
 }
 
 fn import_with(db: &Database, id: &str, mode: ImportMode) -> AppResult<ImportResult> {
-    db.transaction(|tx| import(tx, id, mode, NOW))
+    let files = tempfile::tempdir().unwrap();
+    import(db, files.path(), &DraftId::from(id), mode, NOW)
 }
 
 fn waiting_items(conn: &Connection) -> AppResult<Vec<DraftListItem>> {
@@ -114,6 +110,11 @@ fn waiting_items(conn: &Connection) -> AppResult<Vec<DraftListItem>> {
 fn count(db: &Database, sql: &str) -> i64 {
     db.with(|conn| Ok(conn.query_row(sql, [], |row| row.get(0))?))
         .unwrap()
+}
+
+fn discard_with(db: &Database, id: &DraftId) -> AppResult<()> {
+    let files = tempfile::tempdir().unwrap();
+    discard(db, files.path(), id)
 }
 
 #[test]
@@ -249,7 +250,7 @@ fn a_draft_without_a_check_shows_every_question_unchecked() {
 
     let failed = draft_of("d2", vec![question("q1", "a")], None);
     insert(&db, &failed);
-    blind_check::record_failure(&db, "d2", "A conferência falhou.").unwrap();
+    blind_check::record_failure(&db, &DraftId::from("d2"), "A conferência falhou.").unwrap();
     assert_eq!(
         summary_of(&db, "d2").check_failed.as_deref(),
         Some("A conferência falhou.")
@@ -434,7 +435,7 @@ fn a_package_whose_check_is_running_cannot_be_imported_or_discarded() {
         let error = import_with(&db, "d1", mode).unwrap_err();
         assert!(error.to_string().contains("ainda está em andamento"));
     }
-    assert!(db.with(|conn| discard(conn, "d1")).is_err());
+    assert!(discard_with(&db, &draft.id).is_err());
     assert_eq!(count(&db, "SELECT COUNT(*) FROM questions"), 0);
     assert_eq!(summary_of(&db, "d1").status, DraftStatus::Review);
 }
@@ -513,10 +514,10 @@ fn a_draft_is_imported_or_discarded_only_once() {
             .to_string()
             .contains("já foi importado")
     );
-    assert!(db.with(|conn| discard(conn, "d1")).is_err());
+    assert!(discard_with(&db, &DraftId::from("d1")).is_err());
 
     insert(&db, &draft_of("d2", vec![question("q7", "a")], None));
-    db.with(|conn| discard(conn, "d2")).unwrap();
+    discard_with(&db, &DraftId::from("d2")).unwrap();
     assert_eq!(summary_of(&db, "d2").status, DraftStatus::Discarded);
     assert!(import_with(&db, "d2", ImportMode::All).is_err());
     assert_eq!(
@@ -528,18 +529,306 @@ fn a_draft_is_imported_or_discarded_only_once() {
     );
 }
 
+fn keep_attachment(root: &Path, id: &DraftId) -> std::path::PathBuf {
+    let source = root.join("source.md");
+    std::fs::write(&source, "Synthetic attachment").unwrap();
+    draft_files::keep(root, id, &[source]).unwrap().remove(0)
+}
+
+#[test]
+fn the_summary_counts_confirmed_questions_and_flags_an_unfinished_check() {
+    let db = Database::open_in_memory().unwrap();
+    let draft = draft_of(
+        "d1",
+        vec![
+            question("q1", "a"),
+            question("q2", "a"),
+            question("q3", "a"),
+        ],
+        Some(vec![
+            verdict("q1", VerdictState::Agreed),
+            verdict("q2", VerdictState::Fixed),
+        ]),
+    );
+    insert(&db, &draft);
+
+    let summary = summary_of(&db, "d1");
+
+    assert_eq!((summary.confirmed, summary.needs_check), (2, true));
+}
+
+#[test]
+fn a_checked_draft_imports_every_question_without_running_the_checker_again() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = mixed(&db);
+
+    let outcome = import_all(
+        &db,
+        files.path(),
+        &draft.id,
+        &GenerationManager::default(),
+        || NOW.into(),
+        |_, _| panic!("the draft was already fully checked"),
+        |_| {},
+    )
+    .unwrap();
+
+    let ImportAllOutcome::Imported { result } = outcome else {
+        panic!("expected an import");
+    };
+    assert_eq!((result.imported, result.skipped), (3, 0));
+}
+
+#[test]
+fn a_whole_draft_import_refuses_to_check_while_the_generation_slot_is_held() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = draft_of("d1", vec![question("q1", "a")], None);
+    insert(&db, &draft);
+    let manager = GenerationManager::default();
+
+    manager
+        .run_check_then_import(
+            NOW.into(),
+            |_, _| {
+                let error = import_all(
+                    &db,
+                    files.path(),
+                    &draft.id,
+                    &manager,
+                    || NOW.into(),
+                    |_, _| panic!("the generation slot is occupied"),
+                    |_| {},
+                )
+                .unwrap_err();
+                assert_eq!(
+                    error.to_string(),
+                    "Já existe uma geração em andamento. Espere terminar ou cancele."
+                );
+                Ok(())
+            },
+            |_| {},
+        )
+        .unwrap();
+
+    assert_eq!(summary_of(&db, "d1").status, DraftStatus::Review);
+}
+
+#[test]
+fn a_whole_draft_import_consults_the_check_state_at_write_time() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = mixed(&db);
+    assert!(!summary_of(&db, "d1").needs_check);
+    let first_clock_read = std::cell::Cell::new(true);
+
+    let result = import_all(
+        &db,
+        files.path(),
+        &draft.id,
+        &GenerationManager::default(),
+        || {
+            // A retry completed unsuccessfully after the preview read the old verdicts.
+            if first_clock_read.replace(false) {
+                blind_check::record_failure(&db, &draft.id, "Conferência indisponível.").unwrap();
+            }
+            NOW.into()
+        },
+        |_, _| {
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM questions"), 0);
+            blind_check::record_failure(&db, &draft.id, "A conferência falhou de novo.")
+        },
+        |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(
+        result,
+        ImportAllOutcome::Pending {
+            message:
+                "A conferência não terminou: A conferência falhou de novo. Nada foi importado."
+                    .into(),
+        }
+    );
+    assert_eq!(summary_of(&db, "d1").status, DraftStatus::Review);
+}
+
+#[test]
+fn the_generation_slot_stays_held_until_the_checked_draft_is_imported() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = draft_of("d1", vec![question("q1", "a")], None);
+    let checked = draft_of(
+        "d1",
+        vec![question("q1", "a")],
+        Some(vec![verdict("q1", VerdictState::Agreed)]),
+    );
+    insert(&db, &draft);
+    let manager = GenerationManager::default();
+    let events = std::cell::RefCell::new(Vec::new());
+
+    let outcome = import_all(
+        &db,
+        files.path(),
+        &draft.id,
+        &manager,
+        || NOW.into(),
+        |_, _| {
+            assert!(manager.status().running);
+            db.with(|conn| draft::set_blind_check(conn, &draft.id, &checked.blind_check.unwrap()))
+        },
+        |status| {
+            events.borrow_mut().push((
+                status.running,
+                status.can_cancel,
+                manager.cancel(),
+                summary_of(&db, "d1").status,
+            ));
+        },
+    )
+    .unwrap();
+
+    assert!(matches!(outcome, ImportAllOutcome::Imported { .. }));
+    assert_eq!(
+        events.into_inner(),
+        [
+            (true, false, false, DraftStatus::Review),
+            (false, false, false, DraftStatus::Imported),
+        ]
+    );
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM questions"), 1);
+}
+
+#[test]
+fn a_cancelled_check_leaves_the_draft_waiting_for_review() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = draft_of("d1", vec![question("q1", "a")], None);
+    insert(&db, &draft);
+    let manager = GenerationManager::default();
+
+    let outcome = import_all(
+        &db,
+        files.path(),
+        &draft.id,
+        &manager,
+        || NOW.into(),
+        |cancel, _| {
+            assert!(manager.cancel());
+            assert!(cancel.is_cancelled());
+            Ok(())
+        },
+        |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcome,
+        ImportAllOutcome::Pending {
+            message: "A conferência não terminou: A conferência foi cancelada. Nada foi importado."
+                .into(),
+        }
+    );
+    assert_eq!(summary_of(&db, "d1").status, DraftStatus::Review);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM questions"), 0);
+}
+
+#[test]
+fn a_failed_check_reports_its_message_without_importing_any_questions() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = draft_of("d1", vec![question("q1", "a")], None);
+    insert(&db, &draft);
+
+    let outcome = import_all(
+        &db,
+        files.path(),
+        &draft.id,
+        &GenerationManager::default(),
+        || NOW.into(),
+        |_, _| blind_check::record_failure(&db, &draft.id, "Conferência indisponível."),
+        |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcome,
+        ImportAllOutcome::Pending {
+            message: "A conferência não terminou: Conferência indisponível. Nada foi importado."
+                .into(),
+        }
+    );
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM questions"), 0);
+}
+
+#[test]
+fn importing_removes_the_kept_attachments() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = mixed(&db);
+    let kept = keep_attachment(files.path(), &draft.id);
+
+    import(&db, files.path(), &draft.id, ImportMode::All, NOW).unwrap();
+
+    assert!(!kept.exists());
+}
+
+#[test]
+fn discarding_removes_the_kept_attachments() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = mixed(&db);
+    let kept = keep_attachment(files.path(), &draft.id);
+
+    discard(&db, files.path(), &draft.id).unwrap();
+
+    assert!(!kept.exists());
+}
+
+#[test]
+fn a_failed_import_commit_leaves_the_kept_attachments() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = mixed(&db);
+    let kept = keep_attachment(files.path(), &draft.id);
+    db.with(|conn| {
+        conn.execute_batch(
+            "CREATE TABLE commit_guard (
+                question_id TEXT REFERENCES questions(id) DEFERRABLE INITIALLY DEFERRED
+             );
+             CREATE TRIGGER refuse_draft_commit AFTER UPDATE OF status ON drafts BEGIN
+                INSERT INTO commit_guard VALUES ('missing-question');
+             END;",
+        )?;
+        Ok(())
+    })
+    .unwrap();
+
+    assert!(import(&db, files.path(), &draft.id, ImportMode::All, NOW).is_err());
+
+    assert!(kept.is_file());
+    assert_eq!(summary_of(&db, "d1").status, DraftStatus::Review);
+}
+
 #[test]
 fn the_waiting_list_has_only_drafts_to_review() {
     let db = Database::open_in_memory().unwrap();
     mixed(&db);
     insert(&db, &draft_of("d2", vec![question("q7", "a")], None));
     insert(&db, &draft_of("d3", vec![question("q8", "a")], None));
-    db.with(|conn| discard(conn, "d3")).unwrap();
+    discard_with(&db, &DraftId::from("d3")).unwrap();
     let list = db.with(|conn| waiting(conn)).unwrap();
     let mut ids: Vec<_> = list.iter().map(|d| d.id.as_str()).collect();
     ids.sort_unstable();
     assert_eq!(ids, ["d1", "d2"]);
-    assert_eq!(list.iter().find(|d| d.id == "d1").unwrap().disputed, 1);
+    assert_eq!(
+        list.iter()
+            .find(|d| d.id.as_str() == "d1")
+            .unwrap()
+            .disputed,
+        1
+    );
     let json = serde_json::to_string(&list).unwrap();
     assert!(!json.contains("ENUNCIADO"));
 }

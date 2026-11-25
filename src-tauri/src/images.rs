@@ -5,14 +5,47 @@
 //! match the image pattern are served, and only from `<app data>/images/`: anything else,
 //! including path traversal, gets 404. No other folder is reachable.
 
+use std::ops::RangeInclusive;
 use std::path::Path;
 
 use tauri::http::{Method, Request, Response, StatusCode, header};
 
-use crate::bank::question::is_valid_image_name;
-
 /// URI scheme registered for question images.
 pub const SCHEME: &str = "image";
+
+const IMAGE_HASH_LENGTH: RangeInclusive<usize> = 24..=64;
+
+pub(crate) enum ImageFormat {
+    Png,
+    Jpeg,
+    Webp,
+}
+
+impl ImageFormat {
+    /// Matches a lowercase hex hash followed by a supported extension.
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        let (stem, extension) = name.split_once('.')?;
+        if !IMAGE_HASH_LENGTH.contains(&stem.len())
+            || !stem.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            return None;
+        }
+        match extension {
+            "png" => Some(Self::Png),
+            "jpg" | "jpeg" => Some(Self::Jpeg),
+            "webp" => Some(Self::Webp),
+            _ => None,
+        }
+    }
+
+    fn content_type(self) -> &'static str {
+        match self {
+            Self::Png => "image/png",
+            Self::Jpeg => "image/jpeg",
+            Self::Webp => "image/webp",
+        }
+    }
+}
 
 fn status(code: StatusCode) -> Response<Vec<u8>> {
     Response::builder()
@@ -20,15 +53,6 @@ fn status(code: StatusCode) -> Response<Vec<u8>> {
         .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
         .body(Vec::new())
         .expect("static response is valid")
-}
-
-fn content_type(name: &str) -> &'static str {
-    match name.rsplit_once('.').map(|(_, ext)| ext) {
-        Some("png") => "image/png",
-        Some("jpg" | "jpeg") => "image/jpeg",
-        Some("webp") => "image/webp",
-        _ => "application/octet-stream",
-    }
 }
 
 /// The response for any request that can't be served.
@@ -46,13 +70,13 @@ pub fn respond(images_dir: &Path, request: &Request<Vec<u8>>) -> Response<Vec<u8
     let Some(name) = request.uri().path().strip_prefix('/') else {
         return status(StatusCode::NOT_FOUND);
     };
-    if !is_valid_image_name(name) {
+    let Some(format) = ImageFormat::from_name(name) else {
         return status(StatusCode::NOT_FOUND);
-    }
+    };
     match std::fs::read(images_dir.join(name)) {
         Ok(bytes) => Response::builder()
             .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, content_type(name))
+            .header(header::CONTENT_TYPE, format.content_type())
             .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
             // Names are content hashes, so an image never changes.
             .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
@@ -128,7 +152,7 @@ mod tests {
     }
 
     #[test]
-    fn path_traversal_and_other_folders_are_not_reachable() {
+    fn requests_cannot_reach_paths_outside_the_image_folder() {
         let f = folders();
         for uri in [
             "image://localhost/../gabaritei.sqlite",
@@ -160,9 +184,17 @@ mod tests {
 
     #[test]
     fn content_types_follow_the_extension() {
-        assert_eq!(content_type("a.png"), "image/png");
-        assert_eq!(content_type("a.jpg"), "image/jpeg");
-        assert_eq!(content_type("a.jpeg"), "image/jpeg");
-        assert_eq!(content_type("a.webp"), "image/webp");
+        for (extension, content_type) in [
+            ("png", "image/png"),
+            ("jpg", "image/jpeg"),
+            ("jpeg", "image/jpeg"),
+            ("webp", "image/webp"),
+        ] {
+            let name = format!("0123456789abcdef0123456789abcdef.{extension}");
+            assert_eq!(
+                ImageFormat::from_name(&name).unwrap().content_type(),
+                content_type
+            );
+        }
     }
 }

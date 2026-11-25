@@ -39,6 +39,10 @@ claude -p --output-format stream-json --verbose --json-schema '<schema>'
 
 - **Structured output:** the last `{"type":"result"}` event has `structured_output` (the answer),
   `is_error`, `total_cost_usd` and `result` (the text). No `structured_output` means invalid.
+- **Schema dialect:** Claude Code 2.1.331 rejects an explicit Draft 2020-12 declaration.
+  The Claude runner omits the top-level `$schema` from its CLI argument. The same checker schema
+  with its local `$defs` references returned structured output with this version. Codex's schema
+  file keeps the declaration.
 - **Isolation (verified):** the `system`/`init` event lists `tools` as only `Glob`, `Grep`, `Read`
   and `StructuredOutput`, no user plugins (only built-in ones) and no MCP servers. `--setting-sources ""`
   stops `~/.claude` and the project's settings and hooks from loading. Run in the temp folder, so no
@@ -102,54 +106,50 @@ codex exec - --output-schema schema.json -o saida.json --json
 - **`--strict-config`:** makes Codex fail on an unknown `-c` key instead of ignoring it (verified:
   `mcp_servers.<name>.enabled_tools` is accepted, a made-up key is rejected). The RemNote tool
   allowlist uses `enabled_tools`.
-- **"Use my Codex config" cannot be restricted by the app:** the user's own RemNote server may
-  expose write tools. Configurações warns about it.
-- **User config:** `--ignore-user-config` skips `~/.codex/config.toml` (hooks, MCP servers,
-  instructions); auth still comes from `CODEX_HOME`. It is omitted only when the user chose
-  "use my Codex config" for RemNote.
-- **Shell (owner-approved, 2026-11-20):** Codex reads files through its shell, and `--disable shell_tool
-  --disable unified_exec` leaves it unable to read attachments (verified: it answered "can't read").
-  So the shell is disabled when a run has no attachments, and kept, inside `--sandbox read-only`
-  (no writes), when it has. Codex has no other way to read attachments.
-- **What the read-only sandbox can read (investigated for #53, codex-cli 0.171.0, Linux):**
-  `--sandbox read-only` lets the shell read **any** file the user can read. Verified: with the
-  run folder as cwd, `cat <absolute path outside the run folder>` returned the contents of a canary
-  file. So a prompt-injected page or attachment could make Codex read, say, `~/.ssh`, and the
-  content would reach the model provider's context, and from there web-search queries. Both
-  CLIs' own credential files are readable too (a worse case than `~/.ssh`, and it would break
-  AGENTS.md rule 2).
-- **Narrowing it works with a permissions profile (verified on Linux):** replacing `--sandbox` with
-  `-c default_permissions="gab" -c 'permissions.gab.filesystem={":minimal"="read", "<codex install dir>"="read", ":workspace_roots"={"."="read"}}'`
-  (run folder as cwd) let `cat anexos/a.md` work and made the same canary file outside the run
-  folder invisible ("No such file"). Caveats:
-  - `:minimal` alone is not enough: the sandbox re-executes the `codex` binary, so its install
-    folder (`~/.codex/packages/...` for the standalone install) must also be readable, or every
-    command fails with `bwrap: execvp ...: No such file`. The app would have to work that folder
-    out from the resolved CLI path, and the layout differs per install method and OS.
-  - **Never grant `~/.codex` itself:** it holds `auth.json`. Only the install subfolder
-    (`packages/...`).
-  - `:minimal` is "platform defaults" (system folders needed to run commands); the exact list was
-    not inspected, and only one outside canary path was tested, so "hides everything else" is
-    not proven.
-  - Not checked: whether writes and network stay blocked under the profile, and whether it works
-    together with `--strict-config` (the verification run did not pass `--strict-config`).
-  - The `":workspace_roots"` key only parses inside one inline table (`-c 'a.b.":x"=...'` keeps
-    the quotes and is rejected).
-  - Not verified on macOS (Seatbelt) or on Windows, where the sandbox has its own backends. Codex's
-    docs say unsupported split policies fail closed on Windows (not tested here).
-- **Other options, not implemented:** inlining MD/TXT attachments into the prompt would let those
-  runs keep the shell disabled (only PDFs would need it), but large files need a size cap and the
-  prompt-injection surface of the attachment text stays. Codex has no domain allowlist for web
-  search (the app only uses `web_search=live` or `disabled`; other modes were not checked).
-- **RemNote token:** passed in the child's environment (`GABARITEI_REMNOTE_TOKEN`), never as an argument.
-
-## Windows (not verified)
-
-Nothing here was run on Windows yet. Known risks to check on the Windows machine: npm installs give
-`claude.cmd` / `codex.cmd`, and Rust's batch-file argument escaping can refuse some arguments (the
-discovery order tries `.exe` first); `cmd.exe` limits a command line to 8191 characters, and Claude
-gets the JSON schema and the role instructions as arguments; Codex's read-only sandbox on Windows
-is untested; `taskkill /T /F` is the only cancel path (no SIGINT).
+- **User config:** Job runs always pass `--ignore-user-config` and `--ignore-rules`.
+  Codex still uses its existing login. RemNote uses an explicit server URL, keychain token and
+  tool allowlist. The retired “use my Codex config” setting loads as disabled, with no URL or
+  approved tools carried into the replacement mode.
+- **Shell without attachments:** `--sandbox read-only --disable shell_tool --disable unified_exec`.
+  Attachments (PDF, Markdown and text) are staged as files in `anexos/`. The app uses Codex's shell
+  to read them. Attachment runs use `approval_policy="never"` and limit the shell subprocess's
+  environment inheritance to core variables.
+- **macOS and Linux attachment profile:** The app selects a unique permissions profile via
+  `-c default_permissions="<name>"`, without `--sandbox`. The inline
+  `permissions.<name>.filesystem` table grants read access to `:minimal`, the absolute run
+  directory and the resolved Codex runtime. The profile disables shell network access.
+  macOS also denies both physical Seatbelt scratch directories (`/private/tmp` and
+  `/private/var/tmp`). The app resolves standalone executables and Homebrew symlinks and finds
+  the native binary behind an npm launcher. Packaged binaries may need their own runtime folder
+  for bundled tools and helpers. A loose binary gets a read grant for that file only.
+  Neither the user's home nor `CODEX_HOME` is granted. An unresolvable installation or failed
+  profile run stops with an error.
+- **Platform defaults on codex-cli 0.172.0:** Linux Bubblewrap's `:minimal` provides the system
+  runtime (including `/usr`, `/etc`, `/proc` and `/dev`). Directory traversal needed to reach
+  the granted paths can expose ancestor metadata. On macOS, `:minimal` gives Seatbelt access to
+  parts of the system libraries and framework directories, standard tools under `/bin` and
+  `/usr/bin`, and platform configuration and device handles. It can also read applications
+  under `/Applications`. The pinned
+  [Linux runtime paths](https://github.com/openai/codex/blob/rust-v0.172.0/codex-rs/linux-sandbox/src/bwrap.rs)
+  and [Seatbelt rules](https://github.com/openai/codex/blob/rust-v0.172.0/codex-rs/sandboxing/src/seatbelt_read_only_platform_defaults.sbpl)
+  describe the platform runtime access in full.
+- **Verification:** codex-cli 0.172.0 read a staged attachment and denied an outside canary,
+  writing in the run folder and a loopback connection using the Linux CLI under WSL2 and on a
+  hosted Apple Silicon macOS 15 runner. The macOS profile also denied reads and writes in both scratch
+  directories. Linux scratch writes stayed in the private mount and left no file on the host.
+  A separately invoked `exec --strict-config` accepted the settings and rejected an unknown
+  config key. These probes used synthetic files and no model calls.
+  [Hosted verification](https://github.com/tiagoguerreirodev/Gabaritei/actions/runs/45533386319).
+- **Windows attachment fallback (owner decision, #81):** Use the existing `--sandbox read-only`.
+  It permits reads outside the run folder. The narrower profile was refused on Windows 11:
+  the unelevated backend required the elevated backend on a native Windows 11 Pro host and
+  on the hosted Windows 11 ARM64 runner. The hosted elevated backend required effective
+  `:root` read permission. The app does not grant that permission to the named profile or
+  change the system sandbox setup. On native Windows 11 Pro, the built-in read-only sandbox
+  let the shell read the staged attachment and outside synthetic canary and connect to a
+  loopback listener. It blocked a write in the run folder.
+- **RemNote token:** passed in the CLI process's environment
+  (`GABARITEI_REMNOTE_TOKEN`), never as an argument.
 
 ## Failures
 
@@ -184,5 +184,29 @@ Checked by the `rust-test-windows` CI job (`windows-latest`) with batch-file fak
 
 Still to check by hand on the Windows 11 machine, with the real CLIs:
 
-- Codex's read-only sandbox on Windows (can it read `anexos/`?).
 - A real `claude` / `codex` run end to end from the installed app (login probe, generation, blind check).
+
+## Manual native app pass (#55)
+
+The 2026-11-24 pass used the Gabaritei 0.3.0 native Linux debug build with the frontend embedded,
+Claude Code 2.1.331, Codex CLI 0.172.0 and a temporary app data directory containing synthetic
+questions only. Both CLIs used their existing logins.
+
+1. **Generate and dispute.** Codex generated one Certo/Errado question. The initial Claude check
+   failed before inference because of the schema dialect declaration (#198). With the compatibility
+   build, the check was retried after setting the synthetic draft's key to a known wrong option
+   in the temporary database. Claude disagreed, Codex revised the question, and Claude accepted
+   the revision on the second check. The saved verdict was `fixed` and marked as objected.
+2. **Preview and import.** *Revisar pacote* showed one question and the *corrigida e conferida*
+   verdict, with the question content and answer details hidden. *Importar tudo* added the
+   question to a generated collection and closed the draft.
+3. **Re-check while solving.** A separate synthetic question had a known wrong key and a blank
+   explanation. In Study mode the AI actions appeared after confirming the answer. Codex
+   proposed the correct option. The stored key and audit history changed on applying the proposal,
+   and Resolver re-scored the answer from incorrect to correct.
+4. **Explain while solving.** *Explicar* called Codex, displayed an explanation in Resolver and
+   persisted it to the question.
+
+The initial schema failure appeared as a generic CLI exit code in the preview. The preview
+also used plural labels for counts of one. This live pass covers Linux. RemNote verification
+is tracked separately in #54.

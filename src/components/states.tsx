@@ -1,4 +1,4 @@
-import { For, Show, createMemo, type JSX } from "solid-js";
+import { For, Match, Show, Switch, createMemo, type Accessor, type JSX } from "solid-js";
 
 /**
  * Shown while data loads. `variant="skeleton"` draws grey placeholder lines (they hold still when
@@ -47,6 +47,14 @@ export function errorMessage(error: unknown) {
   return "Ocorreu um erro inesperado. Tente novamente.";
 }
 
+export function InlineError(props: { children: JSX.Element }) {
+  return (
+    <p class="error" role="alert">
+      {props.children}
+    </p>
+  );
+}
+
 /** Moves focus to the first heading of `root`, so focus does not fall to the body when a retry button disappears. */
 function focusHeading(start: Element | null) {
   const selector = "[role='dialog'], section, main";
@@ -84,11 +92,7 @@ export function ErrorState(props: {
   return (
     <div class="state error-state" ref={root}>
       <Show when={box()} keyed>
-        {(current) => (
-          <p class="error" role="alert">
-            {errorMessage(current.error)}
-          </p>
-        )}
+        {(current) => <InlineError>{errorMessage(current.error)}</InlineError>}
       </Show>
       <Show when={props.onRetry}>
         {(run) => (
@@ -104,5 +108,38 @@ export function ErrorState(props: {
         )}
       </Show>
     </div>
+  );
+}
+
+/** Renders errors, the initial load, and the empty or loaded view in that order. */
+export function ResourceView<T>(props: {
+  value: T | null | undefined;
+  error?: Accessor<unknown>;
+  pending: boolean;
+  retrying?: boolean;
+  onRetry?: () => unknown;
+  describedBy?: string;
+  placeholder?: JSX.Element;
+  empty?: JSX.Element;
+  children: (value: Accessor<NonNullable<T>>) => JSX.Element;
+}) {
+  const error = () => props.error?.();
+  const available = () => {
+    const value = props.value;
+    return value == null ? undefined : { value };
+  };
+  return (
+    <Switch fallback={props.empty}>
+      <Match when={error() !== undefined}>
+        <ErrorState
+          error={error()}
+          onRetry={props.onRetry}
+          busy={props.retrying}
+          describedBy={props.describedBy}
+        />
+      </Match>
+      <Match when={props.pending}>{props.placeholder ?? <Loading />}</Match>
+      <Match when={available()}>{(loaded) => props.children(() => loaded().value)}</Match>
+    </Switch>
   );
 }

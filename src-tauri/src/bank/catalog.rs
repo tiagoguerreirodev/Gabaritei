@@ -2,34 +2,22 @@
 //!
 //! These views never include answer keys or explanations (AGENTS.md rule 1).
 
-use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
+use super::tags::FilterOptions;
+use crate::ordering::cmp_pt;
+pub use crate::ordering::fold;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
-use unicode_normalization::UnicodeNormalization;
-use unicode_normalization::char::is_combining_mark;
 
-use crate::attempts::FeedbackMode;
+use crate::attempts::{ANSWERED_RESPONSE_SQL, FeedbackMode, SourceKind};
 use crate::error::{AppError, AppResult};
+use crate::ids::{AttemptId, CollectionId, TopicId};
 
 /// Default and maximum page sizes for the collections list.
 pub const DEFAULT_PAGE_SIZE: u32 = 20;
 pub const MAX_PAGE_SIZE: u32 = 100;
-
-/// Lowercase, accent-free text for search and Portuguese alphabetical order.
-pub fn fold(text: &str) -> String {
-    text.nfd()
-        .filter(|c| !is_combining_mark(*c))
-        .collect::<String>()
-        .to_lowercase()
-}
-
-/// Portuguese-friendly order: accents and case only break ties.
-pub(crate) fn cmp_pt(a: &str, b: &str) -> Ordering {
-    fold(a).cmp(&fold(b)).then_with(|| a.cmp(b))
-}
 
 // ---- Topic tree ------------------------------------------------------------------------------
 
@@ -66,7 +54,7 @@ pub struct MatterNode {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct TopicNode {
-    pub id: i64,
+    pub id: TopicId,
     pub name: String,
     pub questions: u32,
     /// *Acerto entre respondidas* over the latest answers; `None` until the topic is answered.
@@ -76,97 +64,170 @@ pub struct TopicNode {
 /// Area › matter › topic with distinct question counts at every level. A question filed
 /// under two topics of the same matter counts once for that matter.
 pub fn topic_tree(conn: &Connection) -> AppResult<TopicTree> {
-    let mut area_counts: BTreeMap<String, u32> = BTreeMap::new();
-    for row in conn
-        .prepare(
-            "SELECT t.area, COUNT(DISTINCT qt.question_id)
-             FROM topics t JOIN question_topics qt ON qt.topic_id = t.id GROUP BY t.area",
-        )?
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?)))?
-    {
-        let (area, count) = row?;
-        area_counts.insert(area, count);
-    }
-    let mut matter_counts: BTreeMap<(String, String), u32> = BTreeMap::new();
-    for row in conn
-        .prepare(
-            "SELECT t.area, t.matter, COUNT(DISTINCT qt.question_id)
-             FROM topics t JOIN question_topics qt ON qt.topic_id = t.id
-             GROUP BY t.area, t.matter",
-        )?
-        .query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, u32>(2)?,
-            ))
-        })?
-    {
-        let (area, matter, count) = row?;
-        matter_counts.insert((area, matter), count);
-    }
+    let area_counts = area_counts(conn)?;
+    let matter_counts = matter_counts(conn)?;
+    let groups = topic_groups(conn)?;
+    let areas = build_areas(groups, &area_counts, &matter_counts)?;
+    let questions = conn.query_row("SELECT COUNT(*) FROM questions", [], |r| r.get(0))?;
+    Ok(TopicTree { areas, questions })
+}
 
+/// Suggestions and the canonical spelling for each level of a generation topic.
+#[derive(Debug, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TopicChoices {
+    pub path: super::TopicPath,
+    pub matters: Vec<String>,
+    pub topics: Vec<String>,
+    pub questions: Option<u32>,
+    pub is_new: bool,
+}
+
+fn matching_name<'a>(choices: &'a [String], typed: &str) -> Option<&'a str> {
+    let typed = typed.trim();
+    choices
+        .iter()
+        .find(|s| s.as_str() == typed)
+        .or_else(|| {
+            let key = fold(typed);
+            choices.iter().find(|s| fold(s) == key)
+        })
+        .map(String::as_str)
+}
+
+/// Reads names from the taxonomy index. Only the selected topic needs a question count.
+pub fn topic_choices(conn: &Connection, typed: &super::TopicPath) -> AppResult<TopicChoices> {
+    fn names(conn: &Connection, sql: &str, args: &[&str]) -> AppResult<Vec<String>> {
+        let mut values = conn
+            .prepare(sql)?
+            .query_map(rusqlite::params_from_iter(args), |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        values.sort_by(|a, b| cmp_pt(a, b));
+        Ok(values)
+    }
+    let areas = names(conn, "SELECT DISTINCT area FROM topics", &[])?;
+    let area = matching_name(&areas, &typed.area).unwrap_or(typed.area.trim());
+    let matters = names(
+        conn,
+        "SELECT DISTINCT matter FROM topics WHERE area = ?1",
+        &[area],
+    )?;
+    let matter = matching_name(&matters, &typed.matter).unwrap_or(typed.matter.trim());
+    let topics = names(
+        conn,
+        "SELECT topic FROM topics WHERE area = ?1 AND matter = ?2",
+        &[area, matter],
+    )?;
+    let found = matching_name(&topics, &typed.topic);
+    let path = super::TopicPath::new(area, matter, found.unwrap_or(typed.topic.trim()));
+    let questions = found
+        .map(|topic| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM question_topics qt JOIN topics t ON t.id = qt.topic_id
+         WHERE t.area = ?1 AND t.matter = ?2 AND t.topic = ?3",
+                params![area, matter, topic],
+                |row| row.get(0),
+            )
+        })
+        .transpose()?;
+    let is_new = questions.is_none()
+        && [&path.area, &path.matter, &path.topic]
+            .iter()
+            .all(|s| !s.is_empty());
+    Ok(TopicChoices {
+        path,
+        matters,
+        topics,
+        questions,
+        is_new,
+    })
+}
+
+type ByAreaAndMatter<T> = BTreeMap<String, BTreeMap<String, T>>;
+
+fn area_counts(conn: &Connection) -> AppResult<BTreeMap<String, u32>> {
+    let mut statement = conn.prepare(
+        "SELECT t.area, COUNT(DISTINCT qt.question_id)
+         FROM topics t JOIN question_topics qt ON qt.topic_id = t.id GROUP BY t.area",
+    )?;
+    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+fn matter_counts(conn: &Connection) -> AppResult<ByAreaAndMatter<u32>> {
+    let mut statement = conn.prepare(
+        "SELECT t.area, t.matter, COUNT(DISTINCT qt.question_id)
+         FROM topics t JOIN question_topics qt ON qt.topic_id = t.id
+         GROUP BY t.area, t.matter",
+    )?;
+    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+    let mut counts = ByAreaAndMatter::new();
+    for row in rows {
+        let (area, matter, count) = row?;
+        counts.entry(area).or_default().insert(matter, count);
+    }
+    Ok(counts)
+}
+
+fn topic_groups(conn: &Connection) -> AppResult<ByAreaAndMatter<Vec<TopicNode>>> {
     let accuracy = crate::metrics::topic_accuracy(conn)?;
-    let mut areas: BTreeMap<String, BTreeMap<String, Vec<TopicNode>>> = BTreeMap::new();
-    for row in conn
-        .prepare(
-            "SELECT t.id, t.area, t.matter, t.topic, COUNT(qt.question_id)
-             FROM topics t JOIN question_topics qt ON qt.topic_id = t.id
-             GROUP BY t.id",
-        )?
-        .query_map([], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, u32>(4)?,
-            ))
-        })?
-    {
-        let (id, area, matter, topic, count) = row?;
-        areas
+    let mut groups = ByAreaAndMatter::<Vec<TopicNode>>::new();
+    let mut statement = conn.prepare(
+        "SELECT t.id, t.area, t.matter, t.topic, COUNT(qt.question_id)
+         FROM topics t JOIN question_topics qt ON qt.topic_id = t.id
+         GROUP BY t.id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        let id = row.get(0)?;
+        let topic = TopicNode {
+            id,
+            name: row.get(3)?,
+            questions: row.get(4)?,
+            accuracy: accuracy.get(&id).copied(),
+        };
+        Ok((row.get(1)?, row.get(2)?, topic))
+    })?;
+    for row in rows {
+        let (area, matter, topic) = row?;
+        groups
             .entry(area)
             .or_default()
             .entry(matter)
             .or_default()
-            .push(TopicNode {
-                id,
-                name: topic,
-                questions: count,
-                accuracy: accuracy.get(&id).copied(),
-            });
+            .push(topic);
     }
+    Ok(groups)
+}
 
-    let mut tree: Vec<AreaNode> = areas
-        .into_iter()
-        .map(|(area, matters)| {
-            let mut matters: Vec<MatterNode> = matters
-                .into_iter()
-                .map(|(matter, mut topics)| {
-                    topics.sort_by(|a, b| cmp_pt(&a.name, &b.name));
-                    MatterNode {
-                        questions: matter_counts[&(area.clone(), matter.clone())],
-                        name: matter,
-                        topics,
-                    }
-                })
-                .collect();
-            matters.sort_by(|a, b| cmp_pt(&a.name, &b.name));
-            AreaNode {
-                questions: area_counts[&area],
-                name: area,
-                matters,
-            }
-        })
-        .collect();
-    tree.sort_by(|a, b| cmp_pt(&a.name, &b.name));
-
-    let questions = conn.query_row("SELECT COUNT(*) FROM questions", [], |r| r.get(0))?;
-    Ok(TopicTree {
-        areas: tree,
-        questions,
-    })
+fn build_areas(
+    groups: ByAreaAndMatter<Vec<TopicNode>>,
+    area_counts: &BTreeMap<String, u32>,
+    matter_counts: &ByAreaAndMatter<u32>,
+) -> AppResult<Vec<AreaNode>> {
+    let missing_count = || AppError::Internal("missing group count in the topic tree".into());
+    let mut areas = Vec::with_capacity(groups.len());
+    for (area, grouped_matters) in groups {
+        let questions = *area_counts.get(&area).ok_or_else(missing_count)?;
+        let counts = matter_counts.get(&area).ok_or_else(missing_count)?;
+        let mut matters = Vec::with_capacity(grouped_matters.len());
+        for (matter, mut topics) in grouped_matters {
+            topics.sort_by(|a, b| cmp_pt(&a.name, &b.name));
+            matters.push(MatterNode {
+                questions: *counts.get(&matter).ok_or_else(missing_count)?,
+                name: matter,
+                topics,
+            });
+        }
+        matters.sort_by(|a, b| cmp_pt(&a.name, &b.name));
+        areas.push(AreaNode {
+            name: area,
+            questions,
+            matters,
+        });
+    }
+    areas.sort_by(|a, b| cmp_pt(&a.name, &b.name));
+    Ok(areas)
 }
 
 // ---- Collections -----------------------------------------------------------------------------
@@ -180,18 +241,11 @@ pub enum CollectionKind {
     Practice,
 }
 
-impl CollectionKind {
-    fn parse(value: &str) -> AppResult<Self> {
-        match value {
-            "imported" => Ok(Self::Imported),
-            "generated" => Ok(Self::Generated),
-            "practice" => Ok(Self::Practice),
-            other => Err(AppError::Internal(format!(
-                "unknown collection kind {other:?}"
-            ))),
-        }
-    }
-}
+crate::enum_text::stored_enum!(CollectionKind {
+        Imported => "imported",
+        Generated => "generated",
+        Practice => "practice",
+});
 
 /// Filters and page for the collections list. Empty strings mean "no filter".
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, TS)]
@@ -212,7 +266,7 @@ pub struct CollectionQuery {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct CollectionSummary {
-    pub id: String,
+    pub id: CollectionId,
     pub title: String,
     pub kind: CollectionKind,
     pub contest: Option<String>,
@@ -244,17 +298,17 @@ fn all_collections(conn: &Connection) -> AppResult<Vec<CollectionSummary>> {
         "SELECT c.id, c.title, c.kind, c.contest, c.board, c.created_at,
                 (SELECT COUNT(*) FROM collection_items ci WHERE ci.collection_id = c.id),
                 (SELECT MAX(a.finished_at) FROM attempts a
-                  WHERE a.source_kind = 'collection' AND a.source_ref = c.id),
+                  WHERE a.source_kind = ?1 AND a.source_ref = c.id),
                 EXISTS (SELECT 1 FROM attempts a
-                  WHERE a.source_kind = 'collection' AND a.source_ref = c.id
+                  WHERE a.source_kind = ?1 AND a.source_ref = c.id
                     AND a.finished_at IS NULL)
          FROM collections c",
     )?;
-    let rows = stmt.query_map([], |r| {
+    let rows = stmt.query_map([SourceKind::Collection], |r| {
         Ok((
-            r.get::<_, String>(0)?,
+            r.get::<_, CollectionId>(0)?,
             r.get::<_, String>(1)?,
-            r.get::<_, String>(2)?,
+            r.get::<_, CollectionKind>(2)?,
             r.get::<_, Option<String>>(3)?,
             r.get::<_, Option<String>>(4)?,
             r.get::<_, String>(5)?,
@@ -269,7 +323,7 @@ fn all_collections(conn: &Connection) -> AppResult<Vec<CollectionSummary>> {
         Ok(CollectionSummary {
             id,
             title,
-            kind: CollectionKind::parse(&kind)?,
+            kind,
             contest,
             board,
             questions,
@@ -281,13 +335,6 @@ fn all_collections(conn: &Connection) -> AppResult<Vec<CollectionSummary>> {
     .collect()
 }
 
-fn distinct(values: impl Iterator<Item = Option<String>>) -> Vec<String> {
-    let mut values: Vec<String> = values.flatten().collect();
-    values.sort_by(|a, b| cmp_pt(a, b));
-    values.dedup();
-    values
-}
-
 /// One page of collections matching the query, ordered by contest and then title.
 pub fn collections(conn: &Connection, query: &CollectionQuery) -> AppResult<CollectionPage> {
     let page_size = match query.page_size {
@@ -295,8 +342,8 @@ pub fn collections(conn: &Connection, query: &CollectionQuery) -> AppResult<Coll
         n => n.min(MAX_PAGE_SIZE),
     };
     let all = all_collections(conn)?;
-    let contests = distinct(all.iter().map(|c| c.contest.clone()));
-    let boards = distinct(all.iter().map(|c| c.board.clone()));
+    let FilterOptions { contests, boards } =
+        FilterOptions::from_tags(all.iter().map(|c| (c.contest.clone(), c.board.clone())));
 
     let search = fold(query.search.trim());
     let mut matching: Vec<CollectionSummary> = all
@@ -334,7 +381,7 @@ pub fn collections(conn: &Connection, query: &CollectionQuery) -> AppResult<Coll
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct AttemptListItem {
-    pub id: String,
+    pub id: AttemptId,
     pub feedback_mode: FeedbackMode,
     pub started_at: String,
     pub finished_at: Option<String>,
@@ -347,7 +394,7 @@ pub struct AttemptListItem {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct CollectionDetail {
-    pub id: String,
+    pub id: CollectionId,
     pub title: String,
     pub kind: CollectionKind,
     pub contest: Option<String>,
@@ -359,7 +406,7 @@ pub struct CollectionDetail {
 }
 
 /// One collection with its attempts.
-pub fn collection(conn: &Connection, id: &str) -> AppResult<CollectionDetail> {
+pub fn collection(conn: &Connection, id: &CollectionId) -> AppResult<CollectionDetail> {
     let row = conn
         .query_row(
             "SELECT c.title, c.kind, c.contest, c.board, c.created_at,
@@ -369,7 +416,7 @@ pub fn collection(conn: &Connection, id: &str) -> AppResult<CollectionDetail> {
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
+                    r.get::<_, CollectionKind>(1)?,
                     r.get::<_, Option<String>>(2)?,
                     r.get::<_, Option<String>>(3)?,
                     r.get::<_, String>(4)?,
@@ -381,20 +428,21 @@ pub fn collection(conn: &Connection, id: &str) -> AppResult<CollectionDetail> {
     let Some((title, kind, contest, board, created_at, questions)) = row else {
         return Err(AppError::Invalid("Caderno não encontrado.".into()));
     };
-    let mut stmt = conn.prepare(
+    let sql = format!(
         "SELECT a.id, a.feedback_mode, a.started_at, a.finished_at,
                 (SELECT COUNT(*) FROM responses r WHERE r.attempt_id = a.id
-                   AND r.answered_at IS NOT NULL),
+                   AND {ANSWERED_RESPONSE_SQL}),
                 (SELECT COUNT(*) FROM responses r WHERE r.attempt_id = a.id)
          FROM attempts a
-         WHERE a.source_kind = 'collection' AND a.source_ref = ?1
+         WHERE a.source_kind = ?1 AND a.source_ref = ?2
          ORDER BY a.started_at DESC, a.id DESC",
-    )?;
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let attempts = stmt
-        .query_map(params![id], |r| {
+        .query_map(params![SourceKind::Collection, id], |r| {
             Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
+                r.get::<_, AttemptId>(0)?,
+                r.get::<_, FeedbackMode>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, Option<String>>(3)?,
                 r.get::<_, u32>(4)?,
@@ -402,8 +450,7 @@ pub fn collection(conn: &Connection, id: &str) -> AppResult<CollectionDetail> {
             ))
         })?
         .map(|row| {
-            let (id, mode, started_at, finished_at, answered, total) = row?;
-            let feedback_mode = FeedbackMode::parse(&mode)?;
+            let (id, feedback_mode, started_at, finished_at, answered, total) = row?;
             Ok(AttemptListItem {
                 id,
                 feedback_mode,
@@ -417,7 +464,7 @@ pub fn collection(conn: &Connection, id: &str) -> AppResult<CollectionDetail> {
     Ok(CollectionDetail {
         id: id.to_owned(),
         title,
-        kind: CollectionKind::parse(&kind)?,
+        kind,
         contest,
         board,
         questions,
@@ -432,11 +479,12 @@ mod tests {
     use crate::bank::question::tests::multiple;
     use crate::bank::{TopicPath, import_questions};
     use crate::db::Database;
+    use crate::ids::QuestionId;
 
     const NOW: &str = "2026-11-19T12:00:00.000Z";
 
     /// Three questions: q1 in two topics of the same matter, q2 and q3 elsewhere.
-    fn bank() -> (Database, Vec<String>) {
+    fn bank() -> (Database, Vec<QuestionId>) {
         let db = Database::open_in_memory().unwrap();
         let mut q1 = multiple("q1", "Um", 0);
         q1.topics = vec![
@@ -464,13 +512,14 @@ mod tests {
         title: &str,
         contest: Option<&str>,
         board: Option<&str>,
-        questions: &[String],
+        questions: &[QuestionId],
     ) {
+        let id = CollectionId::from(id);
         db.transaction(|tx| {
             tx.execute(
                 "INSERT INTO collections (id, title, kind, contest, board, created_at)
-                 VALUES (?1, ?2, 'imported', ?3, ?4, ?5)",
-                params![id, title, contest, board, NOW],
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![id, title, CollectionKind::Imported, contest, board, NOW],
             )?;
             for (i, q) in questions.iter().enumerate() {
                 tx.execute(
@@ -485,7 +534,42 @@ mod tests {
     }
 
     #[test]
-    fn fold_removes_case_and_accents() {
+    fn topic_choices_recognize_accents_and_preserve_the_spelling_used_by_the_bank() {
+        let (db, _) = bank();
+        let choices = db
+            .with(|conn| {
+                topic_choices(
+                    conn,
+                    &TopicPath::new(" direito ", "CONSTITUCIONAL", "acao direta"),
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            (choices.path, choices.questions, choices.is_new),
+            (
+                TopicPath::new("Direito", "Constitucional", "Ação direta"),
+                Some(1),
+                false
+            )
+        );
+    }
+
+    #[test]
+    fn topic_choices_only_mark_complete_unmatched_paths_as_new() {
+        let (db, _) = bank();
+        for (text, expected) in [("Novo", true), (" ", false)] {
+            let choices = db
+                .with(|conn| {
+                    topic_choices(conn, &TopicPath::new("DIREITO", "constitucional", text))
+                })
+                .unwrap();
+            assert_eq!((choices.questions, choices.is_new), (None, expected));
+            assert!(choices.topics.contains(&"Ação direta".into()));
+        }
+    }
+
+    #[test]
+    fn fold_normalizes_text_for_search() {
         assert_eq!(
             fold("Administração Pública ÇÃO"),
             "administracao publica cao"
@@ -533,6 +617,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_tree_rejects_missing_matter_counts() {
+        let groups = ByAreaAndMatter::from([(
+            "Direito".into(),
+            BTreeMap::from([("Constitucional".into(), Vec::new())]),
+        )]);
+        let area_counts = BTreeMap::from([("Direito".into(), 1)]);
+        let matter_counts = ByAreaAndMatter::from([("Direito".into(), BTreeMap::new())]);
+
+        assert!(matches!(
+            build_areas(groups, &area_counts, &matter_counts),
+            Err(AppError::Internal(_))
+        ));
+    }
+
     fn sample_collections() -> Database {
         let (db, ids) = bank();
         add_collection(
@@ -567,7 +666,7 @@ mod tests {
     }
 
     #[test]
-    fn collections_are_ordered_by_contest_then_title_with_filter_options() {
+    fn collections_are_ordered_by_contest_then_title() {
         let db = sample_collections();
         let page = db
             .with(|c| collections(c, &CollectionQuery::default()))
@@ -580,16 +679,49 @@ mod tests {
                 "Informática › SQL"
             ]
         );
-        assert_eq!(page.total, 3);
-        assert_eq!(page.page_size, DEFAULT_PAGE_SIZE);
-        assert_eq!(page.contests, ["ALEPA", "Perito"]);
-        assert_eq!(page.boards, ["Cebraspe", "FGV"]);
-        assert_eq!(page.items[1].questions, 2);
-        assert!(!page.items[1].in_progress);
     }
 
     #[test]
-    fn search_ignores_case_and_accents() {
+    fn collections_report_the_default_page_size() {
+        let db = sample_collections();
+        let page = db
+            .with(|c| collections(c, &CollectionQuery::default()))
+            .unwrap();
+        assert_eq!((page.total, page.page_size), (3, DEFAULT_PAGE_SIZE));
+    }
+
+    #[test]
+    fn collections_list_filter_options() {
+        let db = sample_collections();
+        let page = db
+            .with(|c| collections(c, &CollectionQuery::default()))
+            .unwrap();
+        assert_eq!(page.contests, ["ALEPA", "Perito"]);
+        assert_eq!(page.boards, ["Cebraspe", "FGV"]);
+    }
+
+    #[test]
+    fn collections_count_their_questions() {
+        let db = sample_collections();
+        let page = db
+            .with(|c| collections(c, &CollectionQuery::default()))
+            .unwrap();
+        let summary = page.items.iter().find(|c| c.id.as_str() == "c1").unwrap();
+        assert_eq!(summary.questions, 2);
+    }
+
+    #[test]
+    fn collections_report_when_no_attempt_is_in_progress() {
+        let db = sample_collections();
+        let page = db
+            .with(|c| collections(c, &CollectionQuery::default()))
+            .unwrap();
+        let summary = page.items.iter().find(|c| c.id.as_str() == "c1").unwrap();
+        assert!(!summary.in_progress);
+    }
+
+    #[test]
+    fn search_matches_normalized_titles() {
         let db = sample_collections();
         let query = |search: &str| CollectionQuery {
             search: search.into(),
@@ -609,7 +741,7 @@ mod tests {
     }
 
     #[test]
-    fn contest_and_board_filters_combine() {
+    fn contest_filter_selects_matching_collections() {
         let db = sample_collections();
         let page = db
             .with(|c| {
@@ -626,6 +758,11 @@ mod tests {
             titles(&page),
             ["Direito › Ação direta", "Direito › Administração"]
         );
+    }
+
+    #[test]
+    fn contest_and_board_filters_combine() {
+        let db = sample_collections();
         let page = db
             .with(|c| {
                 collections(
@@ -639,6 +776,23 @@ mod tests {
             })
             .unwrap();
         assert_eq!(titles(&page), ["Direito › Ação direta"]);
+    }
+
+    #[test]
+    fn filter_options_include_tags_outside_the_current_filter() {
+        let db = sample_collections();
+        let page = db
+            .with(|c| {
+                collections(
+                    c,
+                    &CollectionQuery {
+                        contest: "ALEPA".into(),
+                        board: "Cebraspe".into(),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
         assert_eq!(
             page.contests,
             ["ALEPA", "Perito"],
@@ -647,7 +801,7 @@ mod tests {
     }
 
     #[test]
-    fn pagination_slices_and_reports_the_total() {
+    fn pagination_slices_collections() {
         let db = sample_collections();
         let page = |n: u32| {
             db.with(|c| {
@@ -665,7 +819,29 @@ mod tests {
         assert_eq!(titles(&page(0)).len(), 2);
         assert_eq!(titles(&page(1)), ["Informática › SQL"]);
         assert!(page(2).items.is_empty());
-        assert_eq!(page(1).total, 3);
+    }
+
+    #[test]
+    fn pagination_reports_the_total_before_slicing() {
+        let db = sample_collections();
+        let page = db
+            .with(|c| {
+                collections(
+                    c,
+                    &CollectionQuery {
+                        page: 1,
+                        page_size: 2,
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        assert_eq!(page.total, 3);
+    }
+
+    #[test]
+    fn pagination_caps_the_requested_page_size() {
+        let db = sample_collections();
         let huge = db
             .with(|c| {
                 collections(
@@ -684,17 +860,20 @@ mod tests {
     fn collection_detail_lists_attempts_newest_first() {
         let db = sample_collections();
         db.with(|c| {
-            c.execute_batch(
+            c.execute(
                 "INSERT INTO attempts (id, source_kind, source_ref, feedback_mode, started_at, finished_at)
-                 VALUES ('a1', 'collection', 'c1', 'exam', '2026-11-01T10:00:00.000Z', '2026-11-01T11:00:00.000Z'),
-                        ('a2', 'collection', 'c1', 'study', '2026-11-02T10:00:00.000Z', NULL),
-                        ('a3', 'collection', 'c2', 'study', '2026-11-03T10:00:00.000Z', NULL);",
+                 VALUES ('a1', ?1, 'c1', ?2, '2026-11-01T10:00:00.000Z', '2026-11-01T11:00:00.000Z'),
+                        ('a2', ?1, 'c1', ?3, '2026-11-02T10:00:00.000Z', NULL),
+                        ('a3', ?1, 'c2', ?3, '2026-11-03T10:00:00.000Z', NULL)",
+                params![SourceKind::Collection, FeedbackMode::Exam, FeedbackMode::Study],
             )?;
             Ok(())
         })
         .unwrap();
 
-        let detail = db.with(|c| collection(c, "c1")).unwrap();
+        let detail = db
+            .with(|c| collection(c, &CollectionId::from("c1")))
+            .unwrap();
         assert_eq!(detail.questions, 2);
         assert_eq!(detail.contest.as_deref(), Some("ALEPA"));
         let attempts: Vec<(&str, FeedbackMode, bool)> = detail
@@ -713,7 +892,7 @@ mod tests {
         let page = db
             .with(|c| collections(c, &CollectionQuery::default()))
             .unwrap();
-        let c1 = page.items.iter().find(|c| c.id == "c1").unwrap();
+        let c1 = page.items.iter().find(|c| c.id.as_str() == "c1").unwrap();
         assert!(c1.in_progress);
         assert_eq!(
             c1.last_finished_at.as_deref(),
@@ -770,7 +949,9 @@ mod tests {
     #[test]
     fn unknown_collection_is_a_pt_br_error() {
         let db = Database::open_in_memory().unwrap();
-        let error = db.with(|c| collection(c, "nope")).unwrap_err();
+        let error = db
+            .with(|c| collection(c, &CollectionId::from("nope")))
+            .unwrap_err();
         assert_eq!(error.to_string(), "Caderno não encontrado.");
     }
 }

@@ -12,14 +12,19 @@ pub mod bank;
 pub mod clock;
 pub mod commands;
 pub mod db;
+mod enum_text;
 pub mod error;
+pub mod ids;
 pub mod images;
 pub mod learning;
 pub mod log;
 pub mod metrics;
 pub mod migrate;
+mod ordering;
 pub mod paths;
+mod question_count;
 pub mod shortcuts;
+mod sync;
 
 use std::path::PathBuf;
 
@@ -65,6 +70,8 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::export_data,
             commands::import_data,
             commands::topics_tree,
+            commands::topic_choices,
+            commands::question_count_limits,
             commands::collections,
             commands::collection,
             commands::legacy_import_status,
@@ -84,6 +91,8 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::unannul,
             commands::ai_settings,
             commands::ai_catalog,
+            commands::ai_role_options,
+            commands::ai_change_role,
             commands::save_ai_settings,
             commands::set_remnote_token,
             commands::cli_test,
@@ -93,6 +102,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::drafts_waiting,
             commands::draft_summary,
             commands::draft_import,
+            commands::draft_import_all,
             commands::draft_discard,
             commands::pick_attachments,
             commands::recheck_ask,
@@ -131,36 +141,47 @@ fn startup_message(error: &AppError) -> String {
 /// Opens the database in the OS app data directory and makes it and the app's paths
 /// available to commands. When that fails, tells the user in a native dialog and exits when it is closed.
 fn open_database<R: Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error::Error>> {
-    let opened = app
+    match open_app_data(app) {
+        Ok((database, paths)) => manage_services(app, database, paths),
+        Err(error) => show_startup_error(app, &error),
+    }
+    Ok(())
+}
+
+fn open_app_data<R: Runtime>(app: &App<R>) -> AppResult<(db::Database, paths::AppPaths)> {
+    let data_dir = app
         .path()
         .app_data_dir()
-        .map_err(|error| AppError::Internal(error.to_string()))
-        .and_then(|data_dir| {
-            log::init(&data_dir);
-            open_state(data_dir)
-        });
-    let (database, paths) = match opened {
-        Ok(state) => state,
-        Err(error) => {
-            log::error(format!("could not start: {error} ({error:?})"));
-            // The main window already exists; hide it so only the dialog shows. The dialog must not
-            // block here: this hook runs on the main thread, which the dialog needs to be drawn
-            // on Linux. Closing it ends the app through Tauri's own exit.
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.hide();
-            }
-            let handle = app.handle().clone();
-            app.dialog()
-                .message(startup_message(&error))
-                .title("Gabaritei")
-                .kind(MessageDialogKind::Error)
-                .show(move |_| handle.exit(1));
-            return Ok(());
-        }
-    };
+        .map_err(|error| AppError::Internal(error.to_string()))?;
+    log::init(&data_dir);
+    open_state(data_dir)
+}
+
+fn show_startup_error<R: Runtime>(app: &App<R>, error: &AppError) {
+    log::error(format!("could not start: {error} ({error:?})"));
+    // Closing the non-blocking dialog exits the app, leaving the main thread free to draw it.
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    let handle = app.handle().clone();
+    app.dialog()
+        .message(startup_message(error))
+        .title("Gabaritei")
+        .kind(MessageDialogKind::Error)
+        .show(move |_| handle.exit(1));
+}
+
+fn manage_services<R: Runtime>(app: &App<R>, database: db::Database, paths: paths::AppPaths) {
     app.manage(database);
     app.manage(paths);
-    app.manage(backup::BackupService::default());
+    const FOLDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+    const MANIFEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+    app.manage(backup::BackupService::new(
+        backup_computer(),
+        FOLDER_TIMEOUT,
+        MANIFEST_TIMEOUT,
+        cleanup_restored_data,
+    ));
     start_backup_schedule(app.handle().clone());
     app.manage(ai::secrets::Secrets::keychain());
     app.manage(ai::catalog::CatalogCache::new(vec![
@@ -169,7 +190,36 @@ fn open_database<R: Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error:
     ]));
     app.manage(ai::jobs::GenerationManager::default());
     app.manage(ai::ondemand::OnDemand::default());
-    Ok(())
+}
+
+fn cleanup_restored_data(conn: &rusqlite::Connection) -> AppResult<()> {
+    ai::blind_check::recover_interrupted(conn)?;
+    learning::refresh_all(conn)
+}
+
+/// Reads the machine names at startup, before the backup service starts working.
+fn backup_computer() -> backup::Computer {
+    let local = local_host_name();
+    let host = gethostname::gethostname();
+    backup::Computer::from_host_names(local.as_deref(), &host.to_string_lossy())
+}
+
+/// macOS keeps a stable local name apart from the network host name.
+#[cfg(target_os = "macos")]
+fn local_host_name() -> Option<String> {
+    let output = std::process::Command::new("/usr/sbin/scutil")
+        .args(["--get", "LocalHostName"])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn local_host_name() -> Option<String> {
+    None
 }
 
 /// How often the schedule looks at the wall clock. Short, because a long sleep may not count
@@ -205,22 +255,12 @@ fn start_backup_schedule<R: Runtime>(app: tauri::AppHandle<R>) {
     let spawned = std::thread::Builder::new()
         .name("backup-schedule".into())
         .spawn(move || {
-            let mut retry_at: Option<std::time::Instant> = None;
+            let mut last_failure: Option<std::time::Instant> = None;
             loop {
-                let waiting = retry_at.is_some_and(|at| std::time::Instant::now() < at);
-                if let (false, Some(db), Some(paths), Some(service)) = (
-                    waiting,
-                    app.try_state::<db::Database>(),
-                    app.try_state::<paths::AppPaths>(),
-                    app.try_state::<backup::BackupService>(),
-                ) {
-                    let failed = run_scheduled_backup(
-                        &service,
-                        &db,
-                        &paths,
-                        time::OffsetDateTime::now_utc(),
-                    );
-                    retry_at = failed.then(|| std::time::Instant::now() + BACKUP_RETRY);
+                if ready_to_retry(last_failure.map(|time| time.elapsed()))
+                    && let Some(failed) = poll_scheduled_backup(&app)
+                {
+                    last_failure = failed.then(std::time::Instant::now);
                 }
                 std::thread::sleep(BACKUP_POLL);
             }
@@ -228,6 +268,22 @@ fn start_backup_schedule<R: Runtime>(app: tauri::AppHandle<R>) {
     if let Err(error) = spawned {
         log::error(format!("could not start the backup schedule: {error}"));
     }
+}
+
+fn ready_to_retry(time_since_failure: Option<std::time::Duration>) -> bool {
+    time_since_failure.is_none_or(|elapsed| elapsed >= BACKUP_RETRY)
+}
+
+fn poll_scheduled_backup<R: Runtime>(app: &tauri::AppHandle<R>) -> Option<bool> {
+    let service = app.try_state::<backup::BackupService>()?;
+    let db = app.try_state::<db::Database>()?;
+    let paths = app.try_state::<paths::AppPaths>()?;
+    Some(run_scheduled_backup(
+        &service,
+        &db,
+        &paths,
+        time::OffsetDateTime::now_utc(),
+    ))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -248,6 +304,15 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backup_retry_waits_until_its_deadline() {
+        assert!(ready_to_retry(None));
+        assert!(!ready_to_retry(Some(
+            BACKUP_RETRY - std::time::Duration::from_secs(1)
+        )));
+        assert!(ready_to_retry(Some(BACKUP_RETRY)));
+    }
 
     #[test]
     fn a_newer_database_stops_startup_with_the_pt_br_message() {
@@ -310,7 +375,11 @@ mod tests {
         std::fs::write(&file, "x").unwrap();
         database
             .with(|conn| {
-                db::set_setting(conn, "backup.folder", &file.join("sub").to_str().unwrap())
+                db::set_setting(
+                    conn,
+                    db::SettingKey::BackupFolder,
+                    &file.join("sub").to_str().unwrap(),
+                )
             })
             .unwrap();
         let service = backup::BackupService::default();

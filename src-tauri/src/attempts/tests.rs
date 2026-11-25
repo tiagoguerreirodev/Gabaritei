@@ -2,6 +2,7 @@ use super::*;
 use crate::bank::question::tests::{boolean, multiple};
 use crate::bank::{TopicPath, import_questions};
 use crate::db::Database;
+use rand::SeedableRng;
 
 const T0: &str = "2026-11-20T10:00:00.000Z";
 const T1: &str = "2026-11-20T10:05:00.000Z";
@@ -10,7 +11,7 @@ const SECRET: &str = "EXPLICACAO-SECRETA";
 
 /// Three multiple-choice questions and one Certo/Errado, all in collection `c1` and in the
 /// default topic. Every question has an explanation and a reference.
-fn bank() -> (Database, Vec<String>) {
+fn bank() -> (Database, Vec<QuestionId>) {
     let db = Database::open_in_memory().unwrap();
     let mut inputs = vec![
         multiple("q1", "Primeira", 0),
@@ -19,18 +20,18 @@ fn bank() -> (Database, Vec<String>) {
         boolean("q4", "Quarta", true),
     ];
     for input in &mut inputs {
-        input.explanation = format!("{SECRET} {}", input.local_id);
+        input.explanation = format!("{SECRET} {}", input.id);
         input.refs = vec!["REF-SECRETA".into()];
     }
     let ids = db
         .transaction(|tx| {
             let outcome = import_questions(tx, inputs, T0)?;
             let map = outcome.ids_by_local_id;
-            let ids: Vec<String> = ["q1", "q2", "q3", "q4"].map(|k| map[k].clone()).into();
+            let ids: Vec<QuestionId> = ["q1", "q2", "q3", "q4"].map(|k| map[k].clone()).into();
             tx.execute(
                 "INSERT INTO collections (id, title, kind, created_at)
-                 VALUES ('c1', 'Caderno de teste', 'imported', ?1)",
-                params![T0],
+                 VALUES ('c1', 'Caderno de teste', ?1, ?2)",
+                params![crate::bank::catalog::CollectionKind::Imported, T0],
             )?;
             for (i, q) in ids.iter().enumerate() {
                 tx.execute(
@@ -46,6 +47,10 @@ fn bank() -> (Database, Vec<String>) {
 }
 
 fn start_collection(db: &Database, mode: FeedbackMode) -> AttemptView {
+    start_collection_with_seed(db, mode, 0)
+}
+
+fn start_collection_with_seed(db: &Database, mode: FeedbackMode, seed: u64) -> AttemptView {
     db.transaction(|tx| {
         start(
             tx,
@@ -56,12 +61,13 @@ fn start_collection(db: &Database, mode: FeedbackMode) -> AttemptView {
                 feedback_mode: mode,
             },
             T0,
+            &mut rand::rngs::StdRng::seed_from_u64(seed),
         )
     })
     .unwrap()
 }
 
-fn key_of(db: &Database, question_id: &str) -> String {
+fn key_of(db: &Database, question_id: &QuestionId) -> String {
     db.with(|c| {
         Ok(c.query_row(
             "SELECT answer_id FROM questions WHERE id = ?1",
@@ -95,11 +101,23 @@ fn assert_no_spoiler(view: &ResponseView) {
 
 #[test]
 fn scoring_rules() {
-    assert_eq!(outcome(Some("a"), "a", false), Outcome::Correct);
-    assert_eq!(outcome(Some("b"), "a", false), Outcome::Wrong);
-    assert_eq!(outcome(None, "a", false), Outcome::Blank);
-    assert_eq!(outcome(Some("a"), "a", true), Outcome::Annulled);
-    assert_eq!(outcome(None, "a", true), Outcome::Annulled);
+    assert_eq!(
+        outcome(Some("a"), "a", QuestionStatus::Valid),
+        Outcome::Correct
+    );
+    assert_eq!(
+        outcome(Some("b"), "a", QuestionStatus::Valid),
+        Outcome::Wrong
+    );
+    assert_eq!(outcome(None, "a", QuestionStatus::Valid), Outcome::Blank);
+    assert_eq!(
+        outcome(Some("a"), "a", QuestionStatus::Annulled),
+        Outcome::Annulled
+    );
+    assert_eq!(
+        outcome(None, "a", QuestionStatus::Annulled),
+        Outcome::Annulled
+    );
 
     let score = Score::of([
         Outcome::Correct,
@@ -144,29 +162,53 @@ fn unrevealed_questions_carry_no_key_or_explanation_in_either_mode() {
     }
 }
 
-#[test]
-fn finishing_reveals_everything_and_scores_from_the_current_key() {
-    let (db, ids) = bank();
-    let view = start_collection(&db, FeedbackMode::Exam);
-    let mut view = view;
+fn finish_mixed_exam(db: &Database) -> (AttemptView, String) {
+    let view = start_collection(db, FeedbackMode::Exam);
     // Answer position 0 right, position 1 wrong, leave the rest blank.
-    let right = key_of(&db, &view.questions[0].question_id);
-    view = db
+    let right = key_of(db, &view.questions[0].question_id);
+    let view = db
         .transaction(|tx| answer(tx, &view.id, 0, Some(&right), T1))
         .unwrap();
-    let wrong = wrong_of(&db, &view.questions[1]);
-    view = db
+    let wrong = wrong_of(db, &view.questions[1]);
+    let view = db
         .transaction(|tx| answer(tx, &view.id, 1, Some(&wrong), T1))
         .unwrap();
     let finished = db
         .transaction(|tx| finish(tx, &view.id, view.revision, T2))
         .unwrap();
+    (finished, wrong)
+}
+
+#[test]
+fn finishing_an_exam_reveals_every_question() {
+    let (db, _) = bank();
+    let (finished, _) = finish_mixed_exam(&db);
     assert_eq!(finished.finished_at.as_deref(), Some(T2));
     assert!(finished.questions.iter().all(|q| q.reveal.is_some()));
-    let score = finished.score.clone().unwrap();
-    assert_eq!((score.correct, score.wrong, score.blank), (1, 1, 2));
+}
 
-    // A key correction applies retroactively: the wrong answer becomes the key.
+#[test]
+fn finishing_an_exam_scores_choices_and_blanks() {
+    let (db, _) = bank();
+    let (finished, _) = finish_mixed_exam(&db);
+    assert_eq!(
+        finished.score,
+        Some(Score {
+            correct: 1,
+            wrong: 1,
+            blank: 2,
+            annulled: 0,
+            evaluated: 4,
+            achievement: Some(0.25),
+            accuracy: Some(0.5),
+        })
+    );
+}
+
+#[test]
+fn correcting_a_key_rescores_a_finished_exam() {
+    let (db, ids) = bank();
+    let (finished, wrong) = finish_mixed_exam(&db);
     let corrected = &finished.questions[1].question_id;
     db.with(|c| {
         c.execute(
@@ -177,8 +219,18 @@ fn finishing_reveals_everything_and_scores_from_the_current_key() {
     })
     .unwrap();
     let reloaded = db.with(|c| load(c, &finished.id)).unwrap();
-    let score = reloaded.score.unwrap();
-    assert_eq!((score.correct, score.wrong, score.blank), (2, 0, 2));
+    assert_eq!(
+        reloaded.score,
+        Some(Score {
+            correct: 2,
+            wrong: 0,
+            blank: 2,
+            annulled: 0,
+            evaluated: 4,
+            achievement: Some(0.5),
+            accuracy: Some(1.0),
+        })
+    );
     assert!(ids.contains(corrected));
 }
 
@@ -213,7 +265,7 @@ fn study_mode_locks_a_revealed_choice() {
 }
 
 #[test]
-fn exam_mode_choices_can_change_and_clear() {
+fn exam_mode_choices_can_change() {
     let (db, _) = bank();
     let view = start_collection(&db, FeedbackMode::Exam);
     let options: Vec<String> = view.questions[0]
@@ -230,39 +282,69 @@ fn exam_mode_choices_can_change_and_clear() {
         view.questions[0].choice.as_deref(),
         Some(options[1].as_str())
     );
+}
+
+#[test]
+fn exam_mode_choices_can_be_cleared() {
+    let (db, _) = bank();
+    let view = start_collection(&db, FeedbackMode::Exam);
+    let choice = &view.questions[0].options[0].id;
+    db.transaction(|tx| answer(tx, &view.id, 0, Some(choice), T1))
+        .unwrap();
     let view = db
         .transaction(|tx| answer(tx, &view.id, 0, None, T1))
         .unwrap();
     assert_eq!(view.questions[0].choice, None);
+}
 
+#[test]
+fn exam_mode_rejects_invalid_choices() {
+    let (db, _) = bank();
+    let view = start_collection(&db, FeedbackMode::Exam);
     let invalid = db.transaction(|tx| answer(tx, &view.id, 0, Some("nope"), T1));
     assert_eq!(invalid.unwrap_err().to_string(), "Alternativa inválida.");
 }
 
 #[test]
-fn elimination_is_reversible_and_clears_the_selected_option() {
+fn elimination_toggles_an_option() {
     let (db, _) = bank();
     let view = start_collection(&db, FeedbackMode::Exam);
-    let a = view.questions[0].options[0].id.clone();
-    let b = view.questions[0].options[1].id.clone();
-
-    let view = db.transaction(|tx| eliminate(tx, &view.id, 0, &a)).unwrap();
-    assert_eq!(view.questions[0].eliminated, vec![a.clone()]);
-    let view = db.transaction(|tx| eliminate(tx, &view.id, 0, &a)).unwrap();
-    assert!(view.questions[0].eliminated.is_empty());
-
-    // Eliminating the chosen option clears the choice.
-    db.transaction(|tx| answer(tx, &view.id, 0, Some(&b), T1))
-        .unwrap();
-    let view = db.transaction(|tx| eliminate(tx, &view.id, 0, &b)).unwrap();
-    assert_eq!(view.questions[0].choice, None);
-    assert_eq!(view.questions[0].eliminated, vec![b.clone()]);
-
-    // Choosing an eliminated option brings it back.
+    let option = view.questions[0].options[0].id.clone();
     let view = db
-        .transaction(|tx| answer(tx, &view.id, 0, Some(&b), T1))
+        .transaction(|tx| eliminate(tx, &view.id, 0, &option))
         .unwrap();
-    assert_eq!(view.questions[0].choice.as_deref(), Some(b.as_str()));
+    assert_eq!(view.questions[0].eliminated, vec![option.clone()]);
+    let view = db
+        .transaction(|tx| eliminate(tx, &view.id, 0, &option))
+        .unwrap();
+    assert!(view.questions[0].eliminated.is_empty());
+}
+
+#[test]
+fn eliminating_the_chosen_option_clears_the_choice() {
+    let (db, _) = bank();
+    let view = start_collection(&db, FeedbackMode::Exam);
+    let option = view.questions[0].options[0].id.clone();
+    db.transaction(|tx| answer(tx, &view.id, 0, Some(&option), T1))
+        .unwrap();
+    let view = db
+        .transaction(|tx| eliminate(tx, &view.id, 0, &option))
+        .unwrap();
+    assert_eq!(view.questions[0].choice, None);
+    assert_eq!(view.questions[0].eliminated, vec![option]);
+}
+
+#[test]
+fn choosing_an_eliminated_option_restores_it() {
+    let (db, _) = bank();
+    let view = start_collection(&db, FeedbackMode::Exam);
+    let option = view.questions[0].options[0].id.clone();
+    db.transaction(|tx| eliminate(tx, &view.id, 0, &option))
+        .unwrap();
+    let view = db
+        .transaction(|tx| answer(tx, &view.id, 0, Some(&option), T1))
+        .unwrap();
+    assert_eq!(view.questions[0].choice.as_deref(), Some(option.as_str()));
     assert!(view.questions[0].eliminated.is_empty());
 }
 
@@ -285,7 +367,7 @@ fn abandoning_leaves_no_history() {
         .unwrap();
     assert_eq!((attempts, responses), (0, 0));
     let detail = db
-        .with(|c| crate::bank::catalog::collection(c, "c1"))
+        .with(|c| crate::bank::catalog::collection(c, &"c1".into()))
         .unwrap();
     assert!(detail.attempts.is_empty());
     assert_eq!(
@@ -295,7 +377,7 @@ fn abandoning_leaves_no_history() {
 }
 
 #[test]
-fn finishing_rejects_a_stale_revision_and_locks_the_answers() {
+fn finishing_rejects_a_stale_revision() {
     let (db, _) = bank();
     let view = start_collection(&db, FeedbackMode::Exam);
     let stale = view.revision;
@@ -316,7 +398,13 @@ fn finishing_rejects_a_stale_revision_and_locks_the_answers() {
             .finished_at
             .is_none()
     );
+}
 
+#[test]
+fn finishing_locks_responses() {
+    let (db, _) = bank();
+    let view = start_collection(&db, FeedbackMode::Exam);
+    let choice = view.questions[0].options[0].id.clone();
     let done = db
         .transaction(|tx| finish(tx, &view.id, view.revision, T2))
         .unwrap();
@@ -328,11 +416,23 @@ fn finishing_rejects_a_stale_revision_and_locks_the_answers() {
         let error = result.unwrap_err().to_string();
         assert!(error.contains("finalizada"), "{error}");
     }
+}
+
+#[test]
+fn finished_attempts_cannot_be_abandoned() {
+    let (db, _) = bank();
+    let (done, _) = finish_mixed_exam(&db);
     let error = db
         .transaction(|tx| abandon(tx, &done.id))
         .unwrap_err()
         .to_string();
     assert!(error.contains("histórico"), "{error}");
+}
+
+#[test]
+fn finished_attempts_cannot_be_finished_again() {
+    let (db, _) = bank();
+    let (done, _) = finish_mixed_exam(&db);
     assert!(
         db.transaction(|tx| finish(tx, &done.id, done.revision, T2))
             .is_err()
@@ -353,72 +453,93 @@ fn one_active_attempt_per_collection() {
                 feedback_mode: FeedbackMode::Study,
             },
             T1,
+            &mut rand::rngs::StdRng::seed_from_u64(2),
         )
     });
     assert!(again.unwrap_err().to_string().contains("em andamento"));
 
     db.transaction(|tx| finish(tx, &first.id, first.revision, T1))
         .unwrap();
-    let second = start_collection(&db, FeedbackMode::Study);
+    let second = start_collection_with_seed(&db, FeedbackMode::Study, 1);
     assert_ne!(second.id, first.id);
     assert_eq!(second.title, "Caderno de teste");
 }
 
+fn sample_collection_sessions(db: &Database) -> Vec<AttemptView> {
+    (0..30)
+        .map(|seed| {
+            let view = start_collection_with_seed(db, FeedbackMode::Exam, seed);
+            db.transaction(|tx| abandon(tx, &view.id)).unwrap();
+            view
+        })
+        .collect()
+}
+
 #[test]
-fn sessions_shuffle_questions_and_multiple_choice_options() {
-    let (db, ids) = bank();
+fn sessions_shuffle_the_collection_questions() {
+    let (db, mut ids) = bank();
+    ids.sort();
     let mut question_orders = std::collections::HashSet::new();
-    let mut option_orders = std::collections::HashSet::new();
-    for _ in 0..30 {
-        let view = start_collection(&db, FeedbackMode::Exam);
-        question_orders.insert(
-            view.questions
-                .iter()
-                .map(|q| q.question_id.clone())
-                .collect::<Vec<_>>(),
-        );
-        for q in &view.questions {
-            let texts: Vec<&str> = q.options.iter().map(|o| o.text.as_str()).collect();
-            match q.kind {
-                QuestionType::Boolean => assert_eq!(texts, ["Certo", "Errado"]),
-                QuestionType::Multiple => {
-                    option_orders.insert(texts.join(","));
-                }
-            }
-        }
-        let mut sorted: Vec<String> = view
-            .questions
-            .iter()
-            .map(|q| q.question_id.clone())
-            .collect();
+    for view in sample_collection_sessions(&db) {
+        let order: Vec<_> = view.questions.into_iter().map(|q| q.question_id).collect();
+        let mut sorted = order.clone();
         sorted.sort();
-        let mut expected = ids.clone();
-        expected.sort();
-        assert_eq!(sorted, expected);
-        db.transaction(|tx| abandon(tx, &view.id)).unwrap();
+        assert_eq!(sorted, ids);
+        question_orders.insert(order);
     }
     assert!(question_orders.len() > 1);
+}
+
+#[test]
+fn sessions_shuffle_multiple_choice_options() {
+    let (db, _) = bank();
+    let mut option_orders = std::collections::HashSet::new();
+    for view in sample_collection_sessions(&db) {
+        for q in view
+            .questions
+            .into_iter()
+            .filter(|q| q.kind == QuestionType::Multiple)
+        {
+            option_orders.insert(q.options.into_iter().map(|o| o.text).collect::<Vec<_>>());
+        }
+    }
     assert!(option_orders.len() > 1);
 }
 
 #[test]
-fn topic_sessions_prefer_unseen_then_least_recent_and_skip_annulled() {
+fn sessions_keep_boolean_options_in_order() {
+    let (db, _) = bank();
+    for view in sample_collection_sessions(&db) {
+        for q in view
+            .questions
+            .into_iter()
+            .filter(|q| q.kind == QuestionType::Boolean)
+        {
+            let texts: Vec<_> = q.options.into_iter().map(|o| o.text).collect();
+            assert_eq!(texts, ["Certo", "Errado"]);
+        }
+    }
+}
+
+#[test]
+fn topic_sessions_prefer_unseen_then_least_recent() {
     let (db, ids) = bank();
-    let topic_id: i64 = db
+    let topic_id: TopicId = db
         .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
         .unwrap();
-    // q4 annulled; q1 answered long ago, q2 answered recently; q3 never answered.
+    // q1 answered long ago, q2 answered recently; q3 and q4 never answered.
     db.with(|c| {
-        c.execute("UPDATE questions SET annulled = 1 WHERE id = ?1", params![ids[3]])?;
-        c.execute_batch(&format!(
+        c.execute(
             "INSERT INTO attempts (id, source_kind, feedback_mode, started_at, finished_at)
-               VALUES ('old', 'topic', 'exam', '{T0}', '{T0}');
-             INSERT INTO responses (attempt_id, position, question_id, snapshot, choice, answered_at)
-               VALUES ('old', 0, '{q1}', '{{}}', 'x', '2026-01-01T00:00:00.000Z'),
-                      ('old', 1, '{q2}', '{{}}', 'x', '2026-06-01T00:00:00.000Z');",
-            q1 = ids[0],
-            q2 = ids[1],
-        ))?;
+             VALUES ('old', ?1, ?2, ?3, ?3)",
+            params![SourceKind::Topic, FeedbackMode::Exam, T0],
+        )?;
+        c.execute(
+            "INSERT INTO responses (attempt_id, position, question_id, snapshot, choice, answered_at)
+             VALUES ('old', 0, ?1, '{}', 'x', '2026-01-01T00:00:00.000Z'),
+                    ('old', 1, ?2, '{}', 'x', '2026-06-01T00:00:00.000Z')",
+            params![ids[0], ids[1]],
+        )?;
         Ok(())
     })
     .unwrap();
@@ -431,34 +552,64 @@ fn topic_sessions_prefer_unseen_then_least_recent_and_skip_annulled() {
                     feedback_mode: FeedbackMode::Study,
                 },
                 T1,
+                &mut rand::rngs::StdRng::seed_from_u64(count.into()),
             )?;
-            let mut chosen: Vec<String> = view
+            let mut chosen: Vec<QuestionId> = view
                 .questions
                 .iter()
                 .map(|q| q.question_id.clone())
                 .collect();
             chosen.sort();
             abandon(tx, &view.id)?;
-            Ok((chosen, view.title))
+            Ok(chosen)
         })
         .unwrap()
     };
-    let sorted = |list: &[&String]| {
-        let mut v: Vec<String> = list.iter().map(|s| (*s).clone()).collect();
+    let sorted = |list: &[&QuestionId]| {
+        let mut v: Vec<QuestionId> = list.iter().map(|s| (*s).clone()).collect();
         v.sort();
         v
     };
-    assert_eq!(pick(1).0, sorted(&[&ids[2]]));
-    assert_eq!(pick(2).0, sorted(&[&ids[2], &ids[0]]));
-    let (all, title) = pick(10);
-    assert_eq!(all, sorted(&[&ids[0], &ids[1], &ids[2]]));
+    assert_eq!(pick(2), sorted(&[&ids[2], &ids[3]]));
+    assert_eq!(pick(3), sorted(&[&ids[2], &ids[3], &ids[0]]));
+}
+
+#[test]
+fn topic_sessions_use_the_full_topic_path_as_title() {
+    let (db, _) = bank();
+    let topic_id: TopicId = db
+        .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
+        .unwrap();
+    let view = db
+        .transaction(|tx| {
+            start(
+                tx,
+                &SessionStart {
+                    source: SessionSource::Topic {
+                        topic_id,
+                        count: 10,
+                    },
+                    feedback_mode: FeedbackMode::Study,
+                },
+                T1,
+                &mut rand::rngs::StdRng::seed_from_u64(3),
+            )
+        })
+        .unwrap();
     let TopicPath {
         area,
         matter,
         topic,
     } = crate::bank::question::tests::topic();
-    assert_eq!(title, format!("{area} › {matter} › {topic}"));
+    assert_eq!(view.title, format!("{area} › {matter} › {topic}"));
+}
 
+#[test]
+fn topic_sessions_reject_zero_questions() {
+    let (db, _) = bank();
+    let topic_id: TopicId = db
+        .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
+        .unwrap();
     let bad = db.transaction(|tx| {
         start(
             tx,
@@ -467,6 +618,7 @@ fn topic_sessions_prefer_unseen_then_least_recent_and_skip_annulled() {
                 feedback_mode: FeedbackMode::Study,
             },
             T1,
+            &mut rand::rngs::StdRng::seed_from_u64(4),
         )
     });
     assert!(bad.is_err());
@@ -477,7 +629,7 @@ fn empty_sources_are_a_pt_br_error() {
     let (db, _) = bank();
     for source in [
         SessionSource::Errors {
-            include_blanks: true,
+            filter: ErrorFilter::IncludeBlanks,
         },
         SessionSource::Reviews,
     ] {
@@ -489,6 +641,7 @@ fn empty_sources_are_a_pt_br_error() {
                     feedback_mode: FeedbackMode::Exam,
                 },
                 T1,
+                &mut rand::rngs::StdRng::seed_from_u64(5),
             )
         });
         assert_eq!(
@@ -506,36 +659,44 @@ fn empty_sources_are_a_pt_br_error() {
                 feedback_mode: FeedbackMode::Exam,
             },
             T1,
+            &mut rand::rngs::StdRng::seed_from_u64(6),
         )
     });
     assert_eq!(missing.unwrap_err().to_string(), "Caderno não encontrado.");
 }
 
-#[test]
-fn annulling_leaves_every_denominator_and_unannulling_restores_it() {
-    let (db, _) = bank();
-    // A finished attempt where position 0 was answered wrong.
-    let first = start_collection(&db, FeedbackMode::Exam);
-    let wrong = wrong_of(&db, &first.questions[0]);
-    let target = first.questions[0].question_id.clone();
+fn finish_exam_with_one_wrong_choice(db: &Database) -> AttemptView {
+    let first = start_collection(db, FeedbackMode::Exam);
+    let wrong = wrong_of(db, &first.questions[0]);
     let first = db
         .transaction(|tx| answer(tx, &first.id, 0, Some(&wrong), T1))
         .unwrap();
-    let first = db
-        .transaction(|tx| finish(tx, &first.id, first.revision, T1))
-        .unwrap();
-    let before = first.score.clone().unwrap();
-    assert_eq!((before.wrong, before.evaluated, before.annulled), (1, 4, 0));
+    db.transaction(|tx| finish(tx, &first.id, first.revision, T1))
+        .unwrap()
+}
 
-    // A Study attempt reveals the same question, then annuls it from there.
-    let second = start_collection(&db, FeedbackMode::Study);
+fn annul_wrong_answer_in_study(db: &Database, first: &AttemptView) -> (AttemptView, u32) {
+    let target = first.questions[0].question_id.clone();
+    let second = start_collection_with_seed(db, FeedbackMode::Study, 1);
     let position = second
         .questions
         .iter()
         .position(|q| q.question_id == target)
         .unwrap() as u32;
-    let other = (position + 1) % 4;
-    let early = db.transaction(|tx| set_annulled(tx, &second.id, other, true, T2));
+    let key = key_of(db, &target);
+    db.transaction(|tx| answer(tx, &second.id, position, Some(&key), T2))
+        .unwrap();
+    let second = db
+        .transaction(|tx| annul(tx, &second.id, position, T2))
+        .unwrap();
+    (second, position)
+}
+
+#[test]
+fn an_unrevealed_study_question_cannot_be_annulled() {
+    let (db, _) = bank();
+    let view = start_collection(&db, FeedbackMode::Study);
+    let early = db.transaction(|tx| annul(tx, &view.id, 0, T2));
     assert!(
         early
             .unwrap_err()
@@ -543,28 +704,46 @@ fn annulling_leaves_every_denominator_and_unannulling_restores_it() {
             .contains("depois de ver o gabarito"),
         "an unrevealed question can't be annulled"
     );
-    let key = key_of(&db, &target);
-    db.transaction(|tx| answer(tx, &second.id, position, Some(&key), T2))
-        .unwrap();
-    let second = db
-        .transaction(|tx| set_annulled(tx, &second.id, position, true, T2))
-        .unwrap();
-    let reveal = second.questions[position as usize].reveal.clone().unwrap();
+}
+
+#[test]
+fn a_study_reveal_shows_annulment() {
+    let (db, _) = bank();
+    let first = finish_exam_with_one_wrong_choice(&db);
+    let (second, position) = annul_wrong_answer_in_study(&db, &first);
+    let reveal = second.questions[position as usize].reveal.as_ref().unwrap();
     assert!(reveal.annulled);
     assert_eq!(reveal.outcome, Outcome::Annulled);
+}
 
-    // The earlier, finished attempt is re-scored: the wrong answer leaves the denominator.
+#[test]
+fn annulling_rescores_a_finished_attempt() {
+    let (db, _) = bank();
+    let first = finish_exam_with_one_wrong_choice(&db);
+    let before = first.score.as_ref().unwrap();
+    assert_eq!((before.wrong, before.evaluated, before.annulled), (1, 4, 0));
+    annul_wrong_answer_in_study(&db, &first);
     let after = db.with(|c| load(c, &first.id)).unwrap().score.unwrap();
     assert_eq!(
-        (after.wrong, after.annulled, after.evaluated),
-        (0, 1, 3),
-        "{after:?}"
+        after,
+        Score {
+            correct: 0,
+            wrong: 0,
+            blank: 3,
+            annulled: 1,
+            evaluated: 3,
+            achievement: Some(0.0),
+            accuracy: None,
+        }
     );
-    assert_eq!(after.achievement, Some(0.0));
-    assert_eq!(after.accuracy, None);
+}
 
-    // Topic sessions skip it now.
-    let topic_id: i64 = db
+#[test]
+fn topic_sessions_skip_annulled_questions() {
+    let (db, mut ids) = bank();
+    let first = finish_exam_with_one_wrong_choice(&db);
+    annul_wrong_answer_in_study(&db, &first);
+    let topic_id: TopicId = db
         .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
         .unwrap();
     let topic = db
@@ -579,16 +758,26 @@ fn annulling_leaves_every_denominator_and_unannulling_restores_it() {
                     feedback_mode: FeedbackMode::Exam,
                 },
                 T2,
+                &mut rand::rngs::StdRng::seed_from_u64(7),
             )
         })
         .unwrap();
-    assert!(topic.questions.iter().all(|q| q.question_id != target));
+    ids.retain(|id| id != &first.questions[0].question_id);
+    ids.sort();
+    let mut chosen: Vec<_> = topic.questions.into_iter().map(|q| q.question_id).collect();
+    chosen.sort();
+    assert_eq!(chosen, ids);
+}
 
-    // Unannulling restores everything.
-    db.transaction(|tx| set_annulled(tx, &second.id, position, false, T2))
+#[test]
+fn unannulling_restores_the_original_score() {
+    let (db, _) = bank();
+    let first = finish_exam_with_one_wrong_choice(&db);
+    let (second, position) = annul_wrong_answer_in_study(&db, &first);
+    db.transaction(|tx| restore(tx, &second.id, position, T2))
         .unwrap();
-    let restored = db.with(|c| load(c, &first.id)).unwrap().score.unwrap();
-    assert_eq!(restored, before);
+    let restored = db.with(|c| load(c, &first.id)).unwrap();
+    assert_eq!(restored.score.unwrap(), first.score.unwrap());
 }
 
 #[test]
@@ -599,9 +788,9 @@ fn an_answered_exam_question_cannot_be_annulled_before_finish() {
     db.transaction(|tx| answer(tx, &view.id, 0, Some(&choice), T1))
         .unwrap();
 
-    for annulled in [true, false] {
+    for update in [annul, restore] {
         let error = db
-            .transaction(|tx| set_annulled(tx, &view.id, 0, annulled, T1))
+            .transaction(|tx| update(tx, &view.id, 0, T1))
             .unwrap_err()
             .to_string();
         assert!(error.contains("depois de ver o gabarito"), "{error}");
@@ -623,9 +812,7 @@ fn an_answered_exam_question_cannot_be_annulled_before_finish() {
     let done = db
         .transaction(|tx| finish(tx, &view.id, loaded.revision, T2))
         .unwrap();
-    let done = db
-        .transaction(|tx| set_annulled(tx, &done.id, 0, true, T2))
-        .unwrap();
+    let done = db.transaction(|tx| annul(tx, &done.id, 0, T2)).unwrap();
     assert_eq!(
         done.questions[0].reveal.as_ref().unwrap().outcome,
         Outcome::Annulled
@@ -635,7 +822,7 @@ fn an_answered_exam_question_cannot_be_annulled_before_finish() {
 #[test]
 fn active_lists_unfinished_attempts_newest_first_with_counts_only() {
     let (db, _) = bank();
-    let topic_id: i64 = db
+    let topic_id: TopicId = db
         .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
         .unwrap();
     let exam = start_collection(&db, FeedbackMode::Exam);
@@ -651,6 +838,7 @@ fn active_lists_unfinished_attempts_newest_first_with_counts_only() {
                     feedback_mode: FeedbackMode::Study,
                 },
                 T2,
+                &mut rand::rngs::StdRng::seed_from_u64(8),
             )
         })
         .unwrap();
@@ -658,8 +846,8 @@ fn active_lists_unfinished_attempts_newest_first_with_counts_only() {
     db.transaction(|tx| {
             tx.execute(
                 "INSERT INTO attempts (id, source_kind, source_ref, feedback_mode, started_at, finished_at)
-                 VALUES ('old', 'collection', 'c1', 'study', ?1, ?1)",
-                params![T0],
+                 VALUES ('old', ?1, 'c1', ?2, ?3, ?3)",
+                params![SourceKind::Collection, FeedbackMode::Study, T0],
             )?;
             Ok(())
         })
@@ -668,18 +856,18 @@ fn active_lists_unfinished_attempts_newest_first_with_counts_only() {
     let active = db.with(|c| active(c)).unwrap();
     let summary: Vec<_> = active
         .iter()
-        .map(|a| (a.id.as_str(), a.title.as_str(), a.answered, a.total))
+        .map(|a| (&a.id, a.title.as_str(), a.answered, a.total))
         .collect();
     assert_eq!(
         summary,
         [
             (
-                topic.id.as_str(),
+                &topic.id,
                 "Direito › Constitucional › Controle de constitucionalidade",
                 0,
                 2
             ),
-            (exam.id.as_str(), "Caderno de teste", 1, 4),
+            (&exam.id, "Caderno de teste", 1, 4),
         ],
         "newest first; the exam counts its answered question but reveals nothing"
     );
@@ -693,5 +881,54 @@ fn active_lists_unfinished_attempts_newest_first_with_counts_only() {
         "options",
     ] {
         assert!(!json.contains(secret), "{secret} leaked: {json}");
+    }
+}
+
+#[test]
+fn unavailable_topic_references_use_the_generic_session_title() {
+    let db = Database::open_in_memory().unwrap();
+    let id = AttemptId::from("legacy");
+    db.with(|conn| {
+        conn.execute(
+            "INSERT INTO attempts (id, source_kind, feedback_mode, started_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![id, SourceKind::Topic, FeedbackMode::Study, T0],
+        )?;
+        for source_ref in [None, Some("unknown-topic"), Some("42")] {
+            conn.execute(
+                "UPDATE attempts SET source_ref = ?2 WHERE id = ?1",
+                params![id, source_ref],
+            )?;
+            assert_eq!(load(conn, &id)?.title, "Sessão");
+            assert_eq!(active(conn)?[0].title, "Sessão");
+        }
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn progress_counts_use_the_saved_choice() {
+    let (db, _) = bank();
+    let view = start_collection(&db, FeedbackMode::Exam);
+    let choice = view.questions[0].options[0].id.as_str();
+
+    for (choice, answered_at, expected) in [(None, Some(T1), 0), (Some(choice), None, 1)] {
+        db.with(|conn| {
+            conn.execute(
+                "UPDATE responses SET choice = ?1, answered_at = ?2
+                 WHERE attempt_id = ?3 AND position = 0",
+                params![choice, answered_at, view.id],
+            )?;
+            let active = active(conn)?;
+            let collection = crate::bank::catalog::collection(conn, &CollectionId::from("c1"))?;
+            assert_eq!(active[0].answered, expected, "resume list");
+            assert_eq!(
+                collection.attempts[0].answered, expected,
+                "collection detail"
+            );
+            Ok(())
+        })
+        .unwrap();
     }
 }

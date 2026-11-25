@@ -16,25 +16,28 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use flate2::read::GzDecoder;
-use rusqlite::params;
+use rusqlite::{Transaction, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::bank::catalog::CollectionKind;
 use crate::bank::identity::sha256_hex;
 use crate::bank::question::is_valid_image_name;
-use crate::bank::{
-    Provenance, QuestionInput, QuestionOption, QuestionType, TopicPath, apply_import, plan_import,
-};
-use crate::db::{Database, get_setting, set_setting};
+use crate::bank::store::{ImportPlan, plan_import};
+use crate::bank::{Provenance, QuestionInput, QuestionOption, QuestionType, TopicPath};
+use crate::db::{Database, SettingKey, get_setting, set_setting};
 use crate::error::{AppError, AppResult};
-
-/// Settings key recording that the migration ran.
-pub const STATUS_KEY: &str = "legacyImport";
+use crate::ids::{CollectionId, QuestionId};
 
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_STATE_BYTES: u64 = 80 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+
+const LEGACY_FORMAT: &str = "caderno-local";
+const FORMAT_VERSION: u32 = 1;
+const DATABASE_VERSION: u32 = 2;
+const MAX_REPORTED_PROBLEMS: usize = 10;
 
 const UNCHANGED: &str = "Nenhum dado foi alterado.";
 
@@ -68,6 +71,42 @@ pub struct LegacyImportOutcome {
     pub report: LegacyImportReport,
     /// `true` when the migration had already run; nothing was changed.
     pub already_imported: bool,
+}
+
+/// Current migration status, for the first-run screen and settings.
+pub fn status(db: &Database) -> AppResult<LegacyImportStatus> {
+    db.with(|conn| {
+        let report = get_setting::<LegacyImportReport>(conn, SettingKey::LegacyImport)?;
+        let questions: i64 = conn.query_row("SELECT COUNT(*) FROM questions", [], |r| r.get(0))?;
+        Ok(LegacyImportStatus {
+            report,
+            bank_empty: questions == 0,
+        })
+    })
+}
+
+/// Imports the legacy bank from `source` (the clone or its `biblioteca` folder) once.
+/// A second call returns the first report and changes nothing.
+pub fn import_legacy_bank(
+    db: &Database,
+    images_dir: &Path,
+    source: &Path,
+    now: &str,
+) -> AppResult<LegacyImportOutcome> {
+    if let Some(report) = db.with(|conn| get_setting(conn, SettingKey::LegacyImport))? {
+        return Ok(LegacyImportOutcome {
+            report,
+            already_imported: true,
+        });
+    }
+
+    let library = locate_library(source)?;
+    let manifest = read_manifest(&library)?;
+    let snapshot = read_snapshot(&library, &manifest)?;
+    let prepared = prepare(snapshot.tables)?;
+    let images = read_images(&library, &manifest, &prepared.images)?;
+
+    write_import(db, images_dir, prepared, &images, now)
 }
 
 fn invalid(message: impl std::fmt::Display) -> AppError {
@@ -120,7 +159,7 @@ struct Tables {
 
 #[derive(Debug, Deserialize)]
 struct QuestionRow {
-    id: String,
+    id: QuestionId,
     data: String,
 }
 
@@ -145,12 +184,12 @@ struct LegacyQuestion {
 #[derive(Debug, Deserialize)]
 struct VersionRow {
     id: String,
-    question_id: String,
+    question_id: QuestionId,
 }
 
 #[derive(Debug, Deserialize)]
 struct CollectionRow {
-    id: String,
+    id: CollectionId,
     title: String,
     contest: String,
     created: String,
@@ -158,9 +197,9 @@ struct CollectionRow {
 
 #[derive(Debug, Deserialize)]
 struct ItemRow {
-    collection_id: String,
+    collection_id: CollectionId,
     position: i64,
-    question_id: String,
+    question_id: QuestionId,
     version_id: String,
 }
 
@@ -174,7 +213,7 @@ struct SubjectRow {
 
 #[derive(Debug, Deserialize)]
 struct QuestionSubjectRow {
-    question_id: String,
+    question_id: QuestionId,
     subject_id: String,
 }
 
@@ -214,7 +253,7 @@ fn read_manifest(library: &Path) -> AppResult<Manifest> {
             "O manifesto.json não está no formato esperado ({e})."
         ))
     })?;
-    if manifest.format != "caderno-local" || manifest.version != 1 {
+    if manifest.format != LEGACY_FORMAT || manifest.version != FORMAT_VERSION {
         return Err(invalid(format!(
             "Formato de manifesto não reconhecido ({} versão {}).",
             manifest.format, manifest.version
@@ -253,7 +292,9 @@ fn read_snapshot(library: &Path, manifest: &Manifest) -> AppResult<Snapshot> {
             "O estado do Caderno Local não está no formato esperado ({e})."
         ))
     })?;
-    if snapshot.format != "caderno-local" || snapshot.version != 1 || snapshot.database_version != 2
+    if snapshot.format != LEGACY_FORMAT
+        || snapshot.version != FORMAT_VERSION
+        || snapshot.database_version != DATABASE_VERSION
     {
         return Err(invalid(format!(
             "Versão do estado não suportada ({} {} / banco {}).",
@@ -273,81 +314,17 @@ struct Prepared {
 
 /// Maps the legacy tables to question inputs and checks the references between tables.
 fn prepare(tables: Tables) -> AppResult<Prepared> {
-    let subjects: HashMap<&str, &SubjectRow> =
-        tables.subjects.iter().map(|s| (s.id.as_str(), s)).collect();
-    let mut topics_by_question: HashMap<&str, Vec<TopicPath>> = HashMap::new();
-    for link in &tables.question_subjects {
-        let subject = subjects.get(link.subject_id.as_str()).ok_or_else(|| {
-            invalid(format!(
-                "O assunto {} usado pela questão {} não existe.",
-                link.subject_id, link.question_id
-            ))
-        })?;
-        topics_by_question
-            .entry(link.question_id.as_str())
-            .or_default()
-            .push(TopicPath::new(
-                &subject.area,
-                &subject.matter,
-                &subject.topic,
-            ));
-    }
-
+    let mut topics = question_topics(&tables.subjects, &tables.question_subjects)?;
     let mut inputs = Vec::with_capacity(tables.questions.len());
     let mut images = Vec::new();
     for row in &tables.questions {
-        let legacy: LegacyQuestion = serde_json::from_str(&row.data).map_err(|e| {
-            invalid(format!(
-                "A questão {} está em um formato inesperado ({e}).",
-                row.id
-            ))
-        })?;
-        let kind = QuestionType::parse(&legacy.kind).ok_or_else(|| {
-            invalid(format!(
-                "A questão {} é do tipo \"{}\", que o Gabaritei não importa.",
-                row.id, legacy.kind
-            ))
-        })?;
-        if let Some(image) = &legacy.image {
+        let input = question_input(row, topics.remove(&row.id).unwrap_or_default())?;
+        if let Some(image) = &input.image {
             images.push(image.clone());
         }
-        inputs.push(QuestionInput {
-            local_id: row.id.clone(),
-            kind,
-            stem: legacy.stem,
-            options: legacy.options,
-            answer_id: legacy.answer_id,
-            explanation: legacy.explanation,
-            refs: legacy.refs,
-            topics: topics_by_question
-                .remove(row.id.as_str())
-                .unwrap_or_default(),
-            image: legacy.image,
-            image_alt: legacy.image_alt,
-            annulled: legacy.annulled,
-            provenance: Provenance::Legacy,
-        });
+        inputs.push(input);
     }
-
-    let question_ids: HashSet<&str> = tables.questions.iter().map(|q| q.id.as_str()).collect();
-    let collection_ids: HashSet<&str> = tables.collections.iter().map(|c| c.id.as_str()).collect();
-    let versions: HashMap<&str, &str> = tables
-        .versions
-        .iter()
-        .map(|v| (v.id.as_str(), v.question_id.as_str()))
-        .collect();
-    for item in &tables.collection_items {
-        if !collection_ids.contains(item.collection_id.as_str())
-            || !question_ids.contains(item.question_id.as_str())
-            || versions.get(item.version_id.as_str()) != Some(&item.question_id.as_str())
-        {
-            return Err(invalid(format!(
-                "O caderno {} referencia uma questão ou versão inexistente.",
-                item.collection_id
-            )));
-        }
-    }
-
+    check_collection_items(&tables)?;
     images.sort();
     images.dedup();
     Ok(Prepared {
@@ -357,6 +334,85 @@ fn prepare(tables: Tables) -> AppResult<Prepared> {
         items: tables.collection_items,
         images,
     })
+}
+
+fn question_topics(
+    subjects: &[SubjectRow],
+    links: &[QuestionSubjectRow],
+) -> AppResult<HashMap<QuestionId, Vec<TopicPath>>> {
+    let subjects: HashMap<&str, &SubjectRow> =
+        subjects.iter().map(|s| (s.id.as_str(), s)).collect();
+    let mut topics_by_question: HashMap<QuestionId, Vec<TopicPath>> = HashMap::new();
+    for link in links {
+        let subject = subjects.get(link.subject_id.as_str()).ok_or_else(|| {
+            invalid(format!(
+                "O assunto {} usado pela questão {} não existe.",
+                link.subject_id, link.question_id
+            ))
+        })?;
+        topics_by_question
+            .entry(link.question_id.clone())
+            .or_default()
+            .push(TopicPath::new(
+                &subject.area,
+                &subject.matter,
+                &subject.topic,
+            ));
+    }
+
+    Ok(topics_by_question)
+}
+
+fn question_input(row: &QuestionRow, topics: Vec<TopicPath>) -> AppResult<QuestionInput> {
+    let legacy: LegacyQuestion = serde_json::from_str(&row.data).map_err(|e| {
+        invalid(format!(
+            "A questão {} está em um formato inesperado ({e}).",
+            row.id
+        ))
+    })?;
+    let kind = legacy.kind.parse::<QuestionType>().map_err(|_| {
+        invalid(format!(
+            "A questão {} é do tipo \"{}\", que o Gabaritei não importa.",
+            row.id, legacy.kind
+        ))
+    })?;
+    Ok(QuestionInput {
+        id: row.id.as_str().to_owned(),
+        kind,
+        stem: legacy.stem,
+        options: legacy.options,
+        answer_id: legacy.answer_id,
+        explanation: legacy.explanation,
+        refs: legacy.refs,
+        topics,
+        image: legacy.image,
+        image_alt: legacy.image_alt,
+        annulled: legacy.annulled,
+        provenance: Provenance::Legacy,
+    })
+}
+
+fn check_collection_items(tables: &Tables) -> AppResult<()> {
+    let question_ids: HashSet<&QuestionId> = tables.questions.iter().map(|q| &q.id).collect();
+    let collection_ids: HashSet<&CollectionId> = tables.collections.iter().map(|c| &c.id).collect();
+    let versions: HashMap<&str, &QuestionId> = tables
+        .versions
+        .iter()
+        .map(|v| (v.id.as_str(), &v.question_id))
+        .collect();
+    for item in &tables.collection_items {
+        if !collection_ids.contains(&item.collection_id)
+            || !question_ids.contains(&item.question_id)
+            || versions.get(item.version_id.as_str()).copied() != Some(&item.question_id)
+        {
+            return Err(invalid(format!(
+                "O caderno {} referencia uma questão ou versão inexistente.",
+                item.collection_id
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 /// Reads and verifies every image the questions use.
@@ -414,42 +470,6 @@ fn write_images(images_dir: &Path, images: &[(String, Vec<u8>)]) -> AppResult<()
 
 // ---- Entry points ----------------------------------------------------------------------------
 
-/// Current migration status, for the first-run screen and settings.
-pub fn status(db: &Database) -> AppResult<LegacyImportStatus> {
-    db.with(|conn| {
-        let report = get_setting::<LegacyImportReport>(conn, STATUS_KEY)?;
-        let questions: i64 = conn.query_row("SELECT COUNT(*) FROM questions", [], |r| r.get(0))?;
-        Ok(LegacyImportStatus {
-            report,
-            bank_empty: questions == 0,
-        })
-    })
-}
-
-/// Imports the legacy bank from `source` (the clone or its `biblioteca` folder) once.
-/// A second call returns the first report and changes nothing.
-pub fn import_legacy_bank(
-    db: &Database,
-    images_dir: &Path,
-    source: &Path,
-    now: &str,
-) -> AppResult<LegacyImportOutcome> {
-    if let Some(report) = db.with(|conn| get_setting(conn, STATUS_KEY))? {
-        return Ok(LegacyImportOutcome {
-            report,
-            already_imported: true,
-        });
-    }
-
-    let library = locate_library(source)?;
-    let manifest = read_manifest(&library)?;
-    let snapshot = read_snapshot(&library, &manifest)?;
-    let prepared = prepare(snapshot.tables)?;
-    let images = read_images(&library, &manifest, &prepared.images)?;
-
-    write_import(db, images_dir, prepared, &images, now)
-}
-
 /// Writes the prepared bank in one transaction. The "already imported" check happens inside it,
 /// so two imports that both passed the early check cannot both write: the database lock
 /// serializes the transactions and the second one returns the first one's report. This keeps
@@ -463,73 +483,107 @@ fn write_import(
     now: &str,
 ) -> AppResult<LegacyImportOutcome> {
     db.transaction(|tx| {
-        if let Some(report) = get_setting(tx, STATUS_KEY)? {
+        if let Some(report) = get_setting(tx, SettingKey::LegacyImport)? {
             return Ok(LegacyImportOutcome {
                 report,
                 already_imported: true,
             });
         }
         let plan = plan_import(tx, prepared.inputs)?;
-        if !plan.problems.is_empty() {
-            let shown: Vec<&str> = plan.problems.iter().take(10).map(String::as_str).collect();
-            return Err(invalid(format!(
-                "O banco do Caderno Local tem {} problema(s), por exemplo:\n{}\n",
-                plan.problems.len(),
-                shown.join("\n")
-            )));
-        }
-        let changed_ids = plan
-            .questions
-            .iter()
-            .filter(|p| p.local_ids.iter().any(|local| local != &p.question.id))
-            .count();
-        if changed_ids > 0 {
-            return Err(invalid(format!(
-                "{changed_ids} questão(ões) não manteriam o identificador original do Caderno Local."
-            )));
-        }
-
-        let outcome = apply_import(tx, &plan, now)?;
-
-        for collection in &prepared.collections {
-            tx.execute(
-                "INSERT INTO collections (id, title, kind, contest, board, created_at)
-                 VALUES (?1, ?2, 'imported', ?3, NULL, ?4)",
-                params![collection.id, collection.title, collection.contest, collection.created],
-            )?;
-        }
-        for item in &prepared.items {
-            tx.execute(
-                "INSERT INTO collection_items (collection_id, position, question_id)
-                 VALUES (?1, ?2, ?3)",
-                params![
-                    item.collection_id,
-                    item.position,
-                    outcome.ids_by_local_id[&item.question_id]
-                ],
-            )?;
-        }
-
+        check_plan(&plan)?;
         let report = LegacyImportReport {
             imported_at: now.to_owned(),
-            questions: plan.questions.len() as u32,
-            collections: prepared.collections.len() as u32,
-            collection_items: prepared.items.len() as u32,
-            topics: prepared.topics as u32,
-            images: images.len() as u32,
+            questions: count(plan.question_count())?,
+            collections: count(prepared.collections.len())?,
+            collection_items: count(prepared.items.len())?,
+            topics: count(prepared.topics)?,
+            images: count(images.len())?,
         };
+        let outcome = plan.apply(now)?;
+        write_collections(
+            tx,
+            &prepared.collections,
+            &prepared.items,
+            &outcome.ids_by_local_id,
+        )?;
         // The last step before the commit that touches the database is done; writing the
         // images is the last fallible one, so a failure above (bad data, a conflicting row, the
         // status setting) rolls back without leaving image files behind. Only a failing commit
         // can still orphan them: harmless, because they are content-addressed and a retry
         // reuses them.
-        set_setting(tx, STATUS_KEY, &report)?;
+        set_setting(tx, SettingKey::LegacyImport, &report)?;
         write_images(images_dir, images)?;
         Ok(LegacyImportOutcome {
             report,
             already_imported: false,
         })
     })
+}
+
+fn check_plan(plan: &ImportPlan<'_>) -> AppResult<()> {
+    if !plan.problems().is_empty() {
+        let shown: Vec<&str> = plan
+            .problems()
+            .iter()
+            .take(MAX_REPORTED_PROBLEMS)
+            .map(String::as_str)
+            .collect();
+        return Err(invalid(format!(
+            "O banco do Caderno Local tem {} problema(s), por exemplo:\n{}\n",
+            plan.problems().len(),
+            shown.join("\n")
+        )));
+    }
+    let changed_ids = plan.changed_id_count();
+    if changed_ids > 0 {
+        return Err(invalid(format!(
+            "{changed_ids} questão(ões) não manteriam o identificador original do Caderno Local."
+        )));
+    }
+
+    Ok(())
+}
+
+fn count(value: usize) -> AppResult<u32> {
+    u32::try_from(value).map_err(|_| invalid("O banco excede o tamanho máximo de importação."))
+}
+
+fn write_collections(
+    tx: &Transaction<'_>,
+    collections: &[CollectionRow],
+    items: &[ItemRow],
+    ids: &HashMap<String, QuestionId>,
+) -> AppResult<()> {
+    for collection in collections {
+        tx.execute(
+            "INSERT INTO collections (id, title, kind, contest, board, created_at)
+                 VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
+            params![
+                collection.id,
+                collection.title,
+                CollectionKind::Imported,
+                collection.contest,
+                collection.created
+            ],
+        )?;
+    }
+    for item in items {
+        tx.execute(
+            "INSERT INTO collection_items (collection_id, position, question_id)
+                 VALUES (?1, ?2, ?3)",
+            params![
+                item.collection_id,
+                item.position,
+                ids.get(item.question_id.as_str())
+                    .ok_or_else(|| invalid(format!(
+                        "O caderno {} referencia uma questão inexistente.",
+                        item.collection_id
+                    )))?
+            ],
+        )?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -544,7 +598,7 @@ mod tests {
 
     const NOW: &str = "2026-11-19T12:00:00.000Z";
     /// id, kind, contest, board, created_at
-    type CollectionColumns = (String, String, Option<String>, Option<String>, String);
+    type CollectionColumns = (CollectionId, String, Option<String>, Option<String>, String);
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n fake image bytes";
 
     struct Fixture {
@@ -577,7 +631,7 @@ mod tests {
         texts: [&str; 5],
         answer: usize,
         image: bool,
-    ) -> (String, Value) {
+    ) -> (QuestionId, Value) {
         let image = image.then(image_name);
         let id = fingerprint(QuestionType::Multiple, stem, texts, image.as_deref());
         let options: Vec<Value> = texts
@@ -600,7 +654,7 @@ mod tests {
     fn snapshot() -> Value {
         let (q1, d1) = legacy_question("Primeira?", ["A", "B", "C", "D", "E"], 1, true);
         let (q2, d2) = legacy_question("Segunda?", ["F", "G", "H", "I", "J"], 4, false);
-        let row = |id: &str, data: &Value| json!({ "id": id, "fingerprint": id, "data": data.to_string() });
+        let row = |id: &QuestionId, data: &Value| json!({ "id": id, "fingerprint": id, "data": data.to_string() });
         json!({
             "format": "caderno-local", "version": 1, "databaseVersion": 2,
             "tables": {
@@ -684,8 +738,8 @@ mod tests {
         f.db.with(|c| {
             c.execute(
                 "INSERT INTO collections (id, title, kind, created_at)
-                 VALUES ('c-alepa', 'Já existe', 'practice', ?1)",
-                [NOW],
+                 VALUES ('c-alepa', 'Já existe', ?1, ?2)",
+                params![CollectionKind::Practice, NOW],
             )?;
             Ok(())
         })
@@ -696,7 +750,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_questions_topics_collections_and_images() {
+    fn import_reports_the_migrated_rows() {
         let f = fixture_with(&snapshot());
         let outcome = run(&f).unwrap();
         assert!(!outcome.already_imported);
@@ -711,7 +765,12 @@ mod tests {
                 images: 1
             }
         );
+    }
 
+    #[test]
+    fn import_preserves_the_legacy_question() {
+        let f = fixture_with(&snapshot());
+        run(&f).unwrap();
         let (q1, _) = legacy_question("Primeira?", ["A", "B", "C", "D", "E"], 1, true);
         let stored = f.db.with(|c| load_question(c, &q1)).unwrap().unwrap();
         assert_eq!(stored.id, q1, "legacy ID kept");
@@ -724,8 +783,19 @@ mod tests {
         );
         assert_eq!(stored.image_alt.as_deref(), Some("Diagrama de exemplo."));
         assert_eq!(stored.provenance, Provenance::Legacy);
-        assert_eq!(fs::read(f.images_dir.join(image_name())).unwrap(), PNG);
+    }
 
+    #[test]
+    fn import_copies_the_image_file() {
+        let f = fixture_with(&snapshot());
+        run(&f).unwrap();
+        assert_eq!(fs::read(f.images_dir.join(image_name())).unwrap(), PNG);
+    }
+
+    #[test]
+    fn import_preserves_collection_metadata() {
+        let f = fixture_with(&snapshot());
+        run(&f).unwrap();
         f.db.with(|c| {
             let rows: Vec<CollectionColumns> = c
                 .prepare(
@@ -746,6 +816,16 @@ mod tests {
                 )
             );
             assert_eq!(rows[1].2.as_deref(), Some("Perito Criminal"));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn import_keeps_a_shared_question_in_both_collections() {
+        let f = fixture_with(&snapshot());
+        run(&f).unwrap();
+        f.db.with(|c| {
             let shared: i64 = c.query_row(
                 "SELECT COUNT(DISTINCT collection_id) FROM collection_items ci
                  JOIN questions q ON q.id = ci.question_id WHERE q.stem = 'Segunda?'",
@@ -775,11 +855,9 @@ mod tests {
         assert_eq!(f.count("collection_items"), 3);
     }
 
-    #[test]
-    fn an_import_that_lost_the_race_writes_nothing_and_returns_the_winner_report() {
+    fn import_after_a_concurrent_winner(f: &Fixture) -> (LegacyImportOutcome, LegacyImportReport) {
         // Another import finishes between this one's early status check and its write.
-        let f = fixture_with(&snapshot());
-        let winner = run(&f).unwrap().report;
+        let winner = run(f).unwrap().report;
         let library = locate_library(&f.root).unwrap();
         let manifest = read_manifest(&library).unwrap();
         let snapshot = read_snapshot(&library, &manifest).unwrap();
@@ -796,8 +874,21 @@ mod tests {
         )
         .unwrap();
 
+        (outcome, winner)
+    }
+
+    #[test]
+    fn a_concurrent_import_returns_the_winning_report() {
+        let f = fixture_with(&snapshot());
+        let (outcome, winner) = import_after_a_concurrent_winner(&f);
         assert!(outcome.already_imported);
         assert_eq!(outcome.report, winner);
+    }
+
+    #[test]
+    fn a_losing_concurrent_import_writes_nothing() {
+        let f = fixture_with(&snapshot());
+        import_after_a_concurrent_winner(&f);
         assert_eq!(f.count("questions"), 2);
         assert_eq!(f.count("collections"), 2);
         assert_eq!(f.count("collection_items"), 3);
@@ -886,31 +977,35 @@ mod tests {
         assert_nothing_changed(&f);
     }
 
-    #[test]
-    fn unsupported_formats_and_broken_references_change_nothing() {
-        let mut wrong_version = snapshot();
-        wrong_version["databaseVersion"] = json!(3);
-        let mut essay = snapshot();
-        let data = essay["tables"]["questions"][0]["data"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        let mut question: Value = serde_json::from_str(&data).unwrap();
-        question["type"] = json!("essay");
-        essay["tables"]["questions"][0]["data"] = json!(question.to_string());
-        let mut dangling = snapshot();
-        dangling["tables"]["collection_items"][0]["version_id"] = json!("v-missing");
+    fn assert_import_refused(snapshot: &Value, expected: &str) {
+        let f = fixture_with(snapshot);
+        let error = run(&f).unwrap_err().to_string();
+        assert!(error.contains(expected), "{error}");
+        assert_nothing_changed(&f);
+    }
 
-        for (snap, expected) in [
-            (wrong_version, "Versão do estado não suportada"),
-            (essay, "do tipo \"essay\""),
-            (dangling, "referencia uma questão ou versão inexistente"),
-        ] {
-            let f = fixture_with(&snap);
-            let error = run(&f).unwrap_err().to_string();
-            assert!(error.contains(expected), "{error}");
-            assert_nothing_changed(&f);
-        }
+    #[test]
+    fn an_unsupported_database_version_is_refused() {
+        let mut invalid = snapshot();
+        invalid["databaseVersion"] = json!(3);
+        assert_import_refused(&invalid, "Versão do estado não suportada");
+    }
+
+    #[test]
+    fn an_unsupported_question_type_is_refused() {
+        let mut invalid = snapshot();
+        let data = invalid["tables"]["questions"][0]["data"].as_str().unwrap();
+        let mut question: Value = serde_json::from_str(data).unwrap();
+        question["type"] = json!("essay");
+        invalid["tables"]["questions"][0]["data"] = json!(question.to_string());
+        assert_import_refused(&invalid, "do tipo \"essay\"");
+    }
+
+    #[test]
+    fn a_dangling_collection_item_is_refused() {
+        let mut invalid = snapshot();
+        invalid["tables"]["collection_items"][0]["version_id"] = json!("v-missing");
+        assert_import_refused(&invalid, "referencia uma questão ou versão inexistente");
     }
 
     #[test]
@@ -927,7 +1022,7 @@ mod tests {
     }
 
     #[test]
-    fn status_reports_first_run_and_then_the_import() {
+    fn status_reports_first_run() {
         let f = fixture_with(&snapshot());
         assert_eq!(
             status(&f.db).unwrap(),
@@ -936,6 +1031,11 @@ mod tests {
                 bank_empty: true
             }
         );
+    }
+
+    #[test]
+    fn status_reports_a_completed_import() {
+        let f = fixture_with(&snapshot());
         let outcome = run(&f).unwrap();
         assert_eq!(
             status(&f.db).unwrap(),

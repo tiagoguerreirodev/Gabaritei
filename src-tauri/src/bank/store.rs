@@ -1,67 +1,111 @@
 //! Reading and writing questions in the database, including deduplicating imports.
 //!
 //! An import is planned first ([`plan_import`]: validation, canonicalization, conflicts) and
-//! then applied ([`apply_import`]) inside the caller's transaction. A plan with problems is
+//! then applied ([`ImportPlan::apply`]) inside the caller's transaction. A plan with problems is
 //! never applied, so a bad package changes nothing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::identity::js_trim;
 use super::question::{
     Provenance, Question, QuestionInput, QuestionOption, QuestionType, TopicPath, canonicalize,
+    extend_unique,
 };
 use crate::error::{AppError, AppResult};
+use crate::ids::{QuestionId, TopicId};
 
-/// One canonical question of a planned import.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlannedQuestion {
-    /// Every input (by local ID) that resolves to this question.
-    pub local_ids: Vec<String>,
-    pub question: Question,
-    /// Whether a question with this fingerprint is already in the bank.
-    pub existing: bool,
+const EXCERPT_LENGTH: usize = 90;
+
+/// A canonical input and the matching bank question, if any.
+struct PlannedQuestion {
+    local_ids: Vec<String>,
+    question: Question,
+    stored: Option<Question>,
 }
 
-/// The result of checking a batch of questions against the rules and the bank.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ImportPlan {
-    pub questions: Vec<PlannedQuestion>,
-    /// pt-BR problems. Any problem blocks the import.
-    pub problems: Vec<String>,
+/// An import checked against the bank inside the transaction that will write it.
+pub(crate) struct ImportPlan<'tx> {
+    transaction: &'tx Transaction<'tx>,
+    questions: Vec<PlannedQuestion>,
+    problems: Vec<String>,
 }
 
-impl ImportPlan {
-    /// Canonical question ID for each input's local ID.
-    pub fn ids_by_local_id(&self) -> HashMap<String, String> {
+impl ImportPlan<'_> {
+    pub(crate) fn problems(&self) -> &[String] {
+        &self.problems
+    }
+
+    pub(crate) fn question_count(&self) -> usize {
+        self.questions.len()
+    }
+
+    /// Legacy migrations must preserve every input ID.
+    pub(crate) fn changed_id_count(&self) -> usize {
         self.questions
             .iter()
-            .flat_map(|p| {
-                p.local_ids
+            .filter(|entry| {
+                entry
+                    .local_ids
                     .iter()
-                    .map(|l| (l.clone(), p.question.id.clone()))
+                    .any(|id| id != entry.question.id.as_str())
             })
-            .collect()
+            .count()
     }
 
-    pub fn existing_count(&self) -> usize {
-        self.questions.iter().filter(|p| p.existing).count()
+    /// Writes validated questions to the same transaction that read them.
+    pub(crate) fn apply(self, now: &str) -> AppResult<ImportOutcome> {
+        if !self.problems.is_empty() {
+            return Err(AppError::Invalid(format!(
+                "Resolva os problemas do pacote antes de importar:\n{}",
+                self.problems.join("\n")
+            )));
+        }
+        let mut outcome = ImportOutcome {
+            inserted: 0,
+            merged: 0,
+            ids_by_local_id: HashMap::new(),
+        };
+        for PlannedQuestion {
+            local_ids,
+            question,
+            stored,
+        } in self.questions
+        {
+            outcome.ids_by_local_id.extend(
+                local_ids
+                    .into_iter()
+                    .map(|local| (local, question.id.clone())),
+            );
+            let Some(mut stored) = stored else {
+                insert_question(self.transaction, &question, now)?;
+                outcome.inserted += 1;
+                continue;
+            };
+            let before = stored.clone();
+            merge_into(&mut stored, &question);
+            if stored != before {
+                update_question(self.transaction, &stored, now)?;
+            }
+            outcome.merged += 1;
+        }
+        Ok(outcome)
     }
 }
 
-/// What [`apply_import`] did.
+/// What the import wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportOutcome {
     pub inserted: usize,
     pub merged: usize,
     /// Canonical question ID for each input's local ID.
-    pub ids_by_local_id: HashMap<String, String>,
+    pub ids_by_local_id: HashMap<String, QuestionId>,
 }
 
 fn excerpt(text: &str) -> String {
     let trimmed = js_trim(text);
-    let short: String = trimmed.chars().take(90).collect();
+    let short: String = trimmed.chars().take(EXCERPT_LENGTH).collect();
     if short.chars().count() < trimmed.chars().count() {
         format!("{short}…")
     } else {
@@ -75,16 +119,8 @@ fn merge_into(kept: &mut Question, incoming: &Question) {
     if js_trim(&kept.explanation).is_empty() {
         kept.explanation.clone_from(&incoming.explanation);
     }
-    for reference in &incoming.refs {
-        if !kept.refs.contains(reference) {
-            kept.refs.push(reference.clone());
-        }
-    }
-    for topic in &incoming.topics {
-        if !kept.topics.contains(topic) {
-            kept.topics.push(topic.clone());
-        }
-    }
+    extend_unique(&mut kept.refs, incoming.refs.iter().cloned());
+    extend_unique(&mut kept.topics, incoming.topics.iter().cloned());
     if kept.image_alt.is_none() {
         kept.image_alt.clone_from(&incoming.image_alt);
     }
@@ -92,14 +128,21 @@ fn merge_into(kept: &mut Question, incoming: &Question) {
 
 /// Validates and canonicalizes `inputs`, merges duplicates within the batch and checks each
 /// question against the bank. Writes nothing.
-pub fn plan_import(conn: &Connection, inputs: Vec<QuestionInput>) -> AppResult<ImportPlan> {
-    let mut plan = ImportPlan::default();
-    let mut index_by_id: HashMap<String, usize> = HashMap::new();
-    let mut seen_local_ids: HashMap<String, ()> = HashMap::new();
+pub(crate) fn plan_import<'tx>(
+    transaction: &'tx Transaction<'tx>,
+    inputs: Vec<QuestionInput>,
+) -> AppResult<ImportPlan<'tx>> {
+    let mut plan = ImportPlan {
+        transaction,
+        questions: Vec::new(),
+        problems: Vec::new(),
+    };
+    let mut index_by_id: HashMap<QuestionId, usize> = HashMap::new();
+    let mut seen_local_ids = HashSet::new();
 
     for input in inputs {
-        let local_id = input.local_id.clone();
-        if seen_local_ids.insert(local_id.clone(), ()).is_some() {
+        let local_id = input.id.clone();
+        if !seen_local_ids.insert(local_id.clone()) {
             plan.problems.push(format!(
                 "Questão {local_id}: identificador repetido no pacote."
             ));
@@ -116,94 +159,52 @@ pub fn plan_import(conn: &Connection, inputs: Vec<QuestionInput>) -> AppResult<I
                 continue;
             }
         };
-        match index_by_id.get(&question.id) {
-            Some(&index) => {
-                let planned = &mut plan.questions[index];
-                if planned.question.answer_id != question.answer_id {
-                    plan.problems.push(format!(
-                        "Questões {} e {local_id} são iguais, mas têm gabaritos diferentes: \"{}\".",
-                        planned.local_ids[0],
-                        excerpt(&question.stem)
-                    ));
-                    continue;
-                }
-                planned.local_ids.push(local_id);
-                merge_into(&mut planned.question, &question);
-            }
-            None => {
-                index_by_id.insert(question.id.clone(), plan.questions.len());
-                plan.questions.push(PlannedQuestion {
-                    local_ids: vec![local_id],
-                    question,
-                    existing: false,
-                });
-            }
+        let Some(&index) = index_by_id.get(&question.id) else {
+            index_by_id.insert(question.id.clone(), plan.questions.len());
+            plan.questions.push(PlannedQuestion {
+                local_ids: vec![local_id],
+                question,
+                stored: None,
+            });
+            continue;
+        };
+        let planned = &mut plan.questions[index];
+        if planned.question.answer_id != question.answer_id {
+            plan.problems.push(format!(
+                "Questões {} e {local_id} são iguais, mas têm gabaritos diferentes: \"{}\".",
+                planned.local_ids[0],
+                excerpt(&question.stem)
+            ));
+            continue;
         }
+        planned.local_ids.push(local_id);
+        merge_into(&mut planned.question, &question);
     }
 
     for planned in &mut plan.questions {
-        if let Some(stored) = load_question(conn, &planned.question.id)? {
-            planned.existing = true;
-            if stored.answer_id != planned.question.answer_id {
-                plan.problems.push(format!(
-                    "Questão {}: já existe no banco com outro gabarito: \"{}\".",
-                    planned.local_ids[0],
-                    excerpt(&planned.question.stem)
-                ));
-            }
+        planned.stored = load_question(transaction, &planned.question.id)?;
+        if planned
+            .stored
+            .as_ref()
+            .is_some_and(|stored| stored.answer_id != planned.question.answer_id)
+        {
+            plan.problems.push(format!(
+                "Questão {}: já existe no banco com outro gabarito: \"{}\".",
+                planned.local_ids[0],
+                excerpt(&planned.question.stem)
+            ));
         }
     }
     Ok(plan)
 }
 
-/// Writes a plan: inserts new questions and merges the ones already in the bank.
-/// Refuses a plan with problems. Call inside a transaction.
-pub fn apply_import(conn: &Connection, plan: &ImportPlan, now: &str) -> AppResult<ImportOutcome> {
-    if !plan.problems.is_empty() {
-        return Err(AppError::Invalid(format!(
-            "Resolva os problemas do pacote antes de importar:\n{}",
-            plan.problems.join("\n")
-        )));
-    }
-    let mut inserted = 0;
-    let mut merged = 0;
-    for planned in &plan.questions {
-        match load_question(conn, &planned.question.id)? {
-            Some(mut stored) => {
-                if stored.answer_id != planned.question.answer_id {
-                    return Err(AppError::Invalid(format!(
-                        "A questão \"{}\" mudou de gabarito no banco durante a importação.",
-                        excerpt(&planned.question.stem)
-                    )));
-                }
-                let before = stored.clone();
-                merge_into(&mut stored, &planned.question);
-                if stored != before {
-                    update_question(conn, &stored, now)?;
-                }
-                merged += 1;
-            }
-            None => {
-                insert_question(conn, &planned.question, now)?;
-                inserted += 1;
-            }
-        }
-    }
-    Ok(ImportOutcome {
-        inserted,
-        merged,
-        ids_by_local_id: plan.ids_by_local_id(),
-    })
-}
-
 /// Plans and applies in one step. Fails, writing nothing, if the plan has problems.
 pub fn import_questions(
-    conn: &Connection,
+    transaction: &Transaction<'_>,
     inputs: Vec<QuestionInput>,
     now: &str,
 ) -> AppResult<ImportOutcome> {
-    let plan = plan_import(conn, inputs)?;
-    apply_import(conn, &plan, now)
+    plan_import(transaction, inputs)?.apply(now)
 }
 
 /// The stems of every question under exactly this topic, oldest first. The generator gets them
@@ -225,7 +226,7 @@ pub fn topic_stems(conn: &Connection, path: &TopicPath) -> AppResult<Vec<String>
 }
 
 /// Returns the topic's ID, creating it if needed.
-pub fn upsert_topic(conn: &Connection, path: &TopicPath) -> AppResult<i64> {
+fn upsert_topic(conn: &Connection, path: &TopicPath) -> AppResult<TopicId> {
     conn.execute(
         "INSERT INTO topics (area, matter, topic) VALUES (?1, ?2, ?3)
          ON CONFLICT (area, matter, topic) DO NOTHING",
@@ -260,7 +261,7 @@ fn insert_question(conn: &Connection, q: &Question, now: &str) -> AppResult<()> 
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
         params![
             q.id,
-            q.kind.as_str(),
+            q.kind,
             q.stem,
             serde_json::to_string(&q.options)?,
             q.answer_id,
@@ -292,7 +293,7 @@ fn update_question(conn: &Connection, q: &Question, now: &str) -> AppResult<()> 
 }
 
 /// Loads a question with its topics (in topic ID order).
-pub fn load_question(conn: &Connection, id: &str) -> AppResult<Option<Question>> {
+pub fn load_question(conn: &Connection, id: &QuestionId) -> AppResult<Option<Question>> {
     let row = conn
         .query_row(
             "SELECT type, stem, options, answer_id, explanation, refs, image, image_alt,
@@ -301,7 +302,7 @@ pub fn load_question(conn: &Connection, id: &str) -> AppResult<Option<Question>>
             params![id],
             |row| {
                 Ok((
-                    row.get::<_, String>(0)?,
+                    row.get::<_, QuestionType>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
@@ -330,8 +331,6 @@ pub fn load_question(conn: &Connection, id: &str) -> AppResult<Option<Question>>
     else {
         return Ok(None);
     };
-    let kind = QuestionType::parse(&kind)
-        .ok_or_else(|| AppError::Internal(format!("unknown question type {kind:?}")))?;
     let mut stmt = conn.prepare_cached(
         "SELECT t.area, t.matter, t.topic FROM question_topics qt
          JOIN topics t ON t.id = qt.topic_id
@@ -461,39 +460,60 @@ mod tests {
         .unwrap();
     }
 
-    #[test]
-    fn duplicates_merge_explanations_refs_and_topics() {
+    fn merge_duplicate(original: QuestionInput, copy: QuestionInput) -> Question {
         let db = Database::open_in_memory().unwrap();
-        let mut original = multiple("q1", "Primeira", 0);
-        original.refs = vec!["CF/88".into()];
-        let mut again = multiple("q2", "Primeira", 0);
-        again.explanation = "Porque sim.".into();
-        again.refs = vec!["CF/88".into(), "STF, ADI 4.277".into()];
-        again.topics = vec![TopicPath::new(
-            "Direito",
-            "Constitucional",
-            "Direitos fundamentais",
-        )];
-
+        let copy_id = copy.id.clone();
         db.transaction(|tx| {
             import_questions(tx, vec![original], NOW)?;
-            let outcome = import_questions(tx, vec![again], LATER)?;
-            let stored = load_question(tx, &outcome.ids_by_local_id["q2"])?.unwrap();
-            assert_eq!(stored.explanation, "Porque sim.");
-            assert_eq!(stored.refs, ["CF/88", "STF, ADI 4.277"]);
-            assert_eq!(stored.topics.len(), 2);
-
-            let mut later = multiple("q3", "Primeira", 0);
-            later.explanation = "Outra explicação.".into();
-            import_questions(tx, vec![later], LATER)?;
-            let stored = load_question(tx, &outcome.ids_by_local_id["q2"])?.unwrap();
-            assert_eq!(
-                stored.explanation, "Porque sim.",
-                "an existing explanation is kept"
-            );
-            Ok(())
+            let outcome = import_questions(tx, vec![copy], LATER)?;
+            Ok(load_question(tx, &outcome.ids_by_local_id[&copy_id])?.unwrap())
         })
-        .unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn a_duplicate_fills_a_missing_explanation() {
+        let original = multiple("q1", "Primeira", 0);
+        let mut copy = multiple("q2", "Primeira", 0);
+        copy.explanation = "Porque sim.".into();
+
+        assert_eq!(merge_duplicate(original, copy).explanation, "Porque sim.");
+    }
+
+    #[test]
+    fn a_duplicate_keeps_an_existing_explanation() {
+        let mut original = multiple("q1", "Primeira", 0);
+        original.explanation = "Porque sim.".into();
+        let mut copy = multiple("q2", "Primeira", 0);
+        copy.explanation = "Outra explicação.".into();
+
+        assert_eq!(merge_duplicate(original, copy).explanation, "Porque sim.");
+    }
+
+    #[test]
+    fn a_duplicate_merges_references() {
+        let mut original = multiple("q1", "Primeira", 0);
+        original.refs = vec!["CF/88".into()];
+        let mut copy = multiple("q2", "Primeira", 0);
+        copy.refs = vec!["CF/88".into(), "STF, ADI 4.277".into()];
+
+        assert_eq!(
+            merge_duplicate(original, copy).refs,
+            ["CF/88", "STF, ADI 4.277"]
+        );
+    }
+
+    #[test]
+    fn a_duplicate_merges_topics() {
+        let original = multiple("q1", "Primeira", 0);
+        let mut copy = multiple("q2", "Primeira", 0);
+        let another_topic = TopicPath::new("Direito", "Constitucional", "Direitos fundamentais");
+        copy.topics = vec![another_topic.clone()];
+
+        assert_eq!(
+            merge_duplicate(original, copy).topics,
+            [topic(), another_topic]
+        );
     }
 
     #[test]
@@ -531,36 +551,45 @@ mod tests {
     #[test]
     fn answer_key_conflict_inside_a_batch_is_a_problem() {
         let db = Database::open_in_memory().unwrap();
-        let plan = db
-            .with(|conn| {
-                plan_import(
-                    conn,
-                    vec![multiple("a", "Igual", 0), multiple("b", "Igual", 1)],
-                )
-            })
-            .unwrap();
-        assert_eq!(plan.problems.len(), 1);
-        assert!(
-            plan.problems[0].contains("Questões a e b são iguais"),
-            "{:?}",
-            plan.problems
-        );
+        db.transaction(|tx| {
+            let plan = plan_import(
+                tx,
+                vec![multiple("a", "Igual", 0), multiple("b", "Igual", 1)],
+            )?;
+            let problems = plan.problems();
+            assert_eq!(problems.len(), 1);
+            assert!(
+                problems[0].contains("Questões a e b são iguais"),
+                "{problems:?}"
+            );
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]
-    fn invalid_questions_are_reported_with_their_local_id_and_nothing_is_written() {
+    fn an_invalid_question_is_reported_with_its_local_id() {
         let db = Database::open_in_memory().unwrap();
         let mut broken = multiple("q7", "Enunciado", 0);
         broken.options.truncate(3);
-        let plan = db
-            .with(|conn| plan_import(conn, vec![multiple("ok", "Válida", 0), broken.clone()]))
-            .unwrap();
-        assert!(
-            plan.problems.iter().all(|p| p.starts_with("Questão q7:")),
-            "{:?}",
-            plan.problems
-        );
-        assert_eq!(plan.questions.len(), 1);
+        db.transaction(|tx| {
+            let plan = plan_import(tx, vec![multiple("ok", "Válida", 0), broken])?;
+            let problems = plan.problems();
+            assert!(
+                problems.iter().all(|p| p.starts_with("Questão q7:")),
+                "{problems:?}"
+            );
+            assert_eq!(plan.question_count(), 1);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn an_invalid_question_blocks_the_import() {
+        let db = Database::open_in_memory().unwrap();
+        let mut broken = multiple("q7", "Enunciado", 0);
+        broken.options.truncate(3);
 
         let error = db
             .transaction(|tx| import_questions(tx, vec![multiple("ok", "Válida", 0), broken], NOW))
@@ -576,34 +605,36 @@ mod tests {
     #[test]
     fn repeated_local_ids_are_a_problem() {
         let db = Database::open_in_memory().unwrap();
-        let plan = db
-            .with(|conn| {
-                plan_import(
-                    conn,
-                    vec![multiple("q", "Um", 0), boolean("q", "Dois", true)],
-                )
-            })
-            .unwrap();
-        assert_eq!(
-            plan.problems,
-            ["Questão q: identificador repetido no pacote."]
-        );
+        db.transaction(|tx| {
+            let plan = plan_import(tx, vec![multiple("q", "Um", 0), boolean("q", "Dois", true)])?;
+            assert_eq!(
+                plan.problems(),
+                ["Questão q: identificador repetido no pacote."]
+            );
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]
     fn plan_reports_questions_already_in_the_bank() {
         let db = Database::open_in_memory().unwrap();
-        db.transaction(|tx| import_questions(tx, vec![multiple("q1", "Primeira", 0)], NOW))
-            .unwrap();
-        let plan = db
-            .with(|conn| {
-                plan_import(
-                    conn,
-                    vec![multiple("a", "Primeira", 0), multiple("b", "Nova", 0)],
-                )
-            })
-            .unwrap();
-        assert!(plan.problems.is_empty());
-        assert_eq!(plan.existing_count(), 1);
+        db.transaction(|tx| {
+            import_questions(tx, vec![multiple("q1", "Primeira", 0)], NOW)?;
+            let plan = plan_import(
+                tx,
+                vec![multiple("a", "Primeira", 0), multiple("b", "Nova", 0)],
+            )?;
+            assert!(plan.problems().is_empty());
+            assert_eq!(
+                plan.questions
+                    .iter()
+                    .map(|entry| entry.stored.is_some())
+                    .collect::<Vec<_>>(),
+                [true, false]
+            );
+            Ok(())
+        })
+        .unwrap();
     }
 }

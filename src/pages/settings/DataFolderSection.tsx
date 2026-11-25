@@ -1,6 +1,6 @@
-import { Show, createResource } from "solid-js";
+import { createResource } from "solid-js";
 import { api } from "../../api";
-import { ErrorState, Loading } from "../../components/states";
+import { ResourceView } from "../../components/states";
 import { openFolder } from "./openFolder";
 
 /** Where the study data lives on this computer, with a button to open it. */
@@ -13,28 +13,23 @@ export default function DataFolderSection() {
       <p class="muted">
         O banco de dados e as imagens das questões ficam nesta pasta, neste computador.
       </p>
-      <Show
-        when={!folder.error}
-        fallback={
-          <ErrorState
-            error={folder.error as unknown}
-            onRetry={() => refetch()}
-            busy={folder.loading}
-            describedBy="data-folder-title"
-          />
-        }
+      <ResourceView
+        value={folder()}
+        error={() => folder.error}
+        pending={folder.state === "pending"}
+        retrying={folder.loading}
+        onRetry={() => refetch()}
+        describedBy="data-folder-title"
       >
-        <Show when={folder()} fallback={<Loading />}>
-          {(path) => (
-            <p class="actions">
-              <code data-testid="data-folder">{path()}</code>
-              <button type="button" onClick={() => void openFolder("data")}>
-                Abrir pasta de dados
-              </button>
-            </p>
-          )}
-        </Show>
-      </Show>
+        {(path) => (
+          <p class="actions">
+            <code data-testid="data-folder">{path()}</code>
+            <button type="button" onClick={() => void openFolder("data")}>
+              Abrir pasta de dados
+            </button>
+          </p>
+        )}
+      </ResourceView>
     </section>
   );
 }

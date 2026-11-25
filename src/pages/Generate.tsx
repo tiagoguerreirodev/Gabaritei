@@ -1,3 +1,6 @@
+import FieldError from "./generate/FieldError";
+import SourcesFields from "./generate/SourcesFields";
+import CountField from "./generate/CountField";
 import { A } from "@solidjs/router";
 import {
   For,
@@ -11,15 +14,18 @@ import {
 } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { api } from "../api";
-import { catalogState, roleProblem } from "../catalog";
+import { createRoleEditor } from "../catalog";
 import { CatalogNotice } from "../components/ModelOptions";
 import type { AiSettings } from "../bindings/AiSettings";
 import type { GenerateRequest } from "../bindings/GenerateRequest";
+import type { GenerationOutcome } from "../bindings/GenerationOutcome";
 import type { QuestionType } from "../bindings/QuestionType";
+import type { CountLimits } from "../bindings/CountLimits";
 import type { TopicTree } from "../bindings/TopicTree";
-import { ErrorState, Loading } from "../components/states";
+import { InlineError, ResourceView } from "../components/states";
 import { showError } from "../components/toasts";
 import GenerationProgress from "../components/GenerationProgress";
+import { cloneJson } from "../json";
 import {
   cancelledMessage,
   dismissGeneration,
@@ -41,18 +47,15 @@ const BOARDS = [
   "Consulplan",
 ];
 
-const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
-
-/** A deep copy where no two places share an object. */
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
-
 /** Gerar: the generation form, and progress while it runs. */
 export default function Generate() {
-  const [data] = createResource(async () => {
-    const [tree, settings] = await Promise.all([api.topicsTree(), api.aiSettings()]);
-    return { tree, settings };
+  const [data, { refetch }] = createResource(async () => {
+    const [tree, settings, counts] = await Promise.all([
+      api.topicsTree(),
+      api.aiSettings(),
+      api.questionCountLimits({ kind: "generation" }),
+    ]);
+    return { tree, settings, counts };
   });
 
   return (
@@ -62,16 +65,26 @@ export default function Generate() {
         Escolha um assunto e a quantidade de questões. Uma IA elabora o pacote e outra confere o
         gabarito às cegas, sem ver a resposta.
       </p>
-      <Show when={!data.error} fallback={<ErrorState error={data.error as unknown} />}>
-        <Show when={data()} fallback={<Loading />}>
-          {(loaded) => <GenerateView tree={loaded().tree} settings={loaded().settings} />}
-        </Show>
-      </Show>
+      <ResourceView
+        value={data()}
+        error={() => data.error}
+        pending={data.state === "pending"}
+        retrying={data.loading}
+        onRetry={() => refetch()}
+      >
+        {(loaded) => (
+          <GenerateView
+            tree={loaded().tree}
+            settings={loaded().settings}
+            counts={loaded().counts}
+          />
+        )}
+      </ResourceView>
     </section>
   );
 }
 
-function GenerateView(props: { tree: TopicTree; settings: AiSettings }) {
+function GenerateView(props: { tree: TopicTree; settings: AiSettings; counts: CountLimits }) {
   const status = generationStatus;
   return (
     <Switch>
@@ -80,7 +93,7 @@ function GenerateView(props: { tree: TopicTree; settings: AiSettings }) {
           <h2 id="running-title">
             {isRecheckRun() ? "Conferindo o pacote…" : "Gerando o pacote…"}
           </h2>
-          <StepList states={["done", "done", "current"]} />
+          <StepList states={reviewSteps} />
           <GenerationProgress />
           <p class="muted">
             Isto pode levar alguns minutos. Você pode usar outras páginas enquanto isso.
@@ -89,40 +102,45 @@ function GenerateView(props: { tree: TopicTree; settings: AiSettings }) {
       </Match>
       <Match when={true}>
         <Outcome />
-        <Form tree={props.tree} settings={props.settings} />
+        <Form tree={props.tree} settings={props.settings} counts={props.counts} />
       </Match>
     </Switch>
   );
 }
 
-const STEPS = ["Assunto", "Opções", "Revisão"] as const;
+const STEPS = [
+  { id: "topic", label: "Assunto" },
+  { id: "options", label: "Opções" },
+  { id: "review", label: "Revisão" },
+] as const;
 type StepState = "done" | "current" | "pending";
+type StepStates = Record<(typeof STEPS)[number]["id"], StepState>;
+const reviewSteps: StepStates = { topic: "done", options: "done", review: "current" };
+const stepStateLabels: Record<StepState, string> = {
+  done: " (concluída)",
+  current: " (etapa atual)",
+  pending: " (pendente)",
+};
 
 /**
  * The steps from topic to review, as an ordered list. The caller says which are done, current
  * or still pending, so a step is never "concluída" just because it was not touched. The state
  * is text and a shape, never colour alone. Fontes is not a step: sources are optional.
  */
-function StepList(props: { states: readonly StepState[] }) {
+function StepList(props: { states: StepStates }) {
   return (
     <ol class="step-list" role="list" aria-label="Etapas">
       <For each={STEPS}>
-        {(step, index) => (
+        {(step) => (
           <li
             classList={{
-              done: props.states[index()] === "done",
-              current: props.states[index()] === "current",
+              done: props.states[step.id] === "done",
+              current: props.states[step.id] === "current",
             }}
-            aria-current={props.states[index()] === "current" ? "step" : undefined}
+            aria-current={props.states[step.id] === "current" ? "step" : undefined}
           >
-            {step}
-            <span class="sr-only">
-              {props.states[index()] === "done"
-                ? " (concluída)"
-                : props.states[index()] === "current"
-                  ? " (etapa atual)"
-                  : " (pendente)"}
-            </span>
+            {step.label}
+            <span class="sr-only">{stepStateLabels[props.states[step.id]]}</span>
           </li>
         )}
       </For>
@@ -135,28 +153,7 @@ function Outcome() {
     <Show when={generationStatus()?.outcome}>
       {(outcome) => (
         <section class="card" aria-label="Resultado da última geração">
-          <Switch>
-            <Match when={outcome().kind === "draft"}>
-              <StepList states={["done", "done", "current"]} />
-              <p>O pacote ficou pronto.</p>
-              <A
-                href={`/revisar-pacote?id=${encodeURIComponent(
-                  (outcome() as { kind: "draft"; draftId: string }).draftId,
-                )}`}
-                onClick={() => void dismissGeneration()}
-              >
-                Revisar pacote
-              </A>
-            </Match>
-            <Match when={outcome().kind === "failed"}>
-              <p class="error" role="alert">
-                {failedPrefix()} {(outcome() as { kind: "failed"; message: string }).message}
-              </p>
-            </Match>
-            <Match when={outcome().kind === "cancelled"}>
-              <p>{cancelledMessage()}</p>
-            </Match>
-          </Switch>
+          {outcomeContent(outcome())}
           <button type="button" onClick={() => void dismissGeneration()}>
             Dispensar
           </button>
@@ -166,17 +163,43 @@ function Outcome() {
   );
 }
 
-function Form(props: { tree: TopicTree; settings: AiSettings }) {
+function outcomeContent(outcome: GenerationOutcome) {
+  switch (outcome.kind) {
+    case "draft":
+      return (
+        <>
+          <StepList states={reviewSteps} />
+          <p>O pacote ficou pronto.</p>
+          <A
+            href={`/revisar-pacote?id=${encodeURIComponent(outcome.draftId)}`}
+            onClick={() => void dismissGeneration()}
+          >
+            Revisar pacote
+          </A>
+        </>
+      );
+    case "failed":
+      return (
+        <InlineError>
+          {failedPrefix()} {outcome.message}
+        </InlineError>
+      );
+    case "cancelled":
+      return <p>{cancelledMessage()}</p>;
+  }
+}
+
+function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimits }) {
   const [form, setForm] = createStore<GenerateRequest>({
     topic: { area: "", matter: "", topic: "" },
-    count: 10,
+    count: untrack(() => props.counts.initial),
     board: null,
     format: null,
     instructions: null,
     sources: { remnote: false, web: false, attachments: [] },
     // Prefilled from the role defaults once; later changes in Configurações apply next time.
-    generator: untrack(() => clone(props.settings.roles.generate)),
-    checker: untrack(() => clone(props.settings.roles.blindCheck)),
+    generator: untrack(() => cloneJson(props.settings.roles.generate)),
+    checker: untrack(() => cloneJson(props.settings.roles.blindCheck)),
   });
   const [submitting, setSubmitting] = createSignal(false);
   // The errors on screen. They change on submit and on blur, not on every keystroke.
@@ -184,66 +207,57 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
   const [shownCountError, setShownCountError] = createSignal<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = createSignal(false);
   const [optionsTouched, setOptionsTouched] = createSignal(false);
-  const remnoteOn = () => props.settings.remnote.mode !== "off";
   const generator = () => form.generator ?? props.settings.roles.generate;
   const checker = () => form.checker ?? props.settings.roles.blindCheck;
+  const generatorEditor = createRoleEditor(generator, (config) => setForm("generator", config));
+  const checkerEditor = createRoleEditor(checker, (config) => setForm("checker", config));
+  const changingRole = () => generatorEditor.changing() || checkerEditor.changing();
   const problems = () =>
     [
-      ["Gerador", roleProblem(catalogState(), generator())],
-      ["Conferente", roleProblem(catalogState(), checker())],
+      ["Gerador", generatorEditor.options()?.problem],
+      ["Conferente", checkerEditor.options()?.problem],
     ].flatMap(([label, problem]) => (problem ? [`${label}: ${problem}`] : []));
   // The role pickers that fix a problem live in the advanced options: show them.
   createEffect(() => {
     if (problems().length > 0) setAdvancedOpen(true);
   });
 
-  const attach = async () => {
-    try {
-      const picked = await api.pickAttachments();
-      const current = form.sources.attachments;
-      setForm("sources", "attachments", [...new Set([...current, ...picked])]);
-    } catch (error) {
-      showError(error);
-    }
-  };
-
   const topicError = () =>
     form.topic.area.trim() && form.topic.matter.trim() && form.topic.topic.trim()
       ? null
       : "Informe a área, a matéria e o assunto.";
   const countError = () =>
-    Number.isInteger(form.count) && form.count >= 1 && form.count <= 30
+    Number.isInteger(form.count) && form.count >= props.counts.min && form.count <= props.counts.max
       ? null
-      : "A quantidade deve ser um número inteiro de 1 a 30.";
+      : `A quantidade deve ser um número inteiro de ${props.counts.min} a ${props.counts.max}.`;
   const shownErrors = () =>
     [shownTopicError(), shownCountError()].flatMap((error) => (error ? [error] : []));
   const validateTopic = () => setShownTopicError(topicError());
   const validateCount = () => setShownCountError(countError());
-  const stepStates = (): StepState[] => [
-    topicError() ? "current" : "done",
-    optionsTouched() ? "done" : "pending",
-    "pending",
-  ];
+  const stepStates = (): StepStates => ({
+    topic: topicError() ? "current" : "done",
+    options: optionsTouched() ? "done" : "pending",
+    review: "pending",
+  });
 
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
+    if (changingRole() || problems().length > 0) return;
     validateTopic();
     validateCount();
     if (topicError() || countError()) {
-      const { area, matter } = form.topic;
-      const target = topicError()
-        ? !area.trim()
-          ? "gen-topic-area"
-          : !matter.trim()
-            ? "gen-topic-matter"
-            : "gen-topic-topic"
-        : "gen-count";
+      const fields = [
+        [form.topic.area, "gen-topic-area"],
+        [form.topic.matter, "gen-topic-matter"],
+        [form.topic.topic, "gen-topic-topic"],
+      ] as const;
+      const target = fields.find(([value]) => !value.trim())?.[1] ?? "gen-count";
       document.getElementById(target)?.focus();
       return;
     }
     setSubmitting(true);
     try {
-      await api.generationStart(clone(unwrap(form)));
+      await api.generationStart(cloneJson(unwrap(form)));
     } catch (error) {
       showError(error);
     } finally {
@@ -277,43 +291,18 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
             if (shownTopicError() || area.trim() || matter.trim() || topic.trim()) validateTopic();
           }}
         />
-        <Show when={shownTopicError()}>
-          {(message) => (
-            <p class="field-error" id="gen-topic-error">
-              <span aria-hidden="true">✕ </span>
-              {message()}
-            </p>
-          )}
-        </Show>
+        <FieldError id="gen-topic-error">{shownTopicError()}</FieldError>
 
-        <label for="gen-count">Quantidade</label>
-        <input
-          id="gen-count"
-          type="number"
-          min="1"
-          max="30"
-          required
-          aria-required="true"
-          aria-invalid={shownCountError() ? "true" : undefined}
-          aria-describedby={shownCountError() ? "gen-count-hint gen-count-error" : "gen-count-hint"}
+        <CountField
           value={form.count}
-          onInput={(event) => {
-            setOptionsTouched(true);
-            setForm("count", Number(event.currentTarget.value));
-          }}
+          counts={props.counts}
+          error={shownCountError()}
           onBlur={validateCount}
+          onInput={(value) => {
+            setOptionsTouched(true);
+            setForm("count", value);
+          }}
         />
-        <p class="hint muted" id="gen-count-hint">
-          Obrigatório. De 1 a 30. Cada questão passa pela conferência às cegas.
-        </p>
-        <Show when={shownCountError()}>
-          {(message) => (
-            <p class="field-error" id="gen-count-error">
-              <span aria-hidden="true">✕ </span>
-              {message()}
-            </p>
-          )}
-        </Show>
 
         <label for="gen-format">Formato</label>
         <select
@@ -362,71 +351,16 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
             onInput={(event) => setForm("instructions", event.currentTarget.value || null)}
           />
 
-          <span class="label">Fontes</span>
-          <div>
-            <label>
-              <input
-                type="checkbox"
-                checked={form.sources.remnote}
-                disabled={!remnoteOn()}
-                onChange={(event) => setForm("sources", "remnote", event.currentTarget.checked)}
-              />{" "}
-              RemNote
-            </label>
-            <Show when={!remnoteOn()}>
-              <span class="muted"> (ligue em Configurações)</span>
-            </Show>
-            <br />
-            <label>
-              <input
-                type="checkbox"
-                checked={form.sources.web}
-                onChange={(event) => setForm("sources", "web", event.currentTarget.checked)}
-              />{" "}
-              Pesquisar na web
-            </label>
-            <button type="button" onClick={() => void attach()}>
-              Anexar arquivos
-            </button>
-            <Show when={form.sources.attachments.length > 0}>
-              <ul class="attachments" aria-label="Anexos">
-                <For each={form.sources.attachments}>
-                  {(path) => (
-                    <li>
-                      {fileName(path)}{" "}
-                      <button
-                        type="button"
-                        class="link-button"
-                        aria-label={`Remover ${fileName(path)}`}
-                        onClick={() =>
-                          setForm(
-                            "sources",
-                            "attachments",
-                            form.sources.attachments.filter((p) => p !== path),
-                          )
-                        }
-                      >
-                        remover
-                      </button>
-                    </li>
-                  )}
-                </For>
-              </ul>
-            </Show>
-          </div>
+          <SourcesFields
+            value={form.sources}
+            remnoteOn={props.settings.remnote.mode !== "off"}
+            onChange={(sources) => setForm("sources", sources)}
+          />
 
           <span class="label">Gerador</span>
-          <RolePicker
-            label="Gerador"
-            value={form.generator ?? props.settings.roles.generate}
-            onChange={(config) => setForm("generator", config)}
-          />
+          <RolePicker label="Gerador" editor={generatorEditor} />
           <span class="label">Conferente</span>
-          <RolePicker
-            label="Conferente"
-            value={form.checker ?? props.settings.roles.blindCheck}
-            onChange={(config) => setForm("checker", config)}
-          />
+          <RolePicker label="Conferente" editor={checkerEditor} />
         </div>
       </details>
       <CatalogNotice agents={[generator().agent, checker().agent]} />
@@ -436,13 +370,15 @@ function Form(props: { tree: TopicTree; settings: AiSettings }) {
           <p>Corrija em “Opções avançadas”, no Gerador e no Conferente, para poder gerar.</p>
         </div>
       </Show>
-      <Show when={shownErrors().length > 0}>
-        <p class="field-error" role="alert">
-          <span aria-hidden="true">✕ </span>
-          Falta preencher {shownErrors().length === 1 ? "um campo" : "dois campos"} para gerar.
-        </p>
-      </Show>
-      <button type="submit" class="primary" disabled={submitting() || problems().length > 0}>
+      <FieldError role="alert">
+        {shownErrors().length > 0 &&
+          `Falta preencher ${shownErrors().length === 1 ? "um campo" : "dois campos"} para gerar.`}
+      </FieldError>
+      <button
+        type="submit"
+        class="primary"
+        disabled={submitting() || changingRole() || problems().length > 0}
+      >
         {submitting() ? "Iniciando…" : "Gerar"}
       </button>
     </form>

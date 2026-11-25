@@ -12,7 +12,7 @@ use super::runner::{
 const READ_TOOLS: &[&str] = &["Read", "Grep", "Glob"];
 const WEB_TOOLS: &[&str] = &["WebSearch", "WebFetch"];
 /// Name the RemNote server gets in the MCP config.
-const REMNOTE_SERVER: &str = "remnote";
+use super::REMNOTE_SERVER;
 
 /// The MCP config file for the RemNote server.
 pub(super) fn mcp_config(url: &str, token: &str) -> String {
@@ -41,8 +41,8 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         allowed.extend(WEB_TOOLS.iter().map(|t| (*t).to_owned()));
     }
     // RemNote: only the exact read-only tools the user approved, never the whole server.
-    if work.mcp_config.is_some()
-        && let Some(RemNoteAccess::Server { tools, .. }) = &spec.remnote
+    if work.mcp_config().is_some()
+        && let Some(RemNoteAccess { tools, .. }) = &spec.remnote
     {
         allowed.extend(
             read_only_tools(tools)
@@ -51,6 +51,12 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         );
     }
     let builtin = builtin.join(",");
+    // Claude Code 2.1.331 rejects the generated Draft 2020-12 declaration. Its validator
+    // accepts the same schemas, including local $defs references, without the declaration.
+    let mut schema = spec.schema.clone();
+    if let Some(schema) = schema.as_object_mut() {
+        schema.remove("$schema");
+    }
 
     let mut args: Vec<String> = vec![
         "-p".into(),
@@ -58,7 +64,7 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         "stream-json".into(),
         "--verbose".into(),
         "--json-schema".into(),
-        spec.schema.to_string(),
+        schema.to_string(),
         format!("--model={}", spec.model),
         "--effort".into(),
         spec.effort.as_str().into(),
@@ -80,16 +86,16 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Plan {
         args.push("--settings".into());
         args.push(r#"{"fastMode":true}"#.into());
     }
-    if let Some(config) = &work.mcp_config {
+    if let Some(config) = work.mcp_config() {
         args.push("--mcp-config".into());
         args.push(config.to_string_lossy().into_owned());
     }
-    if let Some(file) = &work.instructions {
+    if let Some(file) = work.instructions() {
         args.push("--append-system-prompt-file".into());
         args.push(file.to_string_lossy().into_owned());
     }
-    // `RemNoteAccess::CodexConfig` only makes sense for Codex; Claude then gets no RemNote.
     Plan {
+        executable: spec.cli.clone(),
         args: args.into_iter().map(Into::into).collect(),
         env: Vec::new(),
     }
@@ -106,7 +112,7 @@ impl Parser for ClaudeParser {
         let event: Value = serde_json::from_str(line).ok()?;
         match event.get("type")?.as_str()? {
             "system" if event.get("subtype").and_then(Value::as_str) == Some("init") => {
-                Some(Progress::new(ProgressKind::Started, "Iniciando…"))
+                Some(Progress::from_kind(ProgressKind::Started))
             }
             "assistant" => event["message"]["content"]
                 .as_array()?
@@ -151,12 +157,10 @@ fn tool_progress(block: &Value) -> Option<Progress> {
     }
     let name = block.get("name")?.as_str()?;
     Some(match name {
-        "Read" | "Grep" | "Glob" => Progress::new(ProgressKind::Reading, "Lendo as fontes…"),
-        "WebSearch" | "WebFetch" => Progress::new(ProgressKind::Searching, "Pesquisando na web…"),
-        "StructuredOutput" => Progress::new(ProgressKind::Writing, "Redigindo a resposta…"),
-        n if n.starts_with("mcp__") => {
-            Progress::new(ProgressKind::Searching, "Consultando o RemNote…")
-        }
-        _ => Progress::new(ProgressKind::Thinking, "Raciocinando…"),
+        "Read" | "Grep" | "Glob" => Progress::from_kind(ProgressKind::Reading),
+        "WebSearch" | "WebFetch" => Progress::from_kind(ProgressKind::Searching),
+        "StructuredOutput" => Progress::from_kind(ProgressKind::Writing),
+        n if n.starts_with("mcp__") => Progress::consulting_remnote(),
+        _ => Progress::from_kind(ProgressKind::Thinking),
     })
 }

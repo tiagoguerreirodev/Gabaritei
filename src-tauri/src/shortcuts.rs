@@ -5,21 +5,19 @@
 
 use rusqlite::Connection;
 
-use crate::db;
+use crate::db::{self, SettingKey};
 use crate::error::AppResult;
-
-pub const KEY: &str = "keyboardShortcuts";
 
 /// Reads the setting; on when never saved or when the stored value is invalid.
 pub fn load(conn: &Connection) -> AppResult<bool> {
-    Ok(db::get_raw_setting(conn, KEY)?
+    Ok(db::get_raw_setting(conn, SettingKey::KeyboardShortcuts)?
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or(true))
 }
 
 /// Saves the setting and returns it.
 pub fn save(conn: &Connection, enabled: bool) -> AppResult<bool> {
-    db::set_setting(conn, KEY, &enabled)?;
+    db::set_setting(conn, SettingKey::KeyboardShortcuts, &enabled)?;
     Ok(enabled)
 }
 
@@ -41,13 +39,13 @@ mod tests {
     #[test]
     fn an_unreadable_stored_value_means_on() {
         let db = Database::open_in_memory().unwrap();
-        db.with(|conn| db::put_raw_setting(conn, KEY, Some("\"maybe\"")))
+        db.with(|conn| db::put_raw_setting(conn, SettingKey::KeyboardShortcuts, Some("\"maybe\"")))
             .unwrap();
         assert!(db.with(|conn| load(conn)).unwrap());
     }
 
     #[test]
     fn is_a_local_setting() {
-        assert!(crate::backup::LOCAL_SETTINGS.contains(&KEY));
+        assert!(crate::backup::LOCAL_SETTINGS.contains(&SettingKey::KeyboardShortcuts));
     }
 }

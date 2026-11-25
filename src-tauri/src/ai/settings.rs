@@ -4,28 +4,19 @@
 //! OS keychain only (see [`super::secrets`]), so it can't reach the database, logs or exports.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::agent::{Agent, Effort};
-use super::discovery;
+use super::agent::Agent;
+use super::catalog::{CatalogCache, ensure_listed};
+use super::discovery::{self, CliStatus};
 use super::roles::{Role, RoleConfig, RoleSettings};
 use super::runner::{JobSpec, RemNoteAccess, is_valid_tool_name, is_write_like};
 use super::secrets::Secrets;
-use crate::db::{get_setting, set_setting};
+use crate::db::{Database, SettingKey, get_setting, set_setting};
 use crate::error::{AppError, AppResult};
-
-/// Agent, model and effort per role. Kept when data from another computer is restored: the
-/// models and CLIs available can differ between computers.
-pub const KEY_ROLES: &str = "ai.roles";
-/// Where the CLIs are on this computer. Kept when data from another computer is restored.
-pub const KEY_CLI_PATHS: &str = "ai.cliPaths";
-/// The RemNote connection. Kept when data from another computer is restored: the keychain token
-/// is per computer, and must never be paired with a URL that came from a file.
-pub const KEY_REMNOTE: &str = "ai.remnote";
 
 const MAX_MODEL: usize = 200;
 const MAX_PATH: usize = 1_000;
@@ -49,6 +40,31 @@ impl CliPaths {
     }
 }
 
+/// Executables discovered by the caller. A missing executable only fails a task that uses it.
+pub struct ResolvedClis {
+    claude: Option<PathBuf>,
+    codex: Option<PathBuf>,
+}
+
+impl ResolvedClis {
+    pub fn new(claude: Option<PathBuf>, codex: Option<PathBuf>) -> Self {
+        Self { claude, codex }
+    }
+
+    fn require(&self, agent: Agent) -> AppResult<&Path> {
+        match agent {
+            Agent::Claude => self.claude.as_deref(),
+            Agent::Codex => self.codex.as_deref(),
+        }
+        .ok_or_else(|| {
+            AppError::Invalid(format!(
+                "O {} não foi encontrado. Confira Configurações › Agentes.",
+                agent.label()
+            ))
+        })
+    }
+}
+
 /// How RemNote reaches the agents.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -58,8 +74,6 @@ pub enum RemNoteMode {
     Off,
     /// URL and token set here (token in the keychain).
     Server,
-    /// Codex's own config already has the RemNote server.
-    CodexConfig,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -97,36 +111,71 @@ pub struct AiSettings {
 
 /// Just the CLI path overrides (no defaults written, no keychain access).
 pub fn load_cli_paths(conn: &Connection) -> AppResult<CliPaths> {
-    Ok(get_setting(conn, KEY_CLI_PATHS)?.unwrap_or_default())
+    Ok(get_setting(conn, SettingKey::CliPaths)?.unwrap_or_default())
 }
 
 /// Just the role configuration (the saved one, or the defaults), with no writes and no keychain.
 pub fn load_roles(conn: &Connection) -> AppResult<RoleSettings> {
-    Ok(get_setting(conn, KEY_ROLES)?.unwrap_or_default())
+    Ok(get_setting(conn, SettingKey::AiRoles)?.unwrap_or_default())
 }
 
 /// Loads the settings, writing the defaults the first time (spec §7: set on first run).
 pub fn load(conn: &Connection, secrets: &Secrets) -> AppResult<AiSettings> {
-    let roles = match get_setting::<RoleSettings>(conn, KEY_ROLES)? {
+    let roles = match get_setting::<RoleSettings>(conn, SettingKey::AiRoles)? {
         Some(roles) => roles,
         None => {
             let defaults = RoleSettings::default();
-            set_setting(conn, KEY_ROLES, &defaults)?;
+            set_setting(conn, SettingKey::AiRoles, &defaults)?;
             defaults
         }
     };
     Ok(AiSettings {
-        cli_paths: get_setting(conn, KEY_CLI_PATHS)?.unwrap_or_default(),
+        cli_paths: get_setting(conn, SettingKey::CliPaths)?.unwrap_or_default(),
         roles,
-        remnote: get_setting(conn, KEY_REMNOTE)?.unwrap_or_default(),
+        remnote: load_remnote(conn)?,
         // Best effort: a locked or missing keychain must not break every AI feature.
         has_remnote_token: secrets.remnote_token().ok().flatten().is_some(),
     })
 }
 
-fn invalid(message: &str) -> AppError {
-    AppError::Invalid(message.to_owned())
+/// Saves settings and reads back the persisted values in one transaction.
+pub(crate) fn save_and_reload(
+    db: &Database,
+    secrets: &Secrets,
+    catalog: &CatalogCache,
+    input: AiSettingsInput,
+) -> AppResult<AiSettings> {
+    let (saved, paths_changed) = db.transaction(|tx| {
+        let paths_changed = save_input(tx, input, Some(catalog))?;
+        Ok((load(tx, secrets)?, paths_changed))
+    })?;
+    if paths_changed {
+        catalog.clear();
+    }
+    Ok(saved)
 }
+
+/// Tests the configured executable, or the discovered one if there is no override.
+pub(crate) fn test_cli(db: &Database, secrets: &Secrets, agent: Agent) -> AppResult<CliStatus> {
+    let settings = db.with(|conn| load(conn, secrets))?;
+    Ok(discovery::cli_test(
+        agent,
+        settings.cli_paths.get(agent).map(Path::new),
+    ))
+}
+
+fn load_remnote(conn: &Connection) -> AppResult<RemNoteSettings> {
+    let Some(saved) = get_setting::<serde_json::Value>(conn, SettingKey::RemNote)? else {
+        return Ok(RemNoteSettings::default());
+    };
+    // The retired mode never used the saved URL or tools. Require explicit setup before using them.
+    if saved["mode"] == "codexConfig" {
+        return Ok(RemNoteSettings::default());
+    }
+    Ok(serde_json::from_value(saved)?)
+}
+
+use super::invalid;
 
 fn clean_path(value: &Option<String>, what: &str) -> AppResult<Option<String>> {
     let Some(text) = value.as_deref().map(str::trim).filter(|t| !t.is_empty()) else {
@@ -162,7 +211,7 @@ pub fn validate_role_config(config: &mut RoleConfig, label: &str) -> AppResult<(
             "O nome do modelo de “{label}” é inválido."
         )));
     }
-    if config.agent == Agent::Claude && config.effort == Effort::Ultra {
+    if !config.agent.supports_effort(config.effort) {
         return Err(AppError::Invalid(format!(
             "O esforço Ultra só existe no Codex. Escolha outro esforço para “{label}”."
         )));
@@ -170,9 +219,47 @@ pub fn validate_role_config(config: &mut RoleConfig, label: &str) -> AppResult<(
     Ok(())
 }
 
-/// Checks and saves the settings. Nothing is written if anything is invalid.
+#[cfg(test)]
 pub fn save(conn: &Connection, input: AiSettingsInput) -> AppResult<()> {
-    let mut roles = input.roles;
+    save_input(conn, input, None).map(|_| ())
+}
+
+/// Nothing is written unless the settings are valid, including any available model lists.
+fn save_input(
+    conn: &Connection,
+    input: AiSettingsInput,
+    cache: Option<&CatalogCache>,
+) -> AppResult<bool> {
+    let roles = validated_roles(input.roles)?;
+    let cli_paths = CliPaths {
+        claude: clean_path(&input.cli_paths.claude, "Claude Code")?,
+        codex: clean_path(&input.cli_paths.codex, "Codex")?,
+    };
+    let remnote = validated_remnote(input.remnote)?;
+    let previous = load_cli_paths(conn)?;
+    if let Some(cache) = cache {
+        let saved_roles = load_roles(conn)?;
+        cache
+            .with_cached(&previous, |catalog| {
+                roles
+                    .all_roles()
+                    .filter(|(role, config)| {
+                        // A saved role can go stale without preventing unrelated settings edits.
+                        // An edited executable path has no matching list until it is loaded.
+                        *config != saved_roles.get(*role)
+                            && previous.get(config.agent) == cli_paths.get(config.agent)
+                    })
+                    .try_for_each(|(role, config)| ensure_listed(catalog, config, role.label()))
+            })
+            .unwrap_or(Ok(()))?;
+    }
+    set_setting(conn, SettingKey::AiRoles, &roles)?;
+    set_setting(conn, SettingKey::CliPaths, &cli_paths)?;
+    set_setting(conn, SettingKey::RemNote, &remnote)?;
+    Ok(cli_paths != previous)
+}
+
+fn validated_roles(mut roles: RoleSettings) -> AppResult<RoleSettings> {
     for role in Role::ALL {
         let config = match role {
             Role::Generate => &mut roles.generate,
@@ -182,12 +269,12 @@ pub fn save(conn: &Connection, input: AiSettingsInput) -> AppResult<()> {
         };
         validate_role_config(config, role.label())?;
     }
-    let cli_paths = CliPaths {
-        claude: clean_path(&input.cli_paths.claude, "Claude Code")?,
-        codex: clean_path(&input.cli_paths.codex, "Codex")?,
-    };
-    let url = input.remnote.url.trim().to_owned();
-    if input.remnote.mode == RemNoteMode::Server
+    Ok(roles)
+}
+
+fn validated_remnote(input: RemNoteSettings) -> AppResult<RemNoteSettings> {
+    let url = input.url.trim().to_owned();
+    if input.mode == RemNoteMode::Server
         && (!(url.starts_with("https://") || url.starts_with("http://"))
             || url.chars().count() > MAX_URL
             || url.contains(char::is_whitespace))
@@ -197,7 +284,7 @@ pub fn save(conn: &Connection, input: AiSettingsInput) -> AppResult<()> {
         ));
     }
     let mut tools: Vec<String> = Vec::new();
-    for tool in &input.remnote.tools {
+    for tool in &input.tools {
         let tool = tool.trim();
         if !is_valid_tool_name(tool) {
             return Err(invalid("Há um nome de ferramenta do RemNote inválido."));
@@ -211,39 +298,17 @@ pub fn save(conn: &Connection, input: AiSettingsInput) -> AppResult<()> {
             tools.push(tool.to_owned());
         }
     }
-    let remnote = RemNoteSettings {
-        mode: input.remnote.mode,
+    Ok(RemNoteSettings {
+        mode: input.mode,
         url,
         tools,
-    };
-    set_setting(conn, KEY_ROLES, &roles)?;
-    set_setting(conn, KEY_CLI_PATHS, &cli_paths)?;
-    set_setting(conn, KEY_REMNOTE, &remnote)?;
-    Ok(())
-}
-
-/// The executable for `agent`: the user's override, else detected.
-pub fn resolve_cli(settings: &AiSettings, agent: Agent) -> AppResult<PathBuf> {
-    let custom = settings.cli_paths.get(agent).map(Path::new);
-    discovery::find_cli(agent, custom).ok_or_else(|| {
-        AppError::Invalid(format!(
-            "O {} não foi encontrado. Confira Configurações › Agentes.",
-            agent.label()
-        ))
     })
 }
 
-/// How RemNote is passed to a run by `agent`, or an error if it's switched on but incomplete.
-pub fn remnote_access(
-    settings: &AiSettings,
-    secrets: &Secrets,
-    agent: Agent,
-) -> AppResult<Option<RemNoteAccess>> {
+/// RemNote access for a run, or an error if it's switched on but incomplete.
+fn remnote_access(settings: &AiSettings, secrets: &Secrets) -> AppResult<Option<RemNoteAccess>> {
     match settings.remnote.mode {
         RemNoteMode::Off => Ok(None),
-        RemNoteMode::CodexConfig => {
-            Ok((agent == Agent::Codex).then_some(RemNoteAccess::CodexConfig))
-        }
         RemNoteMode::Server => {
             let token = secrets.remnote_token()?.ok_or_else(|| {
                 invalid("O RemNote está ligado, mas falta o token. Informe-o em Configurações › RemNote.")
@@ -253,7 +318,7 @@ pub fn remnote_access(
                     "Aprove ao menos uma ferramenta de leitura do RemNote em Configurações (use “Testar conexão”).",
                 ));
             }
-            Ok(Some(RemNoteAccess::Server {
+            Ok(Some(RemNoteAccess {
                 url: settings.remnote.url.clone(),
                 token,
                 tools: settings.remnote.tools.clone(),
@@ -273,204 +338,27 @@ pub struct Sources {
 pub fn job_spec(
     settings: &AiSettings,
     secrets: &Secrets,
+    clis: &ResolvedClis,
     config: &RoleConfig,
     schema: serde_json::Value,
     sources: Sources,
+    attachments: Vec<PathBuf>,
 ) -> AppResult<JobSpec> {
-    let cli = resolve_cli(settings, config.agent)?;
-    let mut spec = JobSpec::new(
+    let cli = clis.require(config.agent)?.to_path_buf();
+    let remnote = if sources.remnote {
+        remnote_access(settings, secrets)?
+    } else {
+        None
+    };
+    Ok(JobSpec::new(
         config.agent,
         cli,
         config.model.clone(),
         config.effort,
         schema,
-    );
-    spec.fast = config.fast;
-    spec.web = sources.web;
-    if sources.remnote {
-        spec.remnote = remnote_access(settings, secrets, config.agent)?;
-    }
-    Ok(spec)
-}
-
-/// Result of the RemNote "Testar" button.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct RemNoteTest {
-    pub ok: bool,
-    /// pt-BR, safe to show.
-    pub message: String,
-    /// Tool names the server offers (empty unless the server answered). The user picks the
-    /// read-only ones to allow.
-    pub tools: Vec<String>,
-}
-
-const TEST_TIMEOUT: Duration = Duration::from_secs(15);
-
-fn test_result(ok: bool, message: &str, tools: Vec<String>) -> AppResult<RemNoteTest> {
-    Ok(RemNoteTest {
-        ok,
-        message: message.to_owned(),
-        tools,
-    })
-}
-
-/// One JSON-RPC call to an MCP server over HTTP. The reply is JSON or a server-sent event.
-struct McpReply {
-    status: u16,
-    session: Option<String>,
-    body: String,
-}
-
-fn mcp_post(
-    agent: &ureq::Agent,
-    url: &str,
-    token: &str,
-    session: Option<&str>,
-    body: &serde_json::Value,
-) -> Result<McpReply, ureq::Error> {
-    let mut request = agent
-        .post(url)
-        .header("Authorization", &format!("Bearer {token}"))
-        .header("Content-Type", "application/json")
-        .header("Accept", "application/json, text/event-stream");
-    if let Some(session) = session {
-        request = request.header("Mcp-Session-Id", session);
-    }
-    let mut response = request.send(body.to_string().as_bytes())?;
-    let status = response.status().as_u16();
-    let session = response
-        .headers()
-        .get("mcp-session-id")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
-    let body = response.body_mut().read_to_string().unwrap_or_default();
-    Ok(McpReply {
-        status,
-        session,
-        body,
-    })
-}
-
-/// The JSON-RPC message in a reply: plain JSON, or the first `data:` line of an event stream.
-fn reply_json(body: &str) -> Option<serde_json::Value> {
-    serde_json::from_str(body.trim()).ok().or_else(|| {
-        body.lines()
-            .filter_map(|line| line.strip_prefix("data:"))
-            .find_map(|data| serde_json::from_str(data.trim()).ok())
-    })
-}
-
-/// Tool names from a `tools/list` reply.
-fn tool_names(reply: &serde_json::Value) -> Vec<String> {
-    let mut names: Vec<String> = reply["result"]["tools"]
-        .as_array()
-        .map(|tools| {
-            tools
-                .iter()
-                .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default();
-    names.sort();
-    names
-}
-
-/// Checks that the RemNote MCP server answers with the saved token, and lists its tools.
-pub fn remnote_test(settings: &AiSettings, secrets: &Secrets) -> AppResult<RemNoteTest> {
-    match settings.remnote.mode {
-        RemNoteMode::Off => test_result(false, "O RemNote está desligado.", Vec::new()),
-        RemNoteMode::CodexConfig => {
-            let Some(cli) = discovery::find_cli(
-                Agent::Codex,
-                settings.cli_paths.get(Agent::Codex).map(Path::new),
-            ) else {
-                return test_result(false, "O Codex não foi encontrado.", Vec::new());
-            };
-            match discovery::capture(&cli, &["mcp", "list"]) {
-                Some(out) if out.success => {
-                    if out.stdout.to_lowercase().contains("remnote") {
-                        test_result(
-                            true,
-                            "O Codex tem um servidor RemNote configurado.",
-                            Vec::new(),
-                        )
-                    } else {
-                        test_result(
-                            false,
-                            "Não achei um servidor RemNote na configuração do Codex.",
-                            Vec::new(),
-                        )
-                    }
-                }
-                _ => test_result(
-                    false,
-                    "Não foi possível consultar a configuração do Codex.",
-                    Vec::new(),
-                ),
-            }
-        }
-        RemNoteMode::Server => {
-            let Some(token) = secrets.remnote_token()? else {
-                return test_result(false, "Informe o token do RemNote primeiro.", Vec::new());
-            };
-            let agent: ureq::Agent = ureq::Agent::config_builder()
-                .timeout_global(Some(TEST_TIMEOUT))
-                .http_status_as_error(false)
-                .build()
-                .into();
-            let url = &settings.remnote.url;
-            let initialize = serde_json::json!({
-                "jsonrpc": "2.0", "id": 1, "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-03-26",
-                    "capabilities": {},
-                    "clientInfo": { "name": "gabaritei", "version": env!("CARGO_PKG_VERSION") }
-                }
-            });
-            let Ok(first) = mcp_post(&agent, url, &token, None, &initialize) else {
-                return test_result(
-                    false,
-                    "Não foi possível conectar ao endereço do RemNote.",
-                    Vec::new(),
-                );
-            };
-            match first.status {
-                200..=299 => {}
-                401 | 403 => return test_result(false, "O RemNote recusou o token.", Vec::new()),
-                code => {
-                    return test_result(
-                        false,
-                        &format!("O RemNote respondeu com erro (código {code})."),
-                        Vec::new(),
-                    );
-                }
-            }
-            // Listing the tools is best effort: a server that connects but won't list them
-            // still passes the connection test.
-            let session = first.session.as_deref();
-            let _ = mcp_post(
-                &agent,
-                url,
-                &token,
-                session,
-                &serde_json::json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
-            );
-            let tools = mcp_post(
-                &agent,
-                url,
-                &token,
-                session,
-                &serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
-            )
-            .ok()
-            .and_then(|reply| reply_json(&reply.body))
-            .map(|json| tool_names(&json))
-            .unwrap_or_default();
-            test_result(true, "Conexão com o RemNote funcionando.", tools)
-        }
-    }
+    )
+    .with_sources(attachments, sources.web, remnote)
+    .with_fast(config.fast))
 }
 
 #[cfg(test)]

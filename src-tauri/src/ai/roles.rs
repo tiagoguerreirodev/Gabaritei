@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::agent::{Agent, Effort};
+use super::catalog::{self, CatalogCache};
+use super::generate::GenerateRequest;
+use super::settings;
+use crate::db::Database;
+use crate::error::AppResult;
 
 /// Model every role starts with (the owner's choice: GPT-6.2-Sol on Codex, extra-high effort).
 pub const DEFAULT_MODEL: &str = "gpt-6.2-sol";
@@ -95,9 +100,57 @@ impl RoleSettings {
         }
     }
 
+    pub(crate) fn resolve<'a>(
+        &'a self,
+        role: Role,
+        override_config: Option<&'a RoleConfig>,
+    ) -> &'a RoleConfig {
+        override_config.unwrap_or_else(|| self.get(role))
+    }
+
     pub fn all_roles(&self) -> impl Iterator<Item = (Role, &RoleConfig)> {
         Role::ALL.into_iter().map(|role| (role, self.get(role)))
     }
+}
+
+/// Validates a generation form and the models it selected before its worker starts.
+pub(crate) fn validate_generation(
+    db: &Database,
+    cache: &CatalogCache,
+    request: &mut GenerateRequest,
+) -> AppResult<()> {
+    request.validate()?;
+    validate_roles(
+        db,
+        cache,
+        &[
+            (Role::Generate, request.generator.as_ref()),
+            (Role::BlindCheck, request.checker.as_ref()),
+        ],
+    )
+}
+
+pub(crate) fn validate_saved_role(
+    db: &Database,
+    cache: &CatalogCache,
+    role: Role,
+) -> AppResult<()> {
+    validate_roles(db, cache, &[(role, None)])
+}
+
+/// Uses lists that are already loaded, so pre-checks never start a CLI.
+fn validate_roles(
+    db: &Database,
+    cache: &CatalogCache,
+    choices: &[(Role, Option<&RoleConfig>)],
+) -> AppResult<()> {
+    let (cli_paths, saved) =
+        db.with(|conn| Ok((settings::load_cli_paths(conn)?, settings::load_roles(conn)?)))?;
+    let configs: Vec<_> = choices
+        .iter()
+        .map(|&(role, choice)| (saved.resolve(role, choice), role.label()))
+        .collect();
+    catalog::ensure_cached_listed(cache, &cli_paths, &configs)
 }
 
 #[cfg(test)]

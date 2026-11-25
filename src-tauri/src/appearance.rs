@@ -7,10 +7,8 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::db;
+use crate::db::{self, SettingKey};
 use crate::error::AppResult;
-
-pub const KEY: &str = "appearance";
 
 /// Colour theme. `System` follows the operating system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -46,14 +44,14 @@ pub struct Appearance {
 
 /// Reads the preferences; the defaults when never saved or when the stored value is invalid.
 pub fn load(conn: &Connection) -> AppResult<Appearance> {
-    Ok(db::get_raw_setting(conn, KEY)?
+    Ok(db::get_raw_setting(conn, SettingKey::Appearance)?
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default())
 }
 
 /// Saves the preferences and returns them.
 pub fn save(conn: &Connection, appearance: Appearance) -> AppResult<Appearance> {
-    db::set_setting(conn, KEY, &appearance)?;
+    db::set_setting(conn, SettingKey::Appearance, &appearance)?;
     Ok(appearance)
 }
 
@@ -84,16 +82,20 @@ mod tests {
     #[test]
     fn an_unreadable_stored_value_falls_back_to_the_defaults() {
         let db = Database::open_in_memory().unwrap();
-        db.with(|conn| db::put_raw_setting(conn, KEY, Some("{\"theme\":\"neon\"}")))
-            .unwrap();
+        db.with(|conn| {
+            db::put_raw_setting(conn, SettingKey::Appearance, Some("{\"theme\":\"neon\"}"))
+        })
+        .unwrap();
         assert_eq!(db.with(|conn| load(conn)).unwrap(), Appearance::default());
     }
 
     #[test]
     fn a_partial_stored_value_keeps_its_valid_fields() {
         let db = Database::open_in_memory().unwrap();
-        db.with(|conn| db::put_raw_setting(conn, KEY, Some("{\"theme\":\"dark\"}")))
-            .unwrap();
+        db.with(|conn| {
+            db::put_raw_setting(conn, SettingKey::Appearance, Some("{\"theme\":\"dark\"}"))
+        })
+        .unwrap();
         let loaded = db.with(|conn| load(conn)).unwrap();
         assert_eq!(loaded.theme, Theme::Dark);
         assert_eq!(loaded.text_size, TextSize::M);

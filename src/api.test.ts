@@ -39,7 +39,7 @@ describe("api", () => {
     });
 
     await api.aiCatalog();
-    await api.aiCatalog(true);
+    await api.refreshAiCatalog();
     expect(sent).toEqual([
       ["ai_catalog", { refresh: false }],
       ["ai_catalog", { refresh: true }],

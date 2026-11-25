@@ -1,5 +1,6 @@
 import { For, Show } from "solid-js";
 import type { ResponseView } from "../../bindings/ResponseView";
+import { outcomeLabel } from "../../labels";
 
 /** Questions per group; sets that fit in one group show no group labels. */
 export const GROUP_SIZE = 10;
@@ -15,10 +16,7 @@ export default function Navigator(props: {
     const parts = [`Questão ${q.position + 1}`];
     if (q.choice !== null) parts.push("respondida");
     if (q.flagged) parts.push("marcada");
-    if (q.reveal) {
-      const label = { correct: "certa", wrong: "errada", blank: "em branco", annulled: "anulada" };
-      parts.push(label[q.reveal.outcome]);
-    }
+    if (q.reveal) parts.push(outcomeLabel(q.reveal.outcome, 1));
     return parts.join(", ");
   };
 

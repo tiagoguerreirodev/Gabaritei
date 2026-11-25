@@ -1,7 +1,11 @@
+use super::csv::cell;
 use super::*;
+use crate::attempts::SourceKind;
+use crate::bank::catalog::CollectionKind;
 use crate::bank::question::tests::multiple;
 use crate::bank::{TopicPath, import_questions};
 use crate::db::Database;
+use crate::ids::{AttemptId, CollectionId};
 use rusqlite::params;
 
 const T0: &str = "2026-11-01T10:00:00.000Z";
@@ -12,7 +16,7 @@ type Spec<'a> = (&'a str, &'a [Path]);
 /// Fixture builder: questions are `(local id, [topic paths])`; every question's key is `o0`.
 struct Fixture {
     db: Database,
-    ids: BTreeMap<String, String>,
+    ids: BTreeMap<String, QuestionId>,
 }
 
 fn fixture(questions: &[Spec]) -> Fixture {
@@ -38,7 +42,7 @@ fn fixture(questions: &[Spec]) -> Fixture {
 }
 
 impl Fixture {
-    fn id(&self, local: &str) -> String {
+    fn id(&self, local: &str) -> QuestionId {
         self.ids[local].clone()
     }
 
@@ -67,12 +71,13 @@ impl Fixture {
 
     /// A collection holding the given questions, with optional tags.
     fn collection(&self, id: &str, contest: Option<&str>, board: Option<&str>, locals: &[&str]) {
+        let id = CollectionId::from(id);
         self.db
             .transaction(|tx| {
                 tx.execute(
                     "INSERT INTO collections (id, title, kind, contest, board, created_at)
-                     VALUES (?1, ?1, 'imported', ?2, ?3, ?4)",
-                    params![id, contest, board, T0],
+                     VALUES (?1, ?1, ?2, ?3, ?4, ?5)",
+                    params![id, CollectionKind::Imported, contest, board, T0],
                 )?;
                 for (i, local) in locals.iter().enumerate() {
                     tx.execute(
@@ -91,7 +96,7 @@ impl Fixture {
     fn attempt(
         &self,
         id: &str,
-        mode: &str,
+        mode: FeedbackMode,
         finished_at: Option<&str>,
         responses: &[(&str, Option<&str>)],
     ) {
@@ -109,12 +114,13 @@ impl Fixture {
     fn attempt_at(
         &self,
         id: &str,
-        mode: &str,
+        mode: FeedbackMode,
         finished_at: Option<&str>,
         responses: &[(&str, Option<&str>, &str)],
     ) {
         // Resolve option ids first: `option` takes the database lock itself.
-        let resolved: Vec<(String, Option<String>, Option<&str>)> = responses
+        let id = AttemptId::from(id);
+        let resolved: Vec<(QuestionId, Option<String>, Option<&str>)> = responses
             .iter()
             .map(|(local, choice, at)| {
                 (
@@ -128,8 +134,8 @@ impl Fixture {
             .transaction(|tx| {
                 tx.execute(
                     "INSERT INTO attempts (id, source_kind, feedback_mode, started_at, finished_at)
-                     VALUES (?1, 'collection', ?2, ?3, ?4)",
-                    params![id, mode, T0, finished_at],
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![id, SourceKind::Collection, mode, T0, finished_at],
                 )?;
                 for (i, (question_id, choice, answered_at)) in resolved.iter().enumerate() {
                     tx.execute(
@@ -171,13 +177,13 @@ fn latest_answer_per_question_wins() {
     let f = fixture(&[("q1", &[D])]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o1"))],
     );
     f.attempt(
         "a2",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-03T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
@@ -195,13 +201,13 @@ fn the_latest_answer_is_the_one_given_last_even_when_attempts_overlap() {
     // a1 finishes last but its answer was given first; a2 finishes first with the later answer.
     f.attempt_at(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-05T10:00:00.000Z"),
         &[("q1", Some("o1"), "2026-11-02T10:00:00.000Z")],
     );
     f.attempt_at(
         "a2",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-03T10:00:00.000Z"),
         &[("q1", Some("o0"), "2026-11-03T09:00:00.000Z")],
     );
@@ -213,7 +219,7 @@ fn the_latest_answer_is_the_one_given_last_even_when_attempts_overlap() {
 #[test]
 fn unfinished_attempts_are_ignored() {
     let f = fixture(&[("q1", &[D])]);
-    f.attempt("a1", "study", None, &[("q1", Some("o0"))]);
+    f.attempt("a1", FeedbackMode::Study, None, &[("q1", Some("o0"))]);
     let p = f.all();
     assert_eq!(p.overall.score.evaluated, 0);
     assert_eq!(p.overall.available, 1);
@@ -227,7 +233,7 @@ fn a_question_counts_once_per_group_even_with_several_topics() {
     let f = fixture(&[("q1", &[D, D2]), ("q2", &[D2]), ("q3", &[P])]);
     f.attempt(
         "a1",
-        "exam",
+        FeedbackMode::Exam,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0")), ("q2", Some("o1")), ("q3", Some("o0"))],
     );
@@ -257,13 +263,13 @@ fn filters_apply_before_the_latest_answer_is_picked() {
     // Study attempt answered wrong, then a later Simulado answered right.
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o1"))],
     );
     f.attempt(
         "a2",
-        "exam",
+        FeedbackMode::Exam,
         Some("2026-11-03T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
@@ -283,18 +289,23 @@ fn filters_apply_before_the_latest_answer_is_picked() {
     assert_eq!(study.trend.iter().map(|w| w.answered).sum::<u32>(), 1);
 }
 
-#[test]
-fn contest_and_board_filters_use_the_collections_a_question_belongs_to() {
+fn bank_with_tagged_collections() -> Fixture {
     let f = fixture(&[("q1", &[D]), ("q2", &[D]), ("q3", &[D])]);
     f.collection("c1", Some("TRT"), Some("Cebraspe"), &["q1"]);
     f.collection("c2", Some("INSS"), Some("FGV"), &["q2", "q1"]);
     f.collection("c3", None, None, &["q3"]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0")), ("q2", Some("o1")), ("q3", Some("o0"))],
     );
+    f
+}
+
+#[test]
+fn the_contest_filter_includes_a_question_in_each_matching_collection() {
+    let f = bank_with_tagged_collections();
     let contest = |c: &str| {
         f.query(&PerformanceQuery {
             contest: Some(c.into()),
@@ -305,11 +316,21 @@ fn contest_and_board_filters_use_the_collections_a_question_belongs_to() {
     assert_eq!(contest("TRT").overall.score.evaluated, 1);
     assert_eq!(contest("INSS").overall.score.evaluated, 2);
     assert_eq!(contest("INSS").overall.available, 2);
+}
+
+#[test]
+fn the_board_filter_includes_matching_collections() {
+    let f = bank_with_tagged_collections();
     let board = f.query(&PerformanceQuery {
         board: Some("FGV".into()),
         ..Default::default()
     });
     assert_eq!(board.overall.score.evaluated, 2);
+}
+
+#[test]
+fn the_two_filters_must_match_the_same_collection() {
+    let f = bank_with_tagged_collections();
     let both = f.query(&PerformanceQuery {
         contest: Some("TRT".into()),
         board: Some("FGV".into()),
@@ -329,12 +350,22 @@ fn contest_and_board_filters_use_the_collections_a_question_belongs_to() {
         both.overall.score.evaluated, 1,
         "q3 is in a TRT collection by FGV"
     );
+}
+
+#[test]
+fn empty_tags_disable_filtering() {
+    let f = bank_with_tagged_collections();
     // Empty strings mean "no filter".
     let none = f.query(&PerformanceQuery {
         contest: Some(String::new()),
         ..Default::default()
     });
     assert_eq!(none.overall.score.evaluated, 3);
+}
+
+#[test]
+fn filter_options_list_the_collections_tags() {
+    let f = bank_with_tagged_collections();
     assert_eq!(f.all().filters.contests, ["INSS", "TRT"]);
     assert_eq!(f.all().filters.boards, ["Cebraspe", "FGV"]);
 }
@@ -344,7 +375,7 @@ fn an_answer_key_correction_rescores_results() {
     let f = fixture(&[("q1", &[D])]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o1"))],
     );
@@ -365,7 +396,7 @@ fn annulment_changes_the_denominator() {
     let f = fixture(&[("q1", &[D]), ("q2", &[D])]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0")), ("q2", Some("o1"))],
     );
@@ -390,7 +421,7 @@ fn blanks_count_as_evaluated_but_not_as_answered() {
     let f = fixture(&[("q1", &[D]), ("q2", &[D]), ("q3", &[D]), ("q4", &[D])]);
     f.attempt(
         "a1",
-        "exam",
+        FeedbackMode::Exam,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0")), ("q2", Some("o1")), ("q3", None)],
     );
@@ -405,8 +436,7 @@ fn blanks_count_as_evaluated_but_not_as_answered() {
     assert_eq!(s.coverage, Some(0.5));
 }
 
-#[test]
-fn small_samples_are_flagged_and_weakest_topics_come_first() {
+fn performance_with_strong_weak_and_unseen_groups() -> Performance {
     let strong: Vec<String> = (0..5).map(|i| format!("s{i}")).collect();
     let mut questions: Vec<Spec> = strong.iter().map(|k| (k.as_str(), &[D][..])).collect();
     questions.push(("w1", &[P]));
@@ -417,16 +447,36 @@ fn small_samples_are_flagged_and_weakest_topics_come_first() {
         strong.iter().map(|k| (k.as_str(), Some("o0"))).collect();
     responses.push(("w1", Some("o1")));
     responses.push(("w2", Some("o0")));
-    f.attempt("a1", "study", Some("2026-11-02T10:00:00.000Z"), &responses);
-    let p = f.all();
+    f.attempt(
+        "a1",
+        FeedbackMode::Study,
+        Some("2026-11-02T10:00:00.000Z"),
+        &responses,
+    );
+    f.all()
+}
+
+#[test]
+fn small_samples_are_flagged() {
+    let p = performance_with_strong_weak_and_unseen_groups();
+    assert!(p.areas[0].stats.small_sample, "2 answers is under 5");
+    assert!(!p.areas[1].stats.small_sample, "5 answers is enough");
+}
+
+#[test]
+fn areas_are_sorted_from_weakest_to_unseen() {
+    let p = performance_with_strong_weak_and_unseen_groups();
     let names: Vec<&str> = p.areas.iter().map(|a| a.name.as_str()).collect();
     assert_eq!(
         names,
         ["Português", "Direito", "Informática"],
         "weakest first, unseen last"
     );
-    assert!(p.areas[0].stats.small_sample, "2 answers is under 5");
-    assert!(!p.areas[1].stats.small_sample, "5 answers is enough");
+}
+
+#[test]
+fn the_weakest_topics_list_excludes_unseen_topics() {
+    let p = performance_with_strong_weak_and_unseen_groups();
     assert_eq!(p.weakest.len(), 2, "topics never answered are not weak");
     assert_eq!(p.weakest[0].topic, "Crase");
     assert_eq!(p.weakest[1].topic, "Controle");
@@ -442,7 +492,12 @@ fn weekly_trend_uses_iso_weeks_in_local_time() {
         ("q1", Some("o0"), "2026-11-23T02:30:00.000Z"), // Sun 23:30 local → week of 16
         ("q1", Some("o0"), "2026-11-23T03:00:00.000Z"), // Mon 00:00 local → week of 23
     ];
-    f.attempt_at("a1", "study", Some("2026-11-24T10:00:00.000Z"), &answers);
+    f.attempt_at(
+        "a1",
+        FeedbackMode::Study,
+        Some("2026-11-24T10:00:00.000Z"),
+        &answers,
+    );
     let local = f.query(&PerformanceQuery {
         utc_offset_minutes: -180,
         ..Default::default()
@@ -480,30 +535,41 @@ fn weeks_cross_the_year_boundary() {
     // Thursday 1 Jan 2026 belongs to the ISO week starting Monday 29 Dec 2025.
     f.attempt_at(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-01-05T10:00:00.000Z"),
         &[("q1", Some("o0"), "2026-01-01T12:00:00.000Z")],
     );
     assert_eq!(f.all().trend[0].week_start, "2025-12-29");
 }
 
-#[test]
-fn csv_is_semicolon_separated_with_bom_and_guards_formulas() {
+fn export_with_special_characters() -> String {
     let f = fixture(&[("q1", &[("=HYPERLINK(\"x\")", "Mat;éria", "-Assunto")])]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
-    let csv =
-        f.db.with(|c| export_csv(c, &PerformanceQuery::default()))
-            .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("desempenho.csv");
+    export_csv(&path, &f.all()).unwrap();
+    std::fs::read_to_string(path).unwrap()
+}
+
+#[test]
+fn csv_uses_semicolons_with_a_bom() {
+    let csv = export_with_special_characters();
     assert!(csv.starts_with('\u{feff}'));
     let lines: Vec<&str> = csv.trim_end().split("\r\n").collect();
     assert_eq!(lines.len(), 5, "header, overall, area, matter, topic");
     assert!(lines[0].starts_with("\u{feff}Nível;Área;Matéria;Assunto;"));
     assert_eq!(lines[1], "Geral;;;;1;0;0;0;1;100,0;100,0;1;100,0");
+}
+
+#[test]
+fn csv_escapes_topic_path_cells() {
+    let csv = export_with_special_characters();
+    let lines: Vec<&str> = csv.trim_end().split("\r\n").collect();
     assert!(
         lines[2].starts_with("Área;\"'=HYPERLINK(\"\"x\"\")\";"),
         "guarded with an apostrophe, then quoted because it contains quotes: {}",
@@ -514,14 +580,22 @@ fn csv_is_semicolon_separated_with_bom_and_guards_formulas() {
 }
 
 #[test]
-fn cells_are_guarded_and_quoted() {
+fn cells_guard_formula_prefixes() {
     assert_eq!(cell("normal"), "normal");
     assert_eq!(cell("=1+1"), "'=1+1");
     assert_eq!(cell("+55"), "'+55");
     assert_eq!(cell("@x"), "'@x");
     assert_eq!(cell("\tx"), "'\tx");
+}
+
+#[test]
+fn cells_quote_csv_delimiters() {
     assert_eq!(cell("a;b"), "\"a;b\"");
     assert_eq!(cell("a\"b"), "\"a\"\"b\"");
+}
+
+#[test]
+fn cells_guard_formulas_before_quoting() {
     assert_eq!(cell("=a;b"), "\"'=a;b\"");
 }
 
@@ -555,9 +629,11 @@ fn metrics_timing() {
             for a in 0..50 {
                 tx.execute(
                     "INSERT INTO attempts (id, source_kind, feedback_mode, started_at, finished_at)
-                     VALUES (?1, 'collection', 'study', ?2, ?3)",
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
                     params![
                         format!("a{a}"),
+                        SourceKind::Collection,
+                        FeedbackMode::Study,
                         T0,
                         format!("2026-{:02}-{:02}T10:00:00.000Z", 1 + a / 28, 1 + a % 28)
                     ],
@@ -597,7 +673,7 @@ fn topic_accuracy_feeds_the_bank_tree() {
     let f = fixture(&[("q1", &[D]), ("q2", &[D]), ("q3", &[P])]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0")), ("q2", Some("o1"))],
     );
@@ -620,14 +696,14 @@ fn a_blank_in_a_newer_attempt_does_not_hide_an_earlier_answer() {
     let f = fixture(&[("q1", &[D]), ("q2", &[D])]);
     f.attempt(
         "a1",
-        "exam",
+        FeedbackMode::Exam,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0")), ("q2", None)],
     );
     // A later Simulado leaves both blank.
     f.attempt(
         "a2",
-        "exam",
+        FeedbackMode::Exam,
         Some("2026-11-03T10:00:00.000Z"),
         &[("q1", None), ("q2", None)],
     );
@@ -647,7 +723,7 @@ fn tags_are_compared_without_surrounding_whitespace() {
     f.collection("c1", Some("TRT "), Some(" FGV"), &["q1"]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
@@ -666,7 +742,7 @@ fn absurd_time_zone_offsets_are_clamped() {
     let f = fixture(&[("q1", &[D])]);
     f.attempt(
         "a1",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
@@ -692,13 +768,13 @@ fn home_counts_as_held_only_the_due_reviews_that_sit_in_an_open_attempt() {
     // q1: open attempt. q2: only a finished attempt. q3: no attempt. q4: open attempt, not due.
     f.attempt(
         "open",
-        "study",
+        FeedbackMode::Study,
         None,
         &[("q1", Some("o0")), ("q4", Some("o0"))],
     );
     f.attempt(
         "done",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q2", Some("o0"))],
     );
@@ -727,21 +803,20 @@ fn home_counts_as_held_only_the_due_reviews_that_sit_in_an_open_attempt() {
     );
 }
 
-#[test]
-fn home_summarizes_the_bank_and_what_is_waiting() {
+fn home_with_bank_activity() -> HomeSummary {
     let f = fixture(&[("q1", &[D]), ("q2", &[P])]);
     f.collection("c1", None, None, &["q1", "q2"]);
     f.attempt(
         "done",
-        "study",
+        FeedbackMode::Study,
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
     f.db.transaction(|tx| {
         tx.execute(
             "INSERT INTO attempts (id, source_kind, source_ref, feedback_mode, started_at)
-             VALUES ('open', 'collection', 'c1', 'exam', '2026-11-05T09:00:00.000Z')",
-            [],
+             VALUES ('open', ?1, 'c1', ?2, '2026-11-05T09:00:00.000Z')",
+            params![SourceKind::Collection, FeedbackMode::Exam],
         )?;
         for (i, local) in ["q1", "q2"].iter().enumerate() {
             tx.execute(
@@ -757,22 +832,38 @@ fn home_summarizes_the_bank_and_what_is_waiting() {
         )?;
         tx.execute(
             "INSERT INTO drafts (id, created_at, status, request, package) VALUES
-               ('d1', ?1, 'review', '{}', '{}'), ('d2', ?1, 'discarded', '{}', '{}')",
-            params![T0],
+               ('d1', ?1, ?2, '{}', '{}'), ('d2', ?1, ?3, '{}', '{}')",
+            params![T0, DraftStatus::Review, DraftStatus::Discarded],
         )?;
         Ok(())
     })
     .unwrap();
-    let home = f.db.with(|c| home(c, "2026-11-20T00:00:00.000Z")).unwrap();
-    assert_eq!(home.questions, 2);
-    assert_eq!(home.overall.score.correct, 1);
-    assert_eq!(home.areas.len(), 2);
-    assert_eq!(home.due_reviews, 1);
+    f.db.with(|c| home(c, "2026-11-20T00:00:00.000Z")).unwrap()
+}
+
+#[test]
+fn home_summarizes_the_bank() {
+    let home = home_with_bank_activity();
     assert_eq!(
-        home.due_in_open_attempt, 1,
-        "q1 is due and in the open attempt"
+        (home.questions, home.overall.score.correct, home.areas.len()),
+        (2, 1, 2)
     );
-    assert_eq!(home.drafts_waiting, 1);
+}
+
+#[test]
+fn home_summarizes_due_reviews() {
+    let home = home_with_bank_activity();
+    assert_eq!((home.due_reviews, home.due_in_open_attempt), (1, 1));
+}
+
+#[test]
+fn home_counts_drafts_waiting_for_review() {
+    assert_eq!(home_with_bank_activity().drafts_waiting, 1);
+}
+
+#[test]
+fn home_reports_active_attempts() {
+    let home = home_with_bank_activity();
     assert_eq!(home.active_attempts.len(), 1);
     let open = &home.active_attempts[0];
     assert_eq!(

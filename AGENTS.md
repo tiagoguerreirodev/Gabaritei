@@ -47,6 +47,12 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src-tauri/` | Rust backend (Tauri 2). All business logic: database, scoring, metrics, learning, AI runner, backups. |
 | `src-tauri/src/commands.rs` | Tauri commands (thin wrappers). Register each one in `register()` in `lib.rs`. |
 | `src-tauri/src/error.rs` | `AppError`: every command returns `AppResult<T>`; the frontend receives `{ message }` in pt-BR. |
+| `src-tauri/src/attempts/` | Session creation and shuffling, attempt views, response updates, active attempts, and scoring. |
+| `src-tauri/src/metrics.rs`, `metrics/csv.rs` | Performance, home summaries and topic accuracy. CSV formatting and file export live in `csv.rs`. |
+| `src-tauri/src/ordering.rs` | Portuguese text folding and ordering of optional values. Collection filter options are shared in `bank/tags.rs`. |
+| `src-tauri/src/ai/remnote_probe.rs` | Tests the configured RemNote server and reads its list of tools. |
+| `src-tauri/src/backup.rs`, `backup/` | Backup DTOs and service, with modules for names, computer ownership, folders, probes, old-folder offers, rotation, restore, relocation, snapshots and data files. |
+| `src-tauri/src/ai/runner/` | Local CLI process isolation, cancellation and streaming, plus per-run file staging and private CLI configuration. |
 | `src-tauri/src/bank/catalog.rs` | Read-only browsing views (topic tree, collections, collection detail) with accent- and case-insensitive search and Portuguese ordering (`fold`). |
 | `src-tauri/src/db.rs` | `Database` (managed Tauri state, opened at startup at `<app data dir>/gabaritei.sqlite`), `with`/`transaction` helpers, JSON settings helpers, migration runner. |
 | `src-tauri/src/paths.rs` | `AppPaths` (managed state): the app data folder, database file and `images/` folder. |
@@ -55,9 +61,16 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src-tauri/migrations/` | SQL migrations, numbered `NNNN_name.sql`. Each one is listed in `MIGRATIONS` in `db.rs`; `PRAGMA user_version` records how many have run. |
 | `src/` | Solid.js + TypeScript + Vite frontend. Renders state and sends commands; holds no business rules. |
 | `src/api.ts` | The only place that calls `invoke`. One function per command. |
+| `src/actions.ts` | Shared busy state for asynchronous UI actions. |
+| `src/format.ts`, `src/labels.ts` | Shared display formatting and pt-BR labels. |
+| `src/navigation.ts` | Navigation helpers usable outside router components. |
 | `src/bindings/` | TypeScript types **generated** from Rust by `cargo test` (ts-rs). Committed; never edit by hand. |
 | `src/routes.ts`, `src/pages/` | Route table (pt-BR labels, menu placement) and one component per page. |
-| `src/components/` | Shared UI: `Modal`, toasts (`showToast`, `showError`; `Toaster` lives in the layout), `Loading` / `EmptyState` / `ErrorState`, and `errorMessage()` for anything thrown. Reuse these instead of writing new ones. |
+| `src/pages/generate/` | Generation form fields for the topic, roles, quantity and sources. |
+| `src/pages/review/` | Package verdict counts, question preview lines and import or discard actions. |
+| `src/pages/settings/` | Settings sections, including backup controls and the backup relocation notice. |
+| `src/pages/solve/` | Attempt presentation, including the question card, navigator, score recap, keyboard shortcuts and confirmation dialogs. |
+| `src/components/` | Shared UI: `Modal` and `ConfirmModal`, toasts (`showToast`, `showError`; `Toaster` lives in the layout), `ResourceView` for loading and retry states, `InlineError` for alerts, and `errorMessage()` for anything thrown. |
 | `docs/` | Spec, legacy analysis, and notes such as `docs/ai-cli.md` (verified CLI flags). |
 
 Rust modules (spec §5): `db`, `bank`, `attempts`, `metrics`, `learning`, `ai` (runner, `claude`, `codex`, prompts, roles, jobs, plus one submodule per task: generate, blind check, explain, recheck, review), `backup`, `migrate`, `clock`.

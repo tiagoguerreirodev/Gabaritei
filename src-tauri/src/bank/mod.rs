@@ -9,12 +9,11 @@ pub mod identity;
 pub mod package;
 pub mod question;
 pub mod store;
+pub(crate) mod tags;
 
 pub use package::{Package, PackageQuestion, package_json_schema};
 pub use question::{
     Provenance, Question, QuestionInput, QuestionOption, QuestionType, TopicPath, canonicalize,
     validate,
 };
-pub use store::{
-    ImportOutcome, ImportPlan, apply_import, import_questions, load_question, plan_import,
-};
+pub use store::{ImportOutcome, import_questions, load_question};

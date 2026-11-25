@@ -1,6 +1,5 @@
 import { useNavigate, useSearchParams } from "@solidjs/router";
-import { Show } from "solid-js";
-import { EmptyState } from "../components/states";
+import { EmptyState, ResourceView } from "../components/states";
 import Resolver from "./solve/Resolver";
 
 /** Resolver page: `#/resolver?tentativa=<id>`. */
@@ -10,9 +9,10 @@ export default function Solve() {
 
   return (
     <section class="page">
-      <Show
-        when={params.tentativa}
-        fallback={
+      <ResourceView
+        value={params.tentativa || undefined}
+        pending={false}
+        empty={
           <>
             <h1>Resolver</h1>
             <EmptyState title="Nenhuma tentativa aberta.">
@@ -22,7 +22,7 @@ export default function Solve() {
         }
       >
         {(id) => <Resolver attemptId={id()} onLeave={() => navigate("/banco")} />}
-      </Show>
+      </ResourceView>
     </section>
   );
 }

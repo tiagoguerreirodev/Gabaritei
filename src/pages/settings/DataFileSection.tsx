@@ -1,13 +1,13 @@
 import { Show, createSignal } from "solid-js";
 import { api } from "../../api";
-import Modal from "../../components/Modal";
-import { showError, showToast } from "../../components/toasts";
-import type { Busy } from "./busy";
+import ConfirmModal from "../../components/ConfirmModal";
+import { showToast } from "../../components/toasts";
+import type { ActionRunner } from "../../actions";
 
 /** Moves the study data between computers with one file. */
 export default function DataFileSection(props: {
   /** Shared with the backup section, so only one action runs at a time. */
-  busy: Busy;
+  busy: ActionRunner;
   /** Called after an import replaced the data, so the app shows the imported state. */
   onImported?: () => void;
 }) {
@@ -18,16 +18,12 @@ export default function DataFileSection(props: {
 
   const exportData = () =>
     busy.run(async () => {
-      try {
-        if (await api.exportData()) showToast("Arquivo de dados salvo.");
-      } catch (error) {
-        showError(error);
-      }
+      if (await api.exportData()) showToast("Arquivo de dados salvo.");
     });
 
   const importData = () =>
-    busy.run(async () => {
-      try {
+    busy.run(
+      async () => {
         const imported = await api.importData();
         setConfirming(false);
         if (imported) {
@@ -35,11 +31,9 @@ export default function DataFileSection(props: {
           if (onImported) onImported();
           else window.location.reload();
         }
-      } catch (error) {
-        setConfirming(false);
-        showError(error);
-      }
-    });
+      },
+      () => setConfirming(false),
+    );
 
   return (
     <section class="card" aria-labelledby="data-file-title">
@@ -63,24 +57,15 @@ export default function DataFileSection(props: {
         </button>
       </p>
       <Show when={confirming()}>
-        <Modal
+        <ConfirmModal
           title="Importar dados?"
-          onClose={() => !busy.active() && setConfirming(false)}
-          footer={
-            <>
-              <button type="button" disabled={busy.active()} onClick={() => setConfirming(false)}>
-                Cancelar
-              </button>
-              <button
-                type="button"
-                class="primary danger"
-                disabled={busy.active()}
-                onClick={() => void importData()}
-              >
-                {busy.active() ? "Importando…" : "Escolher arquivo e importar"}
-              </button>
-            </>
-          }
+          confirmLabel="Escolher arquivo e importar"
+          busyLabel="Importando…"
+          danger
+          busy={busy.active()}
+          dismissBlocked={busy.active()}
+          onClose={() => setConfirming(false)}
+          onConfirm={() => void importData()}
         >
           <p>
             Todos os dados deste computador serão substituídos pelos do arquivo. Não há mistura dos
@@ -90,7 +75,7 @@ export default function DataFileSection(props: {
             Antes de substituir, o Gabaritei guarda uma cópia dos dados atuais na pasta de backups,
             e ela aparece na lista para você voltar atrás. Um arquivo inválido não altera nada.
           </p>
-        </Modal>
+        </ConfirmModal>
       </Show>
     </section>
   );

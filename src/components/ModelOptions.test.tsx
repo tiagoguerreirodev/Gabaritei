@@ -5,7 +5,8 @@ import { createSignal } from "solid-js";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Catalog } from "../bindings/Catalog";
 import type { RoleConfig } from "../bindings/RoleConfig";
-import { resetCatalog } from "../catalog";
+import type { RoleOptions } from "../bindings/RoleOptions";
+import { createRoleEditor, resetCatalog } from "../catalog";
 import { CatalogNotice, EffortField, FastField, ModelField } from "./ModelOptions";
 
 const catalog: Catalog = {
@@ -33,11 +34,12 @@ const catalog: Catalog = {
 
 function Harness(props: { initial: RoleConfig }) {
   const [value, setValue] = createSignal(props.initial);
+  const editor = createRoleEditor(value, setValue);
   return (
     <>
-      <ModelField label="Gerar" value={value()} onChange={setValue} />
-      <EffortField label="Gerar" value={value()} onChange={setValue} />
-      <FastField label="Gerar" value={value()} onChange={setValue} />
+      <ModelField label="Gerar" editor={editor} />
+      <EffortField label="Gerar" editor={editor} />
+      <FastField label="Gerar" editor={editor} />
       <CatalogNotice agents={[value().agent]} />
     </>
   );
@@ -50,7 +52,24 @@ const optionNames = (select: HTMLElement) =>
 
 beforeEach(() => {
   resetCatalog();
-  mockIPC((command) => (command === "ai_catalog" ? catalog : undefined));
+  mockIPC((command, args) => {
+    if (command === "ai_catalog") return catalog;
+    const { config } = args as { config: RoleConfig };
+    if (command === "ai_change_role") {
+      expect(args).toMatchObject({ change: { kind: "model", model: "m2" } });
+      return { ...config, model: "m2", effort: "xhigh", fast: false };
+    }
+    const codexOptions: Record<string, RoleOptions> = {
+      m1: { efforts: ["low", "high"], showFast: true, problem: null },
+      m2: { efforts: ["medium", "xhigh", "ultra"], showFast: false, problem: null },
+    };
+    const freeText: RoleOptions = {
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+      showFast: true,
+      problem: null,
+    };
+    return config.agent === "codex" ? (codexOptions[config.model] ?? freeText) : freeText;
+  });
 });
 
 describe("ModelField and EffortField", () => {
@@ -59,10 +78,10 @@ describe("ModelField and EffortField", () => {
     const model = await screen.findByRole("combobox", { name: "Modelo: Gerar" });
     expect(optionNames(model)).toEqual(["Modelo Um", "Modelo Dois"]);
     const effort = screen.getByRole("combobox", { name: "Esforço: Gerar" });
-    expect(optionNames(effort)).toEqual(["Baixo", "Alto"]);
+    await waitFor(() => expect(optionNames(effort)).toEqual(["Baixo", "Alto"]));
   });
 
-  it("changes the effort options, and a kept-or-nearest effort, when the model changes", async () => {
+  it("renders the effort selected by the backend after a model switch", async () => {
     const user = userEvent.setup();
     render(() => (
       <Harness initial={{ agent: "codex", model: "m1", effort: "high", fast: false }} />
@@ -70,8 +89,18 @@ describe("ModelField and EffortField", () => {
     const model = await screen.findByRole("combobox", { name: "Modelo: Gerar" });
     await user.selectOptions(model, "m2");
     const effort = screen.getByRole<HTMLSelectElement>("combobox", { name: "Esforço: Gerar" });
-    expect(optionNames(effort)).toEqual(["Médio", "Extra alto", "Ultra"]);
-    expect(effort.value).toBe("xhigh");
+    await waitFor(() => expect(effort.value).toBe("xhigh"));
+  });
+
+  it("renders the backend's effort options after a model switch", async () => {
+    const user = userEvent.setup();
+    render(() => (
+      <Harness initial={{ agent: "codex", model: "m1", effort: "high", fast: false }} />
+    ));
+    const model = await screen.findByRole("combobox", { name: "Modelo: Gerar" });
+    await user.selectOptions(model, "m2");
+    const effort = screen.getByRole("combobox", { name: "Esforço: Gerar" });
+    await waitFor(() => expect(optionNames(effort)).toEqual(["Médio", "Extra alto", "Ultra"]));
   });
 
   it("falls back to free text with a warning when the agent has no list", async () => {
@@ -81,8 +110,16 @@ describe("ModelField and EffortField", () => {
     const model = await screen.findByRole("textbox", { name: "Modelo: Gerar" });
     expect((model as HTMLInputElement).value).toBe("sonnet");
     expect(await screen.findByText(/não informa a lista de modelos/)).toBeTruthy();
-    const effort = screen.getByRole("combobox", { name: "Esforço: Gerar" });
-    expect(optionNames(effort)).not.toContain("Ultra");
+  });
+
+  it("renders the backend fallback efforts when the agent cannot list models", async () => {
+    render(() => (
+      <Harness initial={{ agent: "claude", model: "sonnet", effort: "high", fast: false }} />
+    ));
+    const effort = await screen.findByRole("combobox", { name: "Esforço: Gerar" });
+    await waitFor(() =>
+      expect(optionNames(effort)).toEqual(["Baixo", "Médio", "Alto", "Extra alto", "Máximo"]),
+    );
   });
 
   it("falls back to free text when the catalog request fails", async () => {
@@ -111,7 +148,9 @@ describe("ModelField and EffortField", () => {
     const model = await screen.findByRole("combobox", { name: "Modelo: Gerar" });
     expect(screen.getByRole("checkbox", { name: "Modo rápido: Gerar" })).toBeTruthy();
     await user.selectOptions(model, "m2");
-    expect(screen.queryByRole("checkbox", { name: "Modo rápido: Gerar" })).toBeNull();
+    await waitFor(() =>
+      expect(screen.queryByRole("checkbox", { name: "Modo rápido: Gerar" })).toBeNull(),
+    );
   });
 
   it("shows the checkbox when the list is unavailable, with the extra usage note for Claude", async () => {

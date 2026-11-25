@@ -24,6 +24,10 @@ impl Agent {
         }
     }
 
+    pub(super) fn supports_effort(self, effort: Effort) -> bool {
+        self == Self::Codex || effort != Effort::Ultra
+    }
+
     /// The executable's base name (without a platform extension).
     pub fn binary(self) -> &'static str {
         self.as_str()
@@ -54,6 +58,20 @@ pub enum Effort {
 }
 
 impl Effort {
+    /// Lowest to highest, for both the picker and its nearest supported choice.
+    pub(super) const ALL: [Self; 6] = [
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::Xhigh,
+        Self::Max,
+        Self::Ultra,
+    ];
+
+    pub(super) fn rank(self) -> u8 {
+        self as u8
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Low => "low",

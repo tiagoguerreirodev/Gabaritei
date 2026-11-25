@@ -23,7 +23,7 @@ export default function ConfirmModal(props: {
       onClose={close}
       footer={
         <>
-          <button type="button" disabled={props.dismissBlocked} onClick={close}>
+          <button type="button" class="secondary" disabled={props.dismissBlocked} onClick={close}>
             {props.cancelLabel ?? "Cancelar"}
           </button>
           <button

@@ -28,7 +28,7 @@ export default function TopicTreeView() {
         pending={tree.loading}
         retrying={tree.loading}
         onRetry={() => refetch()}
-        placeholder={<Loading variant="skeleton" label="Carregando assuntos…" />}
+        placeholder={<Loading label="Carregando assuntos…" />}
         empty={
           <EmptyState title="Nenhuma questão no banco ainda.">
             <p class="muted">Importe o banco do Caderno Local em Início ou em Configurações.</p>

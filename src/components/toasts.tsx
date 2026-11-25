@@ -1,7 +1,7 @@
-import { For, createSignal } from "solid-js";
+import { For, Show, createSignal } from "solid-js";
 import { errorMessage } from "./states";
 
-export type ToastTone = "info" | "error";
+export type ToastTone = "info" | "success" | "error";
 
 interface Toast {
   id: number;
@@ -27,6 +27,11 @@ export function showToast(message: string, tone: ToastTone = "info") {
   return id;
 }
 
+/** Confirms that something the person asked for (save, import, backup) is done. */
+export function showSuccess(message: string) {
+  return showToast(message, "success");
+}
+
 /** Shows an error from a failed command (or anything thrown) as a toast. */
 export function showError(error: unknown) {
   return showToast(errorMessage(error), "error");
@@ -42,6 +47,11 @@ export function Toaster() {
             class={`toast toast-${toast.tone}`}
             role={toast.tone === "error" ? "alert" : "status"}
           >
+            <Show when={toast.tone === "success"}>
+              <span class="toast-glyph" aria-hidden="true">
+                ✓
+              </span>
+            </Show>
             <span>{toast.message}</span>
             <button
               type="button"

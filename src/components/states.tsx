@@ -1,29 +1,19 @@
 import { For, Match, Show, Switch, createMemo, type Accessor, type JSX } from "solid-js";
 
 /**
- * Shown while data loads. `variant="skeleton"` draws grey placeholder lines (they hold still when
- * the person asked for reduced motion); the label stays in the DOM for screen readers either way.
+ * Shown while data loads: grey placeholder lines (they hold still when the person asked for
+ * reduced motion). The label stays in the DOM for screen readers.
  */
-export function Loading(props: { label?: string; variant?: "text" | "skeleton"; lines?: number }) {
-  const label = () => props.label ?? "Carregando…";
+export function Loading(props: { label?: string; lines?: number }) {
   return (
-    <Show
-      when={props.variant === "skeleton"}
-      fallback={
-        <p class="state muted" role="status">
-          {label()}
-        </p>
-      }
-    >
-      <div class="state skeleton" role="status">
-        <span class="sr-only">{label()}</span>
-        <For each={Array.from({ length: props.lines ?? 3 })}>
-          {(_, index) => (
-            <span class="skeleton-line" aria-hidden="true" data-wide={index() % 2 === 0} />
-          )}
-        </For>
-      </div>
-    </Show>
+    <div class="state skeleton" role="status">
+      <span class="sr-only">{props.label ?? "Carregando…"}</span>
+      <For each={Array.from({ length: props.lines ?? 3 })}>
+        {(_, index) => (
+          <span class="skeleton-line" aria-hidden="true" data-wide={index() % 2 === 0} />
+        )}
+      </For>
+    </div>
   );
 }
 

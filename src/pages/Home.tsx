@@ -30,7 +30,7 @@ export default function Home() {
         pending={home.state === "pending"}
         retrying={home.loading}
         onRetry={() => refetchHome()}
-        placeholder={<Loading variant="skeleton" />}
+        placeholder={<Loading />}
       >
         {(summary) => (
           <>
@@ -41,7 +41,7 @@ export default function Home() {
                 <EmptyState
                   title="Você ainda não finalizou nenhuma tentativa."
                   action={
-                    <A class="primary button-link" href="/banco">
+                    <A class="primary" href="/banco">
                       Ir para o Banco
                     </A>
                   }

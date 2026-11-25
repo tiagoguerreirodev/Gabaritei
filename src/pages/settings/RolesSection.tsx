@@ -24,7 +24,7 @@ export default function RolesSection(props: {
         daquela vez.
       </p>
       <p>
-        <button type="button" onClick={() => void refreshCatalog()}>
+        <button type="button" class="secondary" onClick={() => void refreshCatalog()}>
           Atualizar listas
         </button>
       </p>

@@ -59,7 +59,7 @@ export default function Learning() {
         pending={overview.state === "pending"}
         retrying={overview.loading}
         onRetry={() => refetch()}
-        placeholder={<Loading variant="skeleton" />}
+        placeholder={<Loading />}
       >
         {(data) => (
           <>
@@ -100,6 +100,7 @@ export default function Learning() {
               </button>
               <button
                 type="button"
+                class="secondary"
                 disabled={data().practiceErrors === 0}
                 onClick={() =>
                   setPractice({
@@ -144,6 +145,7 @@ export default function Learning() {
                       </span>
                       <button
                         type="button"
+                        class="secondary"
                         aria-label={`Ver resultado: ${topicLabel(item)}`}
                         onClick={() => openAttempt(item.lastAttemptId)}
                       >

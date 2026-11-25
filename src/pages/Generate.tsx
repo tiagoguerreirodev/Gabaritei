@@ -154,7 +154,7 @@ function Outcome() {
       {(outcome) => (
         <section class="card" aria-label="Resultado da última geração">
           {outcomeContent(outcome())}
-          <button type="button" onClick={() => void dismissGeneration()}>
+          <button type="button" class="secondary" onClick={() => void dismissGeneration()}>
             Dispensar
           </button>
         </section>

@@ -1,8 +1,9 @@
 import { Show, createEffect, createMemo, createResource, createSignal, on } from "solid-js";
 import { api } from "../../api";
 import type { AttemptView } from "../../bindings/AttemptView";
+import type { FeedbackMode } from "../../bindings/FeedbackMode";
 import { Loading, ResourceView } from "../../components/states";
-import { showError, showToast } from "../../components/toasts";
+import { showError, showSuccess, showToast } from "../../components/toasts";
 import { modeLabel } from "../../labels";
 import Navigator from "./Navigator";
 import QuestionCard from "./QuestionCard";
@@ -13,6 +14,15 @@ import { mergeExplanation } from "./mergeExplanation";
 import useResolverShortcuts from "./useResolverShortcuts";
 
 /** The solve screen for one attempt (spec §3.3). */
+/**
+ * One primary action per screen: in Estudo mode it is "Confirmar resposta" on the question card,
+ * so finishing the attempt steps back to a secondary button.
+ */
+const finishButtonClass: Record<FeedbackMode, string> = {
+  study: "secondary",
+  exam: "primary",
+};
+
 export default function Resolver(props: { attemptId: string; onLeave: () => void }) {
   const [attempt, { mutate, refetch }] = createResource(
     () => props.attemptId,
@@ -146,7 +156,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     if (!q?.reveal) return;
     enqueue(async (id) => {
       const next = await api.recheckApply(id, q.position);
-      showToast("Gabarito atualizado. As pontuações foram recalculadas.");
+      showSuccess("Gabarito atualizado. As pontuações foram recalculadas.");
       return next;
     });
   };
@@ -162,7 +172,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
     const merged = mergeExplanation(currentView, next, q.position);
     if (merged === currentView) return;
     mutate(merged);
-    showToast("Explicação adicionada à questão.");
+    showSuccess("Explicação adicionada à questão.");
   };
 
   const dismissRecheck = () => {
@@ -262,15 +272,19 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                 <Show
                   when={!finished()}
                   fallback={
-                    <button type="button" onClick={() => props.onLeave()}>
+                    <button type="button" class="secondary" onClick={() => props.onLeave()}>
                       Voltar ao Banco
                     </button>
                   }
                 >
-                  <button type="button" onClick={() => setDialog("abandon")}>
+                  <button type="button" class="secondary" onClick={() => setDialog("abandon")}>
                     Abandonar
                   </button>
-                  <button type="button" class="primary" onClick={() => setDialog("finish")}>
+                  <button
+                    type="button"
+                    class={finishButtonClass[attempt().feedbackMode]}
+                    onClick={() => setDialog("finish")}
+                  >
                     Finalizar
                   </button>
                 </Show>
@@ -303,7 +317,12 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
               )}
             </Show>
             <footer class="resolver-footer">
-              <button type="button" disabled={index() === 0} onClick={() => move(-1)}>
+              <button
+                type="button"
+                class="secondary"
+                disabled={index() === 0}
+                onClick={() => move(-1)}
+              >
                 ← Anterior
               </button>
               <ShortcutHelp
@@ -313,7 +332,12 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                 toggleRef={shortcuts.toggleRef}
                 onToggle={shortcuts.toggleHelp}
               />
-              <button type="button" disabled={index() >= total() - 1} onClick={() => move(1)}>
+              <button
+                type="button"
+                class="secondary"
+                disabled={index() >= total() - 1}
+                onClick={() => move(1)}
+              >
                 Próxima →
               </button>
             </footer>

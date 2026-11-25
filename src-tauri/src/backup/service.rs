@@ -1,5 +1,8 @@
 use super::*;
 
+/// Rebuilds application state in the staged database inside a transaction.
+pub type RestoreCleanup = fn(&Connection) -> AppResult<()>;
+
 /// Runs backup, restore and import one at a time, and remembers why the last backup failed.
 /// Managed as Tauri state.
 pub struct BackupService {
@@ -12,6 +15,7 @@ pub struct BackupService {
     /// Bounds filesystem checks that may touch an offline share.
     pub(super) probe: FolderProbe,
     manifest_timeout: Duration,
+    pub(super) cleanup: RestoreCleanup,
 }
 
 /// Marks a relocation as running until dropped.
@@ -35,13 +39,18 @@ impl Drop for Relocating<'_> {
 }
 
 impl BackupService {
-    pub(crate) fn with_timeouts(folder_timeout: Duration, manifest_timeout: Duration) -> Self {
+    pub(crate) fn with_timeouts(
+        folder_timeout: Duration,
+        manifest_timeout: Duration,
+        cleanup: RestoreCleanup,
+    ) -> Self {
         Self {
             busy: Mutex::default(),
             last_error: Mutex::default(),
             relocating: AtomicBool::default(),
             probe: FolderProbe::with_timeout(folder_timeout),
             manifest_timeout,
+            cleanup,
         }
     }
 
@@ -341,8 +350,7 @@ impl BackupService {
         self.exclusive(|| datafile::export(db, paths, dest, now))
     }
 
-    /// Replaces the local data with a data file's. See [`datafile::import`]. `ready` runs first,
-    /// like in [`Self::restore`].
+    /// Replaces the local data with a data file's. `ready` runs first, like in [`Self::restore`].
     pub fn import(
         &self,
         db: &Database,
@@ -355,11 +363,13 @@ impl BackupService {
             ready()?;
             let folder = db.with(|conn| folder(conn, paths))?;
             self.ensure_reachable(&folder)?;
-            datafile::import(db, paths, &folder, file, now)
+            let staging = tempfile::tempdir()?;
+            datafile::unpack(file, staging.path())?;
+            restore::replace_data(db, paths, &folder, staging.path(), now, self.cleanup)
         })
     }
 
-    /// Restores the backup (or safety backup) called `name`. See [`restore`]. `ready` runs
+    /// Restores the backup (or safety backup) called `name`. `ready` runs
     /// first, once nothing else is backing up, and can refuse (for example while an AI job
     /// that writes to the database is running).
     pub fn restore(
@@ -374,7 +384,7 @@ impl BackupService {
             ready()?;
             let folder = db.with(|conn| folder(conn, paths))?;
             self.ensure_reachable(&folder)?;
-            restore(db, paths, name, now)
+            restore::restore(db, paths, &folder, name, now, self.cleanup)
         })
     }
 }

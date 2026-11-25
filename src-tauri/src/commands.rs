@@ -303,8 +303,8 @@ pub async fn export_data<R: Runtime>(app: AppHandle<R>) -> AppResult<bool> {
             .dialog()
             .file()
             .set_title("Exportar dados")
-            .set_file_name(crate::backup::datafile::file_name(&now))
-            .add_filter("Dados do Gabaritei", &[crate::backup::datafile::EXTENSION])
+            .set_file_name(crate::backup::data_file_name(&now))
+            .add_filter("Dados do Gabaritei", &[crate::backup::DATA_FILE_EXTENSION])
             .blocking_save_file()
         else {
             return Ok(false);
@@ -330,7 +330,7 @@ pub async fn import_data<R: Runtime>(app: AppHandle<R>) -> AppResult<bool> {
             .dialog()
             .file()
             .set_title("Importar dados")
-            .add_filter("Dados do Gabaritei", &[crate::backup::datafile::EXTENSION])
+            .add_filter("Dados do Gabaritei", &[crate::backup::DATA_FILE_EXTENSION])
             .blocking_pick_file()
         else {
             return Ok(false);

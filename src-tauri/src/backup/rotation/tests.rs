@@ -5,6 +5,7 @@ use time::macros::datetime;
 #[test]
 fn keeps_the_newest_seven_backups_and_five_safety_backups() {
     let f = fixture();
+    let service = BackupService::default();
     for day in 1..=9 {
         backup(&f, &format!("2026-11-{day:02}T10:00:00.000Z"));
     }
@@ -15,13 +16,15 @@ fn keeps_the_newest_seven_backups_and_five_safety_backups() {
     assert_eq!(names[6], "backup-20261103-100000-000");
 
     for minute in 0..7 {
-        restore(
-            &f.db,
-            &f.paths,
-            "backup-20261109-100000-000",
-            &format!("2026-11-10T10:{minute:02}:00.000Z"),
-        )
-        .unwrap();
+        service
+            .restore(
+                &f.db,
+                &f.paths,
+                "backup-20261109-100000-000",
+                &format!("2026-11-10T10:{minute:02}:00.000Z"),
+                || Ok(()),
+            )
+            .unwrap();
     }
     let all = list(&folder);
     assert_eq!(
@@ -71,13 +74,15 @@ fn manual_backups_are_kept_apart_from_the_daily_ones() {
     assert!(at(datetime!(2026-11-04 09:30:00 UTC)).is_none());
     assert!(at(datetime!(2026-11-04 11:00:00 UTC)).is_some());
     // A manual backup can be restored like any other.
-    restore(
-        &f.db,
-        &f.paths,
-        "manual-20261104-100800-000",
-        "2026-11-06T10:00:00.000Z",
-    )
-    .unwrap();
+    service
+        .restore(
+            &f.db,
+            &f.paths,
+            "manual-20261104-100800-000",
+            "2026-11-06T10:00:00.000Z",
+            || Ok(()),
+        )
+        .unwrap();
 }
 
 #[test]
@@ -312,7 +317,15 @@ fn another_computers_backup_does_not_make_this_one_not_due_and_can_be_restored()
     );
     // The laptop's backup can be restored here; the safety backup is tagged with this
     // computer.
-    restore(&f.db, &f.paths, &theirs.name, "2026-11-19T13:00:00.000Z").unwrap();
+    service
+        .restore(
+            &f.db,
+            &f.paths,
+            &theirs.name,
+            "2026-11-19T13:00:00.000Z",
+            || Ok(()),
+        )
+        .unwrap();
     assert!(folder.join("safety-20261119-130000-000-desktop").is_dir());
 }
 

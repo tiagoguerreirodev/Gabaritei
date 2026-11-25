@@ -82,7 +82,8 @@ fn the_same_folder_is_answered_without_looking_at_the_disk() {
 
 #[test]
 fn a_slow_manifest_read_does_not_hold_the_folders_own_slot() {
-    let service = BackupService::with_timeouts(Duration::from_secs(5), LONG);
+    let service =
+        BackupService::with_timeouts(Duration::from_secs(5), LONG, crate::cleanup_restored_data);
     let folder = Path::new("/some/backups");
     let (release, work) = blocked();
     let key = manifest_key(folder);

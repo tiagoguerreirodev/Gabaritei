@@ -170,10 +170,14 @@ pub(super) fn occupied(probe: &FolderProbe) -> bool {
 pub(super) const LONG: Duration = Duration::from_secs(60);
 
 pub(super) fn service_with_long_probe() -> BackupService {
-    BackupService::with_timeouts(LONG, LONG)
+    BackupService::default()
 }
 
 impl BackupService {
+    pub(super) fn with_cleanup(cleanup: RestoreCleanup) -> Self {
+        Self::with_timeouts(LONG, LONG, cleanup)
+    }
+
     pub(super) fn relocate_with(
         &self,
         db: &Database,
@@ -193,6 +197,6 @@ impl BackupService {
 
 impl Default for BackupService {
     fn default() -> Self {
-        Self::with_timeouts(LONG, LONG)
+        Self::with_cleanup(crate::cleanup_restored_data)
     }
 }

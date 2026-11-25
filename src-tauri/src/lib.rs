@@ -172,6 +172,7 @@ fn manage_services<R: Runtime>(app: &App<R>, database: db::Database, paths: path
     app.manage(backup::BackupService::with_timeouts(
         FOLDER_TIMEOUT,
         MANIFEST_TIMEOUT,
+        cleanup_restored_data,
     ));
     start_backup_schedule(app.handle().clone());
     app.manage(ai::secrets::Secrets::keychain());
@@ -181,6 +182,11 @@ fn manage_services<R: Runtime>(app: &App<R>, database: db::Database, paths: path
     ]));
     app.manage(ai::jobs::GenerationManager::default());
     app.manage(ai::ondemand::OnDemand::default());
+}
+
+fn cleanup_restored_data(conn: &rusqlite::Connection) -> AppResult<()> {
+    ai::blind_check::recover_interrupted(conn)?;
+    learning::refresh_all(conn)
 }
 
 /// How often the schedule looks at the wall clock. Short, because a long sleep may not count

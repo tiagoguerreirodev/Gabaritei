@@ -9,10 +9,6 @@
 //! `safety-<UTC time>-<tag>` backup of the current data is made; the newest 5 of those are
 //! kept. Each computer rotates only the backups with its own tag.
 
-pub mod datafile;
-pub mod relocate;
-pub mod snapshot;
-
 use crate::sync::lock;
 use std::collections::HashMap;
 use std::fs;
@@ -30,25 +26,28 @@ use crate::db::{Database, SettingKey, get_setting, set_setting};
 use crate::error::{AppError, AppResult};
 use crate::paths::AppPaths;
 mod computer;
+mod datafile;
 #[cfg(test)]
 mod fixtures;
 mod folder;
 mod left_behind;
 mod name;
 mod probe;
+mod relocate;
 mod restore;
 mod rotation;
 mod service;
+mod snapshot;
 
 pub use computer::*;
+pub(crate) use datafile::{EXTENSION as DATA_FILE_EXTENSION, file_name as data_file_name};
 pub use folder::*;
 use left_behind::*;
 use name::*;
 use probe::*;
-pub use relocate::Relocation;
-pub use restore::*;
+pub use relocate::{RelocateReport, Relocation};
 use rotation::*;
-pub use service::*;
+pub use service::{BackupService, RestoreCleanup};
 
 /// Settings that describe this computer. Restoring or importing data from another computer
 /// must not overwrite them.
@@ -164,7 +163,7 @@ pub enum LeftBehind {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct RelocateOutcome {
-    pub report: relocate::RelocateReport,
+    pub report: RelocateReport,
     /// The new folder's status. `left_behind` is what a *move* could not take out of the old
     /// folder; a copy leaves the originals on purpose and reports nothing.
     pub status: BackupStatus,

@@ -8,27 +8,34 @@ use super::*;
 /// 3. replaces the database and adds the images.
 ///
 /// This computer's own settings (backup folder, CLI paths) are kept.
-pub fn restore(db: &Database, paths: &AppPaths, name: &str, now: &str) -> AppResult<()> {
+pub(super) fn restore(
+    db: &Database,
+    paths: &AppPaths,
+    folder: &Path,
+    name: &str,
+    now: &str,
+    cleanup: RestoreCleanup,
+) -> AppResult<()> {
     if parse_name(name).is_none() {
         return Err(AppError::Invalid("Backup não encontrado.".into()));
     }
-    let folder = db.with(|conn| folder(conn, paths))?;
     let source = folder.join(name);
     if !source.is_dir() {
         return Err(AppError::Invalid("Backup não encontrado.".into()));
     }
-    replace_data(db, paths, &folder, &source, now)
+    replace_data(db, paths, folder, &source, now, cleanup)
 }
 
 /// Replaces the data with the snapshot in `source`: checks and stages it (a bad snapshot stops
 /// here and nothing changes, not even a safety backup), makes a safety backup of the current
 /// data, then replaces it. Shared with the import of a data file.
-pub fn replace_data(
+pub(super) fn replace_data(
     db: &Database,
     paths: &AppPaths,
     folder: &Path,
     source: &Path,
     now: &str,
+    cleanup: RestoreCleanup,
 ) -> AppResult<()> {
     let staged = snapshot::stage(source)?;
     // A replacement that SQLite would refuse is stopped here, before any image is added or a
@@ -50,7 +57,7 @@ pub fn replace_data(
                 .inspect_err(|_| pending.abandon())?;
         // Pruned only afterwards, so a safety backup being restored is never deleted by this one.
         pending.finish(folder, BackupKind::Safety, manifest, false)?;
-        snapshot::commit(conn, &staged, LOCAL_SETTINGS)
+        snapshot::commit(conn, &staged, LOCAL_SETTINGS, cleanup)
     })?;
     prune(folder, BackupKind::Safety);
     Ok(())

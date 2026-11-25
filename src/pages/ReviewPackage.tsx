@@ -130,22 +130,27 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
     navigate("/banco");
   };
 
-  const importAll = () =>
-    run(async () => {
-      if (s().needsCheck) {
+  const importAll = () => {
+    const { id, needsCheck } = s();
+    const onChanged = props.onChanged;
+    return run(async () => {
+      if (needsCheck) {
         showToast("Conferindo as questões que faltavam. A importação segue sozinha.");
       }
-      const outcome = await api.draftImportAll(s().id);
+      const outcome = await api.draftImportAll(id);
       if (outcome.kind === "pending") {
-        props.onChanged();
+        onChanged();
         showToast(outcome.message);
       } else {
         await imported(outcome.result);
       }
     });
+  };
 
-  const importConfirmed = () =>
-    run(async () => imported(await api.draftImport(s().id, "confirmed")));
+  const importConfirmed = () => {
+    const id = s().id;
+    return run(async () => imported(await api.draftImport(id, "confirmed")));
+  };
 
   const discard = () => {
     const id = s().id;

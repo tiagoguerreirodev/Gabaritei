@@ -891,10 +891,11 @@ mod tests {
     fn browsing_commands_decode_camel_case_arguments() {
         let db = Database::open_in_memory().unwrap();
         db.with(|c| {
-            c.execute_batch(
+            c.execute(
                 "INSERT INTO collections (id, title, kind, contest, created_at) VALUES
-                   ('c1', 'Direito › Crase', 'imported', 'ALEPA', '2026-11-19T00:00:00.000Z'),
-                   ('c2', 'Informática › SQL', 'imported', 'Perito', '2026-11-19T00:00:00.000Z');",
+                   ('c1', 'Direito › Crase', ?1, 'ALEPA', '2026-11-19T00:00:00.000Z'),
+                   ('c2', 'Informática › SQL', ?1, 'Perito', '2026-11-19T00:00:00.000Z')",
+                [crate::bank::catalog::CollectionKind::Imported],
             )?;
             Ok(())
         })
@@ -943,12 +944,15 @@ mod tests {
             }
             let ids = crate::bank::import_questions(tx, inputs, "2026-11-20T00:00:00.000Z")?
                 .ids_by_local_id;
-            tx.execute_batch(&format!(
+            tx.execute(
                 "INSERT INTO collections (id, title, kind, created_at)
-                   VALUES ('c1', 'Caderno', 'imported', '2026-11-20T00:00:00.000Z');
-                 INSERT INTO collection_items VALUES ('c1', 0, '{}'), ('c1', 1, '{}');",
-                ids["q1"], ids["q2"]
-            ))?;
+                 VALUES ('c1', 'Caderno', ?1, '2026-11-20T00:00:00.000Z')",
+                [crate::bank::catalog::CollectionKind::Imported],
+            )?;
+            tx.execute(
+                "INSERT INTO collection_items VALUES ('c1', 0, ?1), ('c1', 1, ?2)",
+                rusqlite::params![ids["q1"], ids["q2"]],
+            )?;
             Ok(())
         })
         .unwrap();

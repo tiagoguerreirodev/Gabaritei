@@ -1,5 +1,6 @@
 use super::*;
-use crate::attempts::{self, FeedbackMode, SessionSource, SessionStart};
+use crate::attempts::{self, FeedbackMode, SessionSource, SessionStart, SourceKind};
+use crate::bank::catalog::CollectionKind;
 use crate::bank::import_questions;
 use crate::bank::question::tests::multiple;
 use crate::db::Database;
@@ -85,8 +86,8 @@ impl Bank {
             .transaction(|tx| {
                 tx.execute(
                     "INSERT INTO attempts (id, source_kind, feedback_mode, started_at, finished_at)
-                     VALUES (?1, 'collection', 'exam', ?2, ?2)",
-                    params![id, at],
+                     VALUES (?1, ?2, ?3, ?4, ?4)",
+                    params![id, SourceKind::Collection, FeedbackMode::Exam, at],
                 )?;
                 for (i, (q, choice, answered)) in rows.iter().enumerate() {
                     tx.execute(
@@ -258,8 +259,8 @@ fn unfinished_attempts_do_not_schedule_reviews() {
     b.db.transaction(|tx| {
         tx.execute(
             "INSERT INTO attempts (id, source_kind, feedback_mode, started_at)
-             VALUES ('open', 'collection', 'study', ?1)",
-            params![D0],
+             VALUES ('open', ?1, ?2, ?3)",
+            params![SourceKind::Collection, FeedbackMode::Study, D0],
         )?;
         tx.execute(
             "INSERT INTO responses (attempt_id, position, question_id, snapshot, choice, answered_at)
@@ -528,8 +529,8 @@ fn finishing_an_attempt_schedules_reviews() {
         b.db.transaction(|tx| {
             tx.execute(
                 "INSERT INTO collections (id, title, kind, created_at)
-                 VALUES ('c1', 'C', 'imported', ?1)",
-                params![D0],
+                 VALUES ('c1', 'C', ?1, ?2)",
+                params![CollectionKind::Imported, D0],
             )?;
             tx.execute(
                 "INSERT INTO collection_items (collection_id, position, question_id)

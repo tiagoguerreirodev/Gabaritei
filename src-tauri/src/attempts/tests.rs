@@ -29,8 +29,8 @@ fn bank() -> (Database, Vec<QuestionId>) {
             let ids: Vec<QuestionId> = ["q1", "q2", "q3", "q4"].map(|k| map[k].clone()).into();
             tx.execute(
                 "INSERT INTO collections (id, title, kind, created_at)
-                 VALUES ('c1', 'Caderno de teste', 'imported', ?1)",
-                params![T0],
+                 VALUES ('c1', 'Caderno de teste', ?1, ?2)",
+                params![crate::bank::catalog::CollectionKind::Imported, T0],
             )?;
             for (i, q) in ids.iter().enumerate() {
                 tx.execute(
@@ -510,15 +510,17 @@ fn topic_sessions_prefer_unseen_then_least_recent() {
         .unwrap();
     // q1 answered long ago, q2 answered recently; q3 and q4 never answered.
     db.with(|c| {
-        c.execute_batch(&format!(
+        c.execute(
             "INSERT INTO attempts (id, source_kind, feedback_mode, started_at, finished_at)
-               VALUES ('old', 'topic', 'exam', '{T0}', '{T0}');
-             INSERT INTO responses (attempt_id, position, question_id, snapshot, choice, answered_at)
-               VALUES ('old', 0, '{q1}', '{{}}', 'x', '2026-01-01T00:00:00.000Z'),
-                      ('old', 1, '{q2}', '{{}}', 'x', '2026-06-01T00:00:00.000Z');",
-            q1 = ids[0],
-            q2 = ids[1],
-        ))?;
+             VALUES ('old', ?1, ?2, ?3, ?3)",
+            params![SourceKind::Topic, FeedbackMode::Exam, T0],
+        )?;
+        c.execute(
+            "INSERT INTO responses (attempt_id, position, question_id, snapshot, choice, answered_at)
+             VALUES ('old', 0, ?1, '{}', 'x', '2026-01-01T00:00:00.000Z'),
+                    ('old', 1, ?2, '{}', 'x', '2026-06-01T00:00:00.000Z')",
+            params![ids[0], ids[1]],
+        )?;
         Ok(())
     })
     .unwrap();
@@ -820,8 +822,8 @@ fn active_lists_unfinished_attempts_newest_first_with_counts_only() {
     db.transaction(|tx| {
             tx.execute(
                 "INSERT INTO attempts (id, source_kind, source_ref, feedback_mode, started_at, finished_at)
-                 VALUES ('old', 'collection', 'c1', 'study', ?1, ?1)",
-                params![T0],
+                 VALUES ('old', ?1, 'c1', ?2, ?3, ?3)",
+                params![SourceKind::Collection, FeedbackMode::Study, T0],
             )?;
             Ok(())
         })
@@ -865,8 +867,8 @@ fn unavailable_topic_references_use_the_generic_session_title() {
     db.with(|conn| {
         conn.execute(
             "INSERT INTO attempts (id, source_kind, feedback_mode, started_at)
-             VALUES (?1, 'topic', 'study', ?2)",
-            params![id, T0],
+             VALUES (?1, ?2, ?3, ?4)",
+            params![id, SourceKind::Topic, FeedbackMode::Study, T0],
         )?;
         for source_ref in [None, Some("unknown-topic"), Some("42")] {
             conn.execute(

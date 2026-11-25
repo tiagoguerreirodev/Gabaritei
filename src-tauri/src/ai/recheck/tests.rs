@@ -62,8 +62,8 @@ fn world(answer: impl FnOnce(&str, &str) -> Value) -> World {
                 .id
                 .clone();
             tx.execute(
-                "INSERT INTO collections (id, title, kind, created_at) VALUES ('c1', 'Caderno', 'imported', ?1)",
-                params![T0],
+                "INSERT INTO collections (id, title, kind, created_at) VALUES ('c1', 'Caderno', ?1, ?2)",
+                params![crate::bank::catalog::CollectionKind::Imported, T0],
             )?;
             tx.execute(
                 "INSERT INTO collection_items (collection_id, position, question_id) VALUES ('c1', 0, ?1)",
@@ -264,8 +264,8 @@ mod flow {
         let w = world(wrong_answer);
         w.db.with(|conn| {
             conn.execute(
-                "UPDATE questions SET provenance = json_set(provenance, '$.disputed', json('true'), '$.source', 'generated', '$.draftId', 'd1') WHERE id = ?1",
-                params![w.question_id],
+                "UPDATE questions SET provenance = json_set(provenance, '$.disputed', json('true'), '$.source', ?2, '$.draftId', 'd1') WHERE id = ?1",
+                params![w.question_id, "generated"],
             )?;
             Ok(())
         })

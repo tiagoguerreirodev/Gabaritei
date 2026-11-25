@@ -1512,9 +1512,9 @@ mod tests {
         db.with(|conn| {
             conn.execute(
                 "INSERT INTO questions (id, type, stem, options, answer_id, created_at, updated_at)
-                 VALUES (?1, 'boolean', 'Enunciado', '[{\"id\":\"c\",\"text\":\"Certo\"},{\"id\":\"e\",\"text\":\"Errado\"}]',
+                 VALUES (?1, ?2, 'Enunciado', '[{\"id\":\"c\",\"text\":\"Certo\"},{\"id\":\"e\",\"text\":\"Errado\"}]',
                          'c', '2026-11-19T00:00:00Z', '2026-11-19T00:00:00Z')",
-                params![id],
+                params![id, crate::bank::QuestionType::Boolean],
             )?;
             Ok(())
         })

@@ -226,9 +226,9 @@ mod tests {
     fn insert_question(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
         conn.execute(
             "INSERT INTO questions (id, type, stem, options, answer_id, created_at, updated_at)
-             VALUES (?1, 'boolean', 'Enunciado', '[{\"id\":\"c\",\"text\":\"Certo\"},{\"id\":\"e\",\"text\":\"Errado\"}]',
+             VALUES (?1, ?2, 'Enunciado', '[{\"id\":\"c\",\"text\":\"Certo\"},{\"id\":\"e\",\"text\":\"Errado\"}]',
                      'c', '2026-11-19T00:00:00Z', '2026-11-19T00:00:00Z')",
-            params![id],
+            params![id, crate::bank::QuestionType::Boolean],
         )
     }
 
@@ -328,8 +328,8 @@ mod tests {
 
             conn.execute(
                 "INSERT INTO collections (id, title, kind, created_at)
-                 VALUES ('c1', 'Caderno', 'imported', '2026-11-19T00:00:00Z')",
-                [],
+                 VALUES ('c1', 'Caderno', ?1, '2026-11-19T00:00:00Z')",
+                [crate::bank::catalog::CollectionKind::Imported],
             )?;
             let orphan_item = conn.execute(
                 "INSERT INTO collection_items (collection_id, position, question_id)

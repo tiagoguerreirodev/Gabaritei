@@ -17,10 +17,11 @@ use crate::ai::generate::GenerateRequest;
 use crate::ai::jobs::{GenerationKind, GenerationManager, GenerationStatus};
 use crate::ai::ondemand::OnDemand;
 use crate::ai::recheck::{self, RecheckView};
+use crate::ai::remnote_probe::{self, RemNoteTest};
 use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportResult};
 use crate::ai::roles::RoleSettings;
 use crate::ai::secrets::Secrets;
-use crate::ai::settings::{self, AiSettings, AiSettingsInput, RemNoteTest};
+use crate::ai::settings::{self, AiSettings, AiSettingsInput};
 use crate::appearance::{self, Appearance};
 use crate::attempts::{self, AttemptView, SessionStart};
 use crate::backup::{BackupInfo, BackupService, BackupStatus, OpenableFolder, RelocateOutcome};
@@ -571,7 +572,7 @@ pub fn remnote_test(
     secrets: State<'_, Secrets>,
 ) -> AppResult<RemNoteTest> {
     let settings = db.with(|conn| settings::load(conn, &secrets))?;
-    settings::remnote_test(&settings, &secrets)
+    remnote_probe::remnote_test(&settings, &secrets)
 }
 
 /// Name of the window event that carries every [`GenerationStatus`] change.

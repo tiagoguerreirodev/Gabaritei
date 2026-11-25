@@ -18,6 +18,7 @@ pub mod jobs;
 pub mod ondemand;
 pub mod prompts;
 pub mod recheck;
+pub(crate) mod remnote_probe;
 pub mod review;
 pub mod roles;
 pub mod runner;

@@ -276,11 +276,13 @@ describe("Configurações", () => {
     );
   });
 
-  it("warns that the Codex config mode cannot limit RemNote tools", async () => {
-    backend({ ...defaults, remnote: { mode: "codexConfig", url: "", tools: [] } });
+  it("offers only a direct server connection in RemNote settings", async () => {
+    backend(defaults);
     render(() => <Settings />);
-    expect(await screen.findByRole("note")).toBeTruthy();
-    expect(screen.getByRole("note").textContent).toMatch(/não consegue limitar/);
+    const modes = within(await screen.findByRole("group", { name: "Como conectar" }));
+    expect(modes.getAllByRole("radio")).toHaveLength(2);
+    expect(modes.getByRole("radio", { name: "Desligado" })).toBeChecked();
+    expect(modes.getByRole("radio", { name: "Servidor MCP (endereço e token)" })).toBeEnabled();
   });
 
   it("feeds the model and effort selectors from the catalog, and reloads them on Atualizar", async () => {

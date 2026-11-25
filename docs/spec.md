@@ -123,7 +123,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 ### 3.7 Settings (*Configurações*)
 - **CLI paths:** detected automatically, with manual override. Apps opened from the macOS Finder see a short PATH, so detection matters there. Includes a "Test" button per CLI that shows its version and login state.
 - **Role defaults:** agent, model, effort and Fast Mode for each of the 4 roles (Fast Mode is saved per role and can be overridden in the generation form; the checkbox is hidden for a Codex model without a Fast tier). Codex's model and effort options come from `codex debug models` (loaded when the page opens, cached for the session, "Atualizar" to reload). Claude offers no list, so its model is typed. If a CLI can't list its models, the fields become free text with a warning. A saved model that the list no longer has is flagged "não disponível" and blocks runs until another is chosen.
-- **RemNote MCP:** URL and token, or reuse the existing Codex config.
+- **RemNote MCP:** Configure a server URL and keychain token. The previously saved “use my Codex config” mode opens as disabled (owner decision, #81).
 - **Aparência:** theme (Automático, which follows the system, Claro or Escuro) and text size (Pequeno, Médio, Grande or Muito grande). Each choice applies and saves at once.
 - **Data:** backup folder and restore, export/import, open data folder.
 
@@ -149,12 +149,12 @@ The patterns below were **verified against the installed CLIs** (Claude Code 2.1
   - Don't use `--bare`, because bare mode skips the subscription login.
   - Without `--bare`, Claude Code loads `~/.claude` hooks, plugins and `CLAUDE.md`, and the working directory's `.claude/` and `.mcp.json`. Run it in an empty temporary folder, and check for a flag that limits which settings sources load.
   - The exact flag for effort still needs confirming.
-- **Codex:** `codex exec "<prompt>" --output-schema <schema.json> -o <out.json> --json -m <model> -c model_reasoning_effort=<e> --sandbox read-only --skip-git-repo-check --ephemeral`
-  - Codex runs read-only by default.
-  - RemNote comes from your Codex config, so `--ignore-user-config` can't be used.
-  - Still to confirm: whether web search needs a config switch, and the exact `-m` and effort keys.
-- **Working folder:** each run gets a fresh temporary folder. Attachments are copied into it and the agent reads them itself, so the app has no PDF parser.
-- **Tools:** read-only only, meaning file read, web search and fetch, and the RemNote read tools. No file edits and no shell, except Codex's shell inside its read-only sandbox, which is kept only when a run has attachments (owner-approved, 2026-11-20). Sources and tool results are treated as data, never as instructions.
+- **Codex:** `codex exec - --output-schema <schema.json> -o <out.json> --json --model=<m> -c model_reasoning_effort=<e> --skip-git-repo-check --ephemeral --ignore-user-config --strict-config`
+  - Runs without attachments use `--sandbox read-only` and disable shell tools.
+  - Runs with attachments on macOS and Linux select a read-only permissions profile. It grants the run folder, the required part of the Codex installation, and the platform runtime paths. Shell network access is disabled. Windows keeps `--sandbox read-only` for attachments (owner decision, #81). The built-in Windows sandbox allows reads outside the run folder and can reach loopback services.
+  - RemNote uses the server configured in Gabaritei and its approved read-only tools.
+- **Working folder:** each run gets a fresh temporary folder. PDF, Markdown and text attachments are copied there as files so the agent can read them.
+- **Tools:** file read, web search and fetch, and approved RemNote read tools. Codex's shell is enabled only for runs with attachments. The agents get no file editing tools. Sources and tool results are treated as data.
 - **Cancel and timeout:** SIGINT to the process group, then SIGKILL after a short grace period (on Windows the process tree is ended with `taskkill /T /F`).
 - **Policy:** the app never handles Claude or OpenAI credentials. It runs the CLI you logged into yourself. Anthropic doesn't allow third-party products to offer claude.ai login, and this app doesn't.
 

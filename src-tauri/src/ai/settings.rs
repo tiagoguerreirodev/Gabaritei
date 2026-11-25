@@ -49,8 +49,6 @@ pub enum RemNoteMode {
     Off,
     /// URL and token set here (token in the keychain).
     Server,
-    /// Codex's own config already has the RemNote server.
-    CodexConfig,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -109,10 +107,21 @@ pub fn load(conn: &Connection, secrets: &Secrets) -> AppResult<AiSettings> {
     Ok(AiSettings {
         cli_paths: get_setting(conn, SettingKey::CliPaths)?.unwrap_or_default(),
         roles,
-        remnote: get_setting(conn, SettingKey::RemNote)?.unwrap_or_default(),
+        remnote: load_remnote(conn)?,
         // Best effort: a locked or missing keychain must not break every AI feature.
         has_remnote_token: secrets.remnote_token().ok().flatten().is_some(),
     })
+}
+
+fn load_remnote(conn: &Connection) -> AppResult<RemNoteSettings> {
+    let Some(saved) = get_setting::<serde_json::Value>(conn, SettingKey::RemNote)? else {
+        return Ok(RemNoteSettings::default());
+    };
+    // The retired mode never used the saved URL or tools. Require explicit setup before using them.
+    if saved["mode"] == "codexConfig" {
+        return Ok(RemNoteSettings::default());
+    }
+    Ok(serde_json::from_value(saved)?)
 }
 
 fn invalid(message: &str) -> AppError {
@@ -224,17 +233,10 @@ pub fn resolve_cli(settings: &AiSettings, agent: Agent) -> AppResult<PathBuf> {
     })
 }
 
-/// How RemNote is passed to a run by `agent`, or an error if it's switched on but incomplete.
-pub fn remnote_access(
-    settings: &AiSettings,
-    secrets: &Secrets,
-    agent: Agent,
-) -> AppResult<Option<RemNoteAccess>> {
+/// RemNote access for a run, or an error if it's switched on but incomplete.
+fn remnote_access(settings: &AiSettings, secrets: &Secrets) -> AppResult<Option<RemNoteAccess>> {
     match settings.remnote.mode {
         RemNoteMode::Off => Ok(None),
-        RemNoteMode::CodexConfig => {
-            Ok((agent == Agent::Codex).then_some(RemNoteAccess::CodexConfig))
-        }
         RemNoteMode::Server => {
             let token = secrets.remnote_token()?.ok_or_else(|| {
                 invalid("O RemNote está ligado, mas falta o token. Informe-o em Configurações › RemNote.")
@@ -244,7 +246,7 @@ pub fn remnote_access(
                     "Aprove ao menos uma ferramenta de leitura do RemNote em Configurações (use “Testar conexão”).",
                 ));
             }
-            Ok(Some(RemNoteAccess::Server {
+            Ok(Some(RemNoteAccess {
                 url: settings.remnote.url.clone(),
                 token,
                 tools: settings.remnote.tools.clone(),
@@ -279,7 +281,7 @@ pub fn job_spec(
     spec.fast = config.fast;
     spec.web = sources.web;
     if sources.remnote {
-        spec.remnote = remnote_access(settings, secrets, config.agent)?;
+        spec.remnote = remnote_access(settings, secrets)?;
     }
     Ok(spec)
 }
@@ -372,36 +374,6 @@ fn tool_names(reply: &serde_json::Value) -> Vec<String> {
 pub fn remnote_test(settings: &AiSettings, secrets: &Secrets) -> AppResult<RemNoteTest> {
     match settings.remnote.mode {
         RemNoteMode::Off => test_result(false, "O RemNote está desligado.", Vec::new()),
-        RemNoteMode::CodexConfig => {
-            let Some(cli) = discovery::find_cli(
-                Agent::Codex,
-                settings.cli_paths.get(Agent::Codex).map(Path::new),
-            ) else {
-                return test_result(false, "O Codex não foi encontrado.", Vec::new());
-            };
-            match discovery::capture(&cli, &["mcp", "list"]) {
-                Some(out) if out.success => {
-                    if out.stdout.to_lowercase().contains("remnote") {
-                        test_result(
-                            true,
-                            "O Codex tem um servidor RemNote configurado.",
-                            Vec::new(),
-                        )
-                    } else {
-                        test_result(
-                            false,
-                            "Não achei um servidor RemNote na configuração do Codex.",
-                            Vec::new(),
-                        )
-                    }
-                }
-                _ => test_result(
-                    false,
-                    "Não foi possível consultar a configuração do Codex.",
-                    Vec::new(),
-                ),
-            }
-        }
         RemNoteMode::Server => {
             let Some(token) = secrets.remnote_token()? else {
                 return test_result(false, "Informe o token do RemNote primeiro.", Vec::new());

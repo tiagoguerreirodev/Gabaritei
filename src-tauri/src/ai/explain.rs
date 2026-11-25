@@ -27,9 +27,7 @@ pub struct ExplainAnswer {
     pub refs: Vec<String>,
 }
 
-fn invalid(message: &str) -> AppError {
-    AppError::Invalid(message.to_owned())
-}
+use super::invalid;
 
 /// Writes the explanation for the revealed question at `position` and returns the attempt as the
 /// frontend may see it. Blocking. Refused if the question isn't revealed or already has one.

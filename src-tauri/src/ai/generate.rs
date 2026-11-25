@@ -70,6 +70,13 @@ impl GenerateRequest {
                 "Escolha de 1 a {MAX_COUNT} questões."
             )));
         }
+        self.validate_topic()?;
+        self.validate_text_fields()?;
+        self.validate_roles()?;
+        self.validate_attachments()
+    }
+
+    fn validate_topic(&mut self) -> AppResult<()> {
         for (value, label, max) in [
             (&mut self.topic.area, "A área", MAX_AREA),
             (&mut self.topic.matter, "A matéria", MAX_MATTER),
@@ -85,6 +92,10 @@ impl GenerateRequest {
                 )));
             }
         }
+        Ok(())
+    }
+
+    fn validate_text_fields(&mut self) -> AppResult<()> {
         self.board = self
             .board
             .take()
@@ -113,6 +124,10 @@ impl GenerateRequest {
                 "As instruções têm mais de {MAX_INSTRUCTIONS} caracteres."
             )));
         }
+        Ok(())
+    }
+
+    fn validate_roles(&mut self) -> AppResult<()> {
         for (config, label) in [
             (self.generator.as_mut(), "Gerador"),
             (self.checker.as_mut(), "Conferente"),
@@ -121,7 +136,6 @@ impl GenerateRequest {
                 super::settings::validate_role_config(config, label)?;
             }
         }
-        self.validate_attachments()?;
         Ok(())
     }
 
@@ -209,71 +223,34 @@ impl DraftCheck {
     }
 }
 
-/// A fixed pt-BR message for each rule `validate` can report. The validator's own messages
-/// quote option texts, option IDs and counts chosen by the AI, so they are never passed on:
-/// anything the table does not know becomes a generic message. Matching is by the rule's fixed
-/// prefix, never by anything the question contains.
-pub fn fixed_message(problem: &str) -> &'static str {
-    const RULES: &[(&str, &str)] = &[
-        (
-            "Identificador inválido",
-            "O identificador da questão é inválido.",
-        ),
-        ("O enunciado", "O enunciado está vazio ou é longo demais."),
-        (
-            "Questões de múltipla escolha têm",
-            "Questões de múltipla escolha precisam ter exatamente 5 alternativas.",
-        ),
-        (
-            "Questões Certo/Errado têm",
-            "Questões Certo/Errado precisam ter exatamente as alternativas Certo e Errado.",
-        ),
-        (
-            "Alternativa com identificador inválido",
-            "Há uma alternativa com identificador inválido.",
-        ),
-        (
-            "Identificador de alternativa repetido",
-            "Há alternativas com o mesmo identificador.",
-        ),
-        (
-            "Há uma alternativa sem texto",
-            "Há uma alternativa sem texto.",
-        ),
-        (
-            "Uma alternativa tem mais de",
-            "Há uma alternativa longa demais.",
-        ),
-        (
-            "Alternativas com o mesmo texto",
-            "Há alternativas com o mesmo texto.",
-        ),
-        (
-            "O gabarito não corresponde",
-            "O gabarito não corresponde a nenhuma alternativa.",
-        ),
-        ("O comentário tem mais de", "O comentário é longo demais."),
-        ("Há mais de", "Há referências demais."),
-        ("Há uma referência vazia", "Há uma referência vazia."),
-        (
-            "Uma referência tem mais de",
-            "Há uma referência longa demais.",
-        ),
-        (
-            "Cada questão precisa de",
-            "A questão precisa de um assunto válido.",
-        ),
-        (
-            "Área, matéria",
-            "Área, matéria ou assunto vazio ou longo demais.",
-        ),
-    ];
-    RULES
-        .iter()
-        .find(|(prefix, _)| problem.starts_with(prefix))
-        .map_or("A questão não passou na validação.", |(_, message)| {
-            message
-        })
+/// Only fixed messages can leave the backend during draft preview.
+fn preview_message(problem: &crate::bank::question::QuestionProblem) -> &'static str {
+    use crate::bank::question::QuestionProblem::*;
+    match problem {
+        InvalidId => "O identificador da questão é inválido.",
+        EmptyStem | LongStem => "O enunciado está vazio ou é longo demais.",
+        MultipleOptionCount(_) => {
+            "Questões de múltipla escolha precisam ter exatamente 5 alternativas."
+        }
+        BooleanOptions => {
+            "Questões Certo/Errado precisam ter exatamente as alternativas Certo e Errado."
+        }
+        InvalidOptionId => "Há uma alternativa com identificador inválido.",
+        RepeatedOptionId(_) => "Há alternativas com o mesmo identificador.",
+        EmptyOptionText => "Há uma alternativa sem texto.",
+        LongOptionText => "Há uma alternativa longa demais.",
+        RepeatedOptionText(_) => "Há alternativas com o mesmo texto.",
+        InvalidAnswer => "O gabarito não corresponde a nenhuma alternativa.",
+        LongExplanation => "O comentário é longo demais.",
+        TooManyRefs => "Há referências demais.",
+        EmptyRef => "Há uma referência vazia.",
+        LongRef => "Há uma referência longa demais.",
+        TopicCount => "A questão precisa de um assunto válido.",
+        EmptyTopicName | LongTopicName => "Área, matéria ou assunto vazio ou longo demais.",
+        ImageName(_) | ImageDescription | DescriptionWithoutImage => {
+            "A questão não passou na validação."
+        }
+    }
 }
 
 fn provenance(draft_id: &DraftId, disputed: bool) -> Provenance {
@@ -284,10 +261,7 @@ fn provenance(draft_id: &DraftId, disputed: bool) -> Provenance {
 }
 
 /// The package as question inputs for the draft's topic, in package order.
-pub fn draft_inputs(
-    draft: &Draft,
-    disputed: &dyn Fn(usize) -> bool,
-) -> Vec<crate::bank::QuestionInput> {
+pub fn draft_inputs(draft: &Draft, disputed: &[usize]) -> Vec<crate::bank::QuestionInput> {
     draft
         .package
         .clone()
@@ -295,7 +269,7 @@ pub fn draft_inputs(
         .into_iter()
         .enumerate()
         .map(|(index, mut input)| {
-            input.provenance = provenance(&draft.id, disputed(index));
+            input.provenance = provenance(&draft.id, disputed.contains(&index));
             input
         })
         .collect()
@@ -304,68 +278,99 @@ pub fn draft_inputs(
 /// Validates a draft's package: structure, option rules, duplicates and the requested format.
 pub fn check_draft(conn: &Connection, draft: &Draft) -> AppResult<DraftCheck> {
     let mut check = DraftCheck::default();
-    let mut seen: HashMap<QuestionId, (usize, String)> = HashMap::new();
+    let mut seen: HashMap<QuestionId, (u32, String)> = HashMap::new();
     let mut local_ids: HashSet<&str> = HashSet::new();
     let format = draft.request.request.format;
-    let inputs = draft_inputs(draft, &|_| false);
+    let inputs = draft_inputs(draft, &[]);
 
     for (index, (input, question)) in inputs.into_iter().zip(&draft.package.questions).enumerate() {
         let position = u32::try_from(index + 1).unwrap_or(u32::MAX);
-        let mut problem = |message: String| {
-            check.problems.push(DraftProblem {
-                position: Some(position),
-                message,
-            });
-        };
-        match question.kind {
-            QuestionType::Multiple => check.multiple += 1,
-            QuestionType::Boolean => check.boolean += 1,
-        }
-        match (format, question.kind) {
-            (Some(QuestionType::Multiple), QuestionType::Boolean) => {
-                problem("Você pediu só múltipla escolha, mas esta é Certo/Errado.".into());
-            }
-            (Some(QuestionType::Boolean), QuestionType::Multiple) => {
-                problem("Você pediu só Certo/Errado, mas esta é de múltipla escolha.".into());
-            }
-            (Some(QuestionType::Multiple), QuestionType::Multiple)
-            | (Some(QuestionType::Boolean), QuestionType::Boolean)
-            | (None, QuestionType::Multiple | QuestionType::Boolean) => {}
-        }
+        check.count_format(position, format, question.kind);
         if !local_ids.insert(question.id.as_str()) {
-            problem("O identificador desta questão repete o de outra do pacote.".into());
+            check.problem(
+                position,
+                "O identificador desta questão repete o de outra do pacote.".into(),
+            );
             continue;
         }
         match canonicalize(input) {
+            Ok(canonical) => check.check_duplicates(conn, &mut seen, position, canonical)?,
             Err(problems) => {
-                for message in problems {
-                    problem(fixed_message(&message).to_owned());
-                }
-            }
-            Ok(canonical) => {
-                match seen.get(&canonical.id) {
-                    Some((first, answer)) if *answer != canonical.answer_id => {
-                        problem(format!("Repete a Q{first}, mas com resposta divergente."));
-                    }
-                    Some(_) => check.duplicates += 1,
-                    None => {
-                        seen.insert(
-                            canonical.id.clone(),
-                            (index + 1, canonical.answer_id.clone()),
-                        );
-                    }
-                }
-                if let Some(stored) = load_question(conn, &canonical.id)? {
-                    if stored.answer_id == canonical.answer_id {
-                        check.duplicates += 1;
-                    } else {
-                        problem("Já existe no banco com resposta divergente.".into());
-                    }
+                for problem in problems {
+                    check.problem(position, preview_message(&problem).into());
                 }
             }
         }
     }
     Ok(check)
+}
+
+impl DraftCheck {
+    fn problem(&mut self, position: u32, message: String) {
+        self.problems.push(DraftProblem {
+            position: Some(position),
+            message,
+        });
+    }
+
+    fn count_format(&mut self, position: u32, format: Option<QuestionType>, kind: QuestionType) {
+        match kind {
+            QuestionType::Multiple => self.multiple += 1,
+            QuestionType::Boolean => self.boolean += 1,
+        }
+        match (format, kind) {
+            (Some(QuestionType::Multiple), QuestionType::Boolean) => {
+                self.problem(
+                    position,
+                    "Você pediu só múltipla escolha, mas esta é Certo/Errado.".into(),
+                );
+            }
+            (Some(QuestionType::Boolean), QuestionType::Multiple) => {
+                self.problem(
+                    position,
+                    "Você pediu só Certo/Errado, mas esta é de múltipla escolha.".into(),
+                );
+            }
+            (Some(QuestionType::Multiple), QuestionType::Multiple)
+            | (Some(QuestionType::Boolean), QuestionType::Boolean)
+            | (None, QuestionType::Multiple | QuestionType::Boolean) => {}
+        }
+    }
+
+    fn check_duplicates(
+        &mut self,
+        conn: &Connection,
+        seen: &mut HashMap<QuestionId, (u32, String)>,
+        position: u32,
+        canonical: crate::bank::Question,
+    ) -> AppResult<()> {
+        match seen.get(&canonical.id) {
+            Some((first, answer)) if *answer != canonical.answer_id => {
+                self.problem(
+                    position,
+                    format!("Repete a Q{first}, mas com resposta divergente."),
+                );
+            }
+            Some(_) => self.duplicates += 1,
+            None => {
+                seen.insert(
+                    canonical.id.clone(),
+                    (position, canonical.answer_id.clone()),
+                );
+            }
+        }
+        if let Some(stored) = load_question(conn, &canonical.id)? {
+            if stored.answer_id == canonical.answer_id {
+                self.duplicates += 1;
+            } else {
+                self.problem(
+                    position,
+                    "Já existe no banco com resposta divergente.".into(),
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Runs the generator and saves the result as a draft. Blocking: call from a worker thread.

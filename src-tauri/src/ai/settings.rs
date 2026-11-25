@@ -123,9 +123,7 @@ fn load_remnote(conn: &Connection) -> AppResult<RemNoteSettings> {
     Ok(serde_json::from_value(saved)?)
 }
 
-fn invalid(message: &str) -> AppError {
-    AppError::Invalid(message.to_owned())
-}
+use super::invalid;
 
 fn clean_path(value: &Option<String>, what: &str) -> AppResult<Option<String>> {
     let Some(text) = value.as_deref().map(str::trim).filter(|t| !t.is_empty()) else {
@@ -171,7 +169,19 @@ pub fn validate_role_config(config: &mut RoleConfig, label: &str) -> AppResult<(
 
 /// Checks and saves the settings. Nothing is written if anything is invalid.
 pub fn save(conn: &Connection, input: AiSettingsInput) -> AppResult<()> {
-    let mut roles = input.roles;
+    let roles = validated_roles(input.roles)?;
+    let cli_paths = CliPaths {
+        claude: clean_path(&input.cli_paths.claude, "Claude Code")?,
+        codex: clean_path(&input.cli_paths.codex, "Codex")?,
+    };
+    let remnote = validated_remnote(input.remnote)?;
+    set_setting(conn, SettingKey::AiRoles, &roles)?;
+    set_setting(conn, SettingKey::CliPaths, &cli_paths)?;
+    set_setting(conn, SettingKey::RemNote, &remnote)?;
+    Ok(())
+}
+
+fn validated_roles(mut roles: RoleSettings) -> AppResult<RoleSettings> {
     for role in Role::ALL {
         let config = match role {
             Role::Generate => &mut roles.generate,
@@ -181,12 +191,12 @@ pub fn save(conn: &Connection, input: AiSettingsInput) -> AppResult<()> {
         };
         validate_role_config(config, role.label())?;
     }
-    let cli_paths = CliPaths {
-        claude: clean_path(&input.cli_paths.claude, "Claude Code")?,
-        codex: clean_path(&input.cli_paths.codex, "Codex")?,
-    };
-    let url = input.remnote.url.trim().to_owned();
-    if input.remnote.mode == RemNoteMode::Server
+    Ok(roles)
+}
+
+fn validated_remnote(input: RemNoteSettings) -> AppResult<RemNoteSettings> {
+    let url = input.url.trim().to_owned();
+    if input.mode == RemNoteMode::Server
         && (!(url.starts_with("https://") || url.starts_with("http://"))
             || url.chars().count() > MAX_URL
             || url.contains(char::is_whitespace))
@@ -196,7 +206,7 @@ pub fn save(conn: &Connection, input: AiSettingsInput) -> AppResult<()> {
         ));
     }
     let mut tools: Vec<String> = Vec::new();
-    for tool in &input.remnote.tools {
+    for tool in &input.tools {
         let tool = tool.trim();
         if !is_valid_tool_name(tool) {
             return Err(invalid("Há um nome de ferramenta do RemNote inválido."));
@@ -210,15 +220,11 @@ pub fn save(conn: &Connection, input: AiSettingsInput) -> AppResult<()> {
             tools.push(tool.to_owned());
         }
     }
-    let remnote = RemNoteSettings {
-        mode: input.remnote.mode,
+    Ok(RemNoteSettings {
+        mode: input.mode,
         url,
         tools,
-    };
-    set_setting(conn, SettingKey::AiRoles, &roles)?;
-    set_setting(conn, SettingKey::CliPaths, &cli_paths)?;
-    set_setting(conn, SettingKey::RemNote, &remnote)?;
-    Ok(())
+    })
 }
 
 /// The executable for `agent`: the user's override, else detected.

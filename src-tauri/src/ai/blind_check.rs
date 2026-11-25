@@ -129,9 +129,7 @@ pub fn pending_record() -> serde_json::Value {
     .expect("a blind check serializes")
 }
 
-fn invalid(message: &str) -> AppError {
-    AppError::Invalid(message.to_owned())
-}
+use super::invalid;
 
 /// Asks the checker about `questions` and checks that it answered each one, once, with an
 /// option that exists.

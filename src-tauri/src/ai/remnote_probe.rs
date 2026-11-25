@@ -19,6 +19,7 @@ pub struct RemNoteTest {
     pub tools: Vec<String>,
 }
 
+const MCP_PROTOCOL_VERSION: &str = "2025-03-26";
 const TEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn test_result(ok: bool, message: &str, tools: Vec<String>) -> AppResult<RemNoteTest> {
@@ -107,7 +108,7 @@ pub fn remnote_test(settings: &AiSettings, secrets: &Secrets) -> AppResult<RemNo
             let initialize = serde_json::json!({
                 "jsonrpc": "2.0", "id": 1, "method": "initialize",
                 "params": {
-                    "protocolVersion": "2025-03-26",
+                    "protocolVersion": MCP_PROTOCOL_VERSION,
                     "capabilities": {},
                     "clientInfo": { "name": "gabaritei", "version": env!("CARGO_PKG_VERSION") }
                 }

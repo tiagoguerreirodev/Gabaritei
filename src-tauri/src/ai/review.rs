@@ -13,9 +13,9 @@ use ts_rs::TS;
 use super::agent::{Agent, Effort};
 use super::blind_check::{self, VerdictState};
 use super::draft::{self, Draft, DraftStatus};
-use super::generate::{DraftProblem, check_draft, draft_inputs};
+use super::generate::{DraftCheck, DraftProblem, check_draft, draft_inputs};
 use crate::bank::catalog::CollectionKind;
-use crate::bank::store::import_questions;
+use crate::bank::store::{ImportOutcome, import_questions};
 use crate::bank::{PackageQuestion, QuestionType, TopicPath};
 use crate::error::{AppError, AppResult};
 use crate::ids::{self, CollectionId, DraftId, QuestionId};
@@ -150,7 +150,13 @@ pub struct ImportResult {
     pub skipped: u32,
 }
 
-fn states(draft: &Draft) -> AppResult<(Vec<LineState>, Option<String>, bool)> {
+struct ReviewStates {
+    lines: Vec<LineState>,
+    failed: Option<String>,
+    checking: bool,
+}
+
+fn states(draft: &Draft) -> AppResult<ReviewStates> {
     let check = blind_check::stored(draft)?;
     let failed = check.as_ref().and_then(|c| c.failed.clone());
     let pending = check.as_ref().is_some_and(|c| c.pending);
@@ -169,7 +175,11 @@ fn states(draft: &Draft) -> AppResult<(Vec<LineState>, Option<String>, bool)> {
                 })
         })
         .collect();
-    Ok((lines, failed, pending))
+    Ok(ReviewStates {
+        lines,
+        failed,
+        checking: pending,
+    })
 }
 
 /// Copies the stem and options of a flagged question, and nothing else.
@@ -188,23 +198,31 @@ fn flagged_content(question: &PackageQuestion) -> FlaggedContent {
     }
 }
 
+fn count_u32(count: usize) -> u32 {
+    u32::try_from(count).unwrap_or(u32::MAX)
+}
+
 fn count(items: &[LineState], wanted: LineState) -> u32 {
-    u32::try_from(items.iter().filter(|s| **s == wanted).count()).unwrap_or(u32::MAX)
+    count_u32(items.iter().filter(|s| **s == wanted).count())
 }
 
 pub fn summary(conn: &Connection, id: &DraftId) -> AppResult<DraftSummary> {
     let draft = draft::load(conn, id)?;
     let check = check_draft(conn, &draft)?;
-    let (states, check_failed, checking) = states(&draft)?;
+    let ReviewStates {
+        lines: states,
+        failed: check_failed,
+        checking,
+    } = states(&draft)?;
     let request = &draft.request;
     Ok(DraftSummary {
         id: draft.id.clone(),
         status: draft.status,
         created_at: draft.created_at.clone(),
         topic: request.request.topic.clone(),
-        count: u32::try_from(draft.package.questions.len()).unwrap_or(u32::MAX),
-        multiple: u32::try_from(check.multiple).unwrap_or(u32::MAX),
-        boolean: u32::try_from(check.boolean).unwrap_or(u32::MAX),
+        count: count_u32(draft.package.questions.len()),
+        multiple: count_u32(check.multiple),
+        boolean: count_u32(check.boolean),
         requested_format: request.request.format,
         board: request.request.board.clone(),
         generator: StageLabel {
@@ -219,19 +237,9 @@ pub fn summary(conn: &Connection, id: &DraftId) -> AppResult<DraftSummary> {
         },
         duration_ms: request.info.duration_ms,
         cost_usd: request.info.cost_usd,
-        lines: states
-            .iter()
-            .enumerate()
-            .map(|(index, state)| QuestionLine {
-                position: u32::try_from(index + 1).unwrap_or(u32::MAX),
-                state: *state,
-                has_problem: check.is_blocked(index),
-                content: (*state == LineState::Disputed || check.is_blocked(index))
-                    .then(|| flagged_content(&draft.package.questions[index])),
-            })
-            .collect(),
+        lines: question_lines(&draft.package.questions, &states, &check),
         problems: check.problems,
-        duplicates: u32::try_from(check.duplicates).unwrap_or(u32::MAX),
+        duplicates: count_u32(check.duplicates),
         agreed: count(&states, LineState::Agreed),
         fixed: count(&states, LineState::Fixed),
         disputed: count(&states, LineState::Disputed),
@@ -239,6 +247,28 @@ pub fn summary(conn: &Connection, id: &DraftId) -> AppResult<DraftSummary> {
         check_failed,
         checking,
     })
+}
+
+fn question_lines(
+    questions: &[PackageQuestion],
+    states: &[LineState],
+    check: &DraftCheck,
+) -> Vec<QuestionLine> {
+    questions
+        .iter()
+        .zip(states)
+        .enumerate()
+        .map(|(index, (question, state))| {
+            let has_problem = check.is_blocked(index);
+            QuestionLine {
+                position: count_u32(index + 1),
+                state: *state,
+                has_problem,
+                content: (*state == LineState::Disputed || has_problem)
+                    .then(|| flagged_content(question)),
+            }
+        })
+        .collect()
 }
 
 /// Drafts waiting for review, newest first.
@@ -250,11 +280,15 @@ pub fn waiting(conn: &Connection) -> AppResult<Vec<DraftListItem>> {
     ids.iter()
         .map(|id| {
             let draft = draft::load(conn, id)?;
-            let (states, _, checking) = states(&draft)?;
+            let ReviewStates {
+                lines: states,
+                checking,
+                ..
+            } = states(&draft)?;
             Ok(DraftListItem {
                 id: draft.id.clone(),
                 topic: draft.request.request.topic.clone(),
-                count: u32::try_from(draft.package.questions.len()).unwrap_or(u32::MAX),
+                count: count_u32(draft.package.questions.len()),
                 created_at: draft.created_at.clone(),
                 disputed: count(&states, LineState::Disputed),
                 checking,
@@ -284,11 +318,36 @@ pub fn import(
         return Err(not_waiting());
     }
     let check = check_draft(conn, &draft)?;
-    let (states, _, checking) = states(&draft)?;
+    let ReviewStates {
+        lines: states,
+        checking,
+        ..
+    } = states(&draft)?;
     if checking {
         return Err(checking_error());
     }
-    let total = draft.package.questions.len();
+    let chosen = selected_questions(&states, &check, mode)?;
+    let (outcome, local_ids) = import_selected(conn, &draft, &states, &chosen, now)?;
+    let title = collection_title(&draft);
+    let collection_id =
+        create_collection(conn, &title, draft.request.request.board.as_deref(), now)?;
+    place_questions(conn, &collection_id, &local_ids, &outcome)?;
+    draft::set_status(conn, id, DraftStatus::Imported)?;
+    Ok(ImportResult {
+        collection_id,
+        title,
+        imported: count_u32(outcome.inserted),
+        merged: count_u32(outcome.merged),
+        skipped: count_u32(states.len() - chosen.len()),
+    })
+}
+
+fn selected_questions(
+    states: &[LineState],
+    check: &DraftCheck,
+    mode: ImportMode,
+) -> AppResult<Vec<usize>> {
+    let total = states.len();
     let chosen: Vec<usize> = match mode {
         ImportMode::All => {
             if states.contains(&LineState::Unchecked) {
@@ -304,10 +363,12 @@ pub fn import(
             }
             (0..total).collect()
         }
-        ImportMode::Confirmed => (0..total)
-            .filter(|index| {
-                matches!(states[*index], LineState::Agreed | LineState::Fixed)
-                    && !check.is_blocked(*index)
+        ImportMode::Confirmed => states
+            .iter()
+            .enumerate()
+            .filter_map(|(index, state)| {
+                (matches!(state, LineState::Agreed | LineState::Fixed) && !check.is_blocked(index))
+                    .then_some(index)
             })
             .collect(),
     };
@@ -317,8 +378,23 @@ pub fn import(
         ));
     }
 
+    Ok(chosen)
+}
+
+fn import_selected(
+    conn: &Transaction<'_>,
+    draft: &Draft,
+    states: &[LineState],
+    chosen: &[usize],
+    now: &str,
+) -> AppResult<(ImportOutcome, Vec<String>)> {
     // Questions the blind check still disagreed with get the badge.
-    let inputs: Vec<_> = draft_inputs(&draft, &|index| states[index] == LineState::Disputed)
+    let disputed: Vec<_> = states
+        .iter()
+        .enumerate()
+        .filter_map(|(index, state)| (*state == LineState::Disputed).then_some(index))
+        .collect();
+    let inputs: Vec<_> = draft_inputs(draft, &disputed)
         .into_iter()
         .enumerate()
         .filter(|(index, _)| chosen.contains(index))
@@ -331,6 +407,10 @@ pub fn import(
         other => other,
     })?;
 
+    Ok((outcome, local_ids))
+}
+
+fn collection_title(draft: &Draft) -> String {
     let request = &draft.request.request;
     let topic = &request.topic;
     let day = draft.created_at.get(..10).unwrap_or_default();
@@ -338,23 +418,37 @@ pub fn import(
         [year, month, day] => format!("{day}/{month}/{year}"),
         _ => day.to_owned(),
     };
-    let title = format!("{topic} · gerado em {date}");
+    format!("{topic} · gerado em {date}")
+}
+
+fn create_collection(
+    conn: &Connection,
+    title: &str,
+    board: Option<&str>,
+    now: &str,
+) -> AppResult<CollectionId> {
     let collection_id = ids::generate::<CollectionId>(&mut rand::rng());
     conn.execute(
         "INSERT INTO collections (id, title, kind, contest, board, created_at)
          VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
-        params![
-            collection_id,
-            title,
-            CollectionKind::Generated,
-            request.board,
-            now
-        ],
+        params![collection_id, title, CollectionKind::Generated, board, now],
     )?;
+    Ok(collection_id)
+}
+
+fn place_questions(
+    conn: &Connection,
+    collection_id: &CollectionId,
+    local_ids: &[String],
+    outcome: &ImportOutcome,
+) -> AppResult<()> {
     let mut position = 0;
     let mut placed: Vec<&QuestionId> = Vec::new();
-    for local_id in &local_ids {
-        let question_id = &outcome.ids_by_local_id[local_id];
+    for local_id in local_ids {
+        let question_id = outcome
+            .ids_by_local_id
+            .get(local_id)
+            .ok_or_else(|| AppError::Internal("imported question has no canonical ID".into()))?;
         if placed.contains(&question_id) {
             continue;
         }
@@ -366,14 +460,7 @@ pub fn import(
         )?;
         position += 1;
     }
-    draft::set_status(conn, id, DraftStatus::Imported)?;
-    Ok(ImportResult {
-        collection_id,
-        title,
-        imported: u32::try_from(outcome.inserted).unwrap_or(u32::MAX),
-        merged: u32::try_from(outcome.merged).unwrap_or(u32::MAX),
-        skipped: u32::try_from(total - chosen.len()).unwrap_or(u32::MAX),
-    })
+    Ok(())
 }
 
 /// Discards a draft that is still waiting.
@@ -382,7 +469,7 @@ pub fn discard(conn: &Connection, id: &DraftId) -> AppResult<()> {
     if draft.status != DraftStatus::Review {
         return Err(not_waiting());
     }
-    if states(&draft)?.2 {
+    if states(&draft)?.checking {
         return Err(checking_error());
     }
     draft::set_status(conn, id, DraftStatus::Discarded)

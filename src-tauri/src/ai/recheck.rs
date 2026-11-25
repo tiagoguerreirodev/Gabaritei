@@ -83,9 +83,7 @@ impl From<&Proposal> for RecheckView {
     }
 }
 
-fn invalid(message: &str) -> AppError {
-    AppError::Invalid(message.to_owned())
-}
+use super::invalid;
 
 /// Asks the re-check role about the revealed question at `position`. Blocking.
 pub fn ask_recheck(

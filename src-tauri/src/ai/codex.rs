@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
+use super::REMNOTE_SERVER;
 use super::runner::{
     JobSpec, Parser, Plan, Progress, ProgressKind, RemNoteAccess, RunError, Workdir,
     read_only_tools,
@@ -73,15 +74,18 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Result<Plan, RunError> {
         && !tools.is_empty()
     {
         args.push("-c".into());
-        args.push(format!("mcp_servers.remnote.url={}", toml_string(url)));
+        args.push(format!(
+            "mcp_servers.{REMNOTE_SERVER}.url={}",
+            toml_string(url)
+        ));
         args.push("-c".into());
         args.push(format!(
-            "mcp_servers.remnote.bearer_token_env_var={}",
+            "mcp_servers.{REMNOTE_SERVER}.bearer_token_env_var={}",
             toml_string(TOKEN_ENV)
         ));
         args.push("-c".into());
         args.push(format!(
-            "mcp_servers.remnote.enabled_tools={}",
+            "mcp_servers.{REMNOTE_SERVER}.enabled_tools={}",
             serde_json::to_string(&tools).expect("a list of strings serializes")
         ));
         env.push((TOKEN_ENV.to_owned(), token.clone()));

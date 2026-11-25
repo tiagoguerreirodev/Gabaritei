@@ -31,3 +31,9 @@ pub use runner::{
     CancelToken, JobOutput, JobSpec, Progress, ProgressKind, RemNoteAccess, RunError,
     is_valid_tool_name, is_write_like, run_job,
 };
+
+fn invalid(message: &str) -> crate::error::AppError {
+    crate::error::AppError::Invalid(message.to_owned())
+}
+
+const REMNOTE_SERVER: &str = "remnote";

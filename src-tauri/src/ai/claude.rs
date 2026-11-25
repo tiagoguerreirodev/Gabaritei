@@ -12,7 +12,7 @@ use super::runner::{
 const READ_TOOLS: &[&str] = &["Read", "Grep", "Glob"];
 const WEB_TOOLS: &[&str] = &["WebSearch", "WebFetch"];
 /// Name the RemNote server gets in the MCP config.
-const REMNOTE_SERVER: &str = "remnote";
+use super::REMNOTE_SERVER;
 
 /// The MCP config file for the RemNote server.
 pub(super) fn mcp_config(url: &str, token: &str) -> String {

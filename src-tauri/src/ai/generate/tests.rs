@@ -245,9 +245,11 @@ mod pipeline {
     }
 
     #[test]
-    fn unknown_validation_messages_become_a_generic_one() {
+    fn image_validation_never_exposes_a_filename() {
         assert_eq!(
-            fixed_message("Algo novo com \"texto da questão\""),
+            preview_message(&crate::bank::question::QuestionProblem::ImageName(
+                "texto da questão".into()
+            )),
             "A questão não passou na validação."
         );
     }

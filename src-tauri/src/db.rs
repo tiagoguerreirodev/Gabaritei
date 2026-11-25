@@ -257,7 +257,8 @@ mod tests {
 
     #[test]
     fn a_fresh_database_contains_the_full_schema() {
-        let db = Database::open_in_memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&database_path(dir.path())).unwrap();
         let schema = db
             .with(|conn| Ok((tables(conn), user_version(conn)?)))
             .unwrap();
@@ -328,8 +329,9 @@ mod tests {
     }
 
     #[test]
-    fn foreign_keys_are_enabled() {
-        let db = Database::open_in_memory().unwrap();
+    fn a_file_database_has_foreign_keys_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&database_path(dir.path())).unwrap();
         let enabled: bool = db
             .with(|conn| Ok(conn.pragma_query_value(None, "foreign_keys", |r| r.get(0))?))
             .unwrap();
@@ -337,8 +339,9 @@ mod tests {
     }
 
     #[test]
-    fn a_busy_connection_waits_for_the_configured_timeout() {
-        let db = Database::open_in_memory().unwrap();
+    fn a_file_database_configures_the_busy_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&database_path(dir.path())).unwrap();
         let timeout: u32 = db
             .with(|conn| Ok(conn.pragma_query_value(None, "busy_timeout", |r| r.get(0))?))
             .unwrap();

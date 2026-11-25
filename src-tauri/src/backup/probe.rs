@@ -1,10 +1,5 @@
 use super::*;
 
-/// How long reading the manifests of a healthy backup folder may take: a cloud-synced folder may
-/// have to download them first, so this is longer than the deadline of a plain `read_dir`.
-pub(super) const MANIFEST_READ_TIMEOUT: Duration =
-    Duration::from_secs(if cfg!(test) { 60 } else { 15 });
-
 /// The probe key of the slow manifest listing of `folder`, apart from the folder's own.
 pub(super) fn manifest_key(folder: &Path) -> PathBuf {
     let mut key = folder.as_os_str().to_owned();
@@ -61,14 +56,6 @@ impl Drop for FreeProbe {
     }
 }
 
-impl Default for FolderProbe {
-    fn default() -> Self {
-        // Tests don't depend on the clock: a loaded machine can take longer than 3 s to read a
-        // folder, and they make a folder "stuck" explicitly instead.
-        Self::with_timeout(Duration::from_secs(if cfg!(test) { 60 } else { 3 }))
-    }
-}
-
 impl FolderProbe {
     pub(super) fn with_timeout(timeout: Duration) -> Self {
         Self {
@@ -98,29 +85,8 @@ impl FolderProbe {
     ) -> Option<T> {
         let deadline = Instant::now() + timeout;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let (mutex, wake) = &*self.probes;
-        {
-            let mut probes = lock(mutex);
-            loop {
-                match probes.get(path) {
-                    None => {
-                        probes.insert(path.to_path_buf(), Probe { id, stuck: false });
-                        break;
-                    }
-                    Some(other) if other.stuck => return None,
-                    // A healthy probe of another call on this folder: wait for it.
-                    Some(_) => {
-                        let left = deadline.saturating_duration_since(Instant::now());
-                        if left.is_zero() {
-                            return None;
-                        }
-                        probes = wake
-                            .wait_timeout(probes, left)
-                            .unwrap_or_else(PoisonError::into_inner)
-                            .0;
-                    }
-                }
-            }
+        if !self.claim(path, id, deadline) {
+            return None;
         }
         let (done, result) = mpsc::channel();
         let free = FreeProbe {
@@ -128,14 +94,9 @@ impl FolderProbe {
             path: path.to_path_buf(),
             id,
         };
-        // Tests fake the computer tag per thread; the worker must see the same one.
-        #[cfg(test)]
-        let overrides = super::fixtures::overrides();
         let spawned = std::thread::Builder::new().spawn(move || {
             // Held for the whole run, so a panic in `work` still frees the entry.
             let free = free;
-            #[cfg(test)]
-            super::fixtures::apply(overrides);
             let value = work();
             // Free the folder before the caller can see the result: otherwise a caller that
             // answers at once may still find the entry occupied (and a test of that flaked).
@@ -149,17 +110,47 @@ impl FolderProbe {
         match result.recv_timeout(timeout) {
             Ok(value) => Some(value),
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                let mut probes = lock(mutex);
-                if let Some(probe) = probes.get_mut(path).filter(|probe| probe.id == id) {
-                    probe.stuck = true;
-                }
-                // Callers waiting on this folder can answer now instead of at their deadline.
-                wake.notify_all();
+                self.timeout_probe(path, id);
                 None
             }
             // The work panicked; the guard freed the entry.
             Err(mpsc::RecvTimeoutError::Disconnected) => None,
         }
+    }
+
+    fn claim(&self, path: &Path, id: u64, deadline: Instant) -> bool {
+        let (mutex, wake) = &*self.probes;
+        let mut probes = lock(mutex);
+        loop {
+            match probes.get(path) {
+                None => {
+                    probes.insert(path.to_path_buf(), Probe { id, stuck: false });
+                    break;
+                }
+                Some(other) if other.stuck => return false,
+                // A healthy probe of another call on this folder: wait for it.
+                Some(_) => {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        return false;
+                    }
+                    probes = wake
+                        .wait_timeout(probes, left)
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .0;
+                }
+            }
+        }
+        true
+    }
+
+    fn timeout_probe(&self, path: &Path, id: u64) {
+        let (mutex, wake) = &*self.probes;
+        let mut probes = lock(mutex);
+        if let Some(probe) = probes.get_mut(path).filter(|probe| probe.id == id) {
+            probe.stuck = true;
+        }
+        wake.notify_all();
     }
 
     /// Test helper: the folder is stuck as if a read had hung, with no clock involved.

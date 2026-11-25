@@ -12,14 +12,14 @@ use std::path::{Path, PathBuf};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-use super::snapshot::{self, DATABASE_FILE, IMAGES_DIR, MANIFEST_FILE};
+use super::snapshot::{self, DATABASE_FILE, IMAGES_DIR, IMAGES_PREFIX, MANIFEST_FILE};
 use crate::bank::question::is_valid_image_name;
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use crate::paths::AppPaths;
 
 /// File extension of the data file.
-pub const EXTENSION: &str = "gabaritei";
+pub(crate) const EXTENSION: &str = "gabaritei";
 
 /// How much a file may unpack to, so a crafted file can't fill the disk: each database or
 /// image, and everything together.
@@ -41,7 +41,7 @@ const MAX_ENTRIES: usize = 200_000;
 const NOT_A_DATA_FILE: &str = "Este não é um arquivo de dados do Gabaritei. Nada foi alterado.";
 
 /// The suggested name: `Gabaritei-2026-11-19.gabaritei`, from a timestamp like `2026-11-19T…`.
-pub fn file_name(now: &str) -> String {
+pub(crate) fn file_name(now: &str) -> String {
     let date = now.get(..10).unwrap_or("dados");
     format!("Gabaritei-{date}.{EXTENSION}")
 }
@@ -120,7 +120,7 @@ fn copy_entry(entry: &mut impl Read, out: &mut impl Write) -> AppResult<u64> {
 }
 
 /// Unpacks a data file into the empty folder `into`, accepting only what a snapshot contains.
-pub fn unpack(file: &Path, into: &Path) -> AppResult<()> {
+pub(super) fn unpack(file: &Path, into: &Path) -> AppResult<()> {
     unpack_within(file, into, LIMITS)
 }
 
@@ -144,7 +144,7 @@ fn unpack_within(file: &Path, into: &Path, limits: Limits) -> AppResult<()> {
         } else if name == DATABASE_FILE {
             limits.database
         } else if name
-            .strip_prefix("images/")
+            .strip_prefix(IMAGES_PREFIX)
             .is_some_and(is_valid_image_name)
         {
             limits.image
@@ -173,25 +173,10 @@ fn unpack_within(file: &Path, into: &Path, limits: Limits) -> AppResult<()> {
     Ok(())
 }
 
-/// Replaces the local data with a data file's: unpack, then the same check, safety backup and
-/// replacement as a restore. Any
-/// problem before the replacement leaves everything as it was.
-pub fn import(
-    database: &Database,
-    paths: &AppPaths,
-    backup_folder: &Path,
-    file: &Path,
-    now: &str,
-) -> AppResult<()> {
-    let staging = tempfile::tempdir()?;
-    unpack(file, staging.path())?;
-    super::replace_data(database, paths, backup_folder, staging.path(), now)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backup::{BackupKind, default_folder, list};
+    use crate::backup::{BackupKind, BackupService, default_folder, list};
     use crate::db::{SettingKey, get_setting, set_setting};
     use rusqlite::params;
 
@@ -242,12 +227,12 @@ mod tests {
     }
 
     fn import_into(target: &Profile, file: &Path) -> AppResult<()> {
-        import(
+        BackupService::default().import(
             &target.db,
             &target.paths,
-            &default_folder(&target.paths),
             file,
-            NOW,
+            super::super::fixtures::instant(NOW),
+            || Ok(()),
         )
     }
 
@@ -257,6 +242,42 @@ mod tests {
             file_name("2026-11-19T21:00:00.123Z"),
             "Gabaritei-2026-11-19.gabaritei"
         );
+    }
+
+    #[test]
+    fn import_applies_cleanup_to_the_replacement() {
+        let source = profile();
+        add_question(&source.db, "q-1");
+        let file = source._dir.path().join(file_name(NOW));
+        let service = BackupService::with_cleanup(|conn| {
+            conn.execute(
+                "UPDATE questions SET explanation = 'Explicação reconstruída.'",
+                [],
+            )?;
+            Ok(())
+        });
+        service
+            .export(&source.db, &source.paths, &file, NOW)
+            .unwrap();
+        let target = profile();
+
+        service
+            .import(
+                &target.db,
+                &target.paths,
+                &file,
+                super::super::fixtures::instant(NOW),
+                || Ok(()),
+            )
+            .unwrap();
+
+        let explanation: String = target
+            .db
+            .with(|conn| {
+                Ok(conn.query_row("SELECT explanation FROM questions", [], |row| row.get(0))?)
+            })
+            .unwrap();
+        assert_eq!(explanation, "Explicação reconstruída.");
     }
 
     #[test]

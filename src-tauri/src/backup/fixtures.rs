@@ -1,34 +1,13 @@
+use super::service::Relocating;
 use super::*;
 use rusqlite::params;
 
-thread_local! {
-    /// Overrides [`computer_tag`] for the current test: `Some(None)` is "no tag".
-    /// Without an override, tests make untagged backups.
-    pub(super) static TAG: std::cell::RefCell<Option<Option<String>>> =
-        const { std::cell::RefCell::new(None) };
+pub(super) fn computer(host: &str) -> Computer {
+    Computer::from_host_names(None, host)
 }
 
-thread_local! {
-    /// Overrides [`previous_tag`] for the current test.
-    pub(super) static PREVIOUS: std::cell::RefCell<Option<String>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// The per-thread test overrides, to copy onto a probe's worker thread.
-pub(super) fn overrides() -> (Option<Option<String>>, Option<String>) {
-    (
-        TAG.with(|tag| tag.borrow().clone()),
-        PREVIOUS.with(|tag| tag.borrow().clone()),
-    )
-}
-
-pub(super) fn apply((tag, previous): (Option<Option<String>>, Option<String>)) {
-    TAG.with(|current| *current.borrow_mut() = tag);
-    PREVIOUS.with(|current| *current.borrow_mut() = previous);
-}
-
-pub(super) fn as_computer(tag: &str) {
-    TAG.with(|current| *current.borrow_mut() = Some(Some(tag.to_owned())));
+pub(super) fn instant(timestamp: &str) -> OffsetDateTime {
+    OffsetDateTime::parse(timestamp, &time::format_description::well_known::Rfc3339).unwrap()
 }
 
 pub(super) struct Fixture {
@@ -76,8 +55,20 @@ pub(super) fn question_ids(db: &Database) -> Vec<String> {
 }
 
 pub(super) fn backup(f: &Fixture, now: &str) -> BackupInfo {
+    backup_for(f, &Computer::default(), now)
+}
+
+pub(super) fn backup_for(f: &Fixture, computer: &Computer, now: &str) -> BackupInfo {
     let folder = default_folder(&f.paths);
-    create(&f.db, &f.paths, &folder, BackupKind::Backup, now, true).unwrap()
+    create(
+        &f.db,
+        &f.paths,
+        &folder,
+        BackupKind::Backup,
+        computer,
+        instant(now),
+    )
+    .unwrap()
 }
 
 /// Rewrites the backup's database with another page size and fixes the manifest hash, like a
@@ -131,11 +122,19 @@ pub(super) fn folder_of(conn: &Connection, paths: &AppPaths) -> AppResult<PathBu
 
 pub(super) fn make_left_behind(f: &Fixture, service: &BackupService) -> (PathBuf, PathBuf) {
     let old = default_folder(&f.paths);
-    for (kind, at) in [
+    for (kind, timestamp) in [
         (BackupKind::Backup, "2026-11-19T10:00:00.000Z"),
         (BackupKind::Safety, "2026-11-19T11:00:00.000Z"),
     ] {
-        create(&f.db, &f.paths, &old, kind, at, false).unwrap();
+        create(
+            &f.db,
+            &f.paths,
+            &old,
+            kind,
+            &service.computer,
+            instant(timestamp),
+        )
+        .unwrap();
     }
     let new = f._dir.path().join("synced");
     service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
@@ -169,9 +168,38 @@ pub(super) fn occupied(probe: &FolderProbe) -> bool {
 /// [`FolderProbe::mark_stuck`] or work that blocks until released.
 pub(super) const LONG: Duration = Duration::from_secs(60);
 
+pub(super) fn service_for(computer: Computer) -> BackupService {
+    BackupService::new(computer, LONG, LONG, crate::cleanup_restored_data)
+}
+
 pub(super) fn service_with_long_probe() -> BackupService {
-    BackupService {
-        probe: FolderProbe::with_timeout(LONG),
-        ..BackupService::default()
+    BackupService::default()
+}
+
+impl BackupService {
+    pub(super) fn with_cleanup(cleanup: RestoreCleanup) -> Self {
+        Self::new(Computer::default(), LONG, LONG, cleanup)
+    }
+
+    pub(super) fn relocate_with(
+        &self,
+        db: &Database,
+        paths: &AppPaths,
+        mode: Relocation,
+        between: &dyn Fn(),
+    ) -> AppResult<RelocateOutcome> {
+        let _running = Relocating::start(&self.relocating)?;
+        let plan = self.exclusive(|| self.plan_relocation(db, paths))?;
+        let report = plan.execute(mode, &|work| {
+            self.relocation_turn(db, paths, &plan, work);
+            between();
+        })?;
+        self.finish_relocation(db, paths, &plan, mode, report)
+    }
+}
+
+impl Default for BackupService {
+    fn default() -> Self {
+        Self::with_cleanup(crate::cleanup_restored_data)
     }
 }

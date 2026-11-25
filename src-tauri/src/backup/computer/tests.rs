@@ -23,7 +23,7 @@ fn long_host_names_that_start_alike_get_different_tags() {
     let b = slug("estacao-de-trabalho-do-escritorio-b").unwrap();
     assert_ne!(a, b);
     assert!(a.len() <= MAX_TAG && b.len() <= MAX_TAG);
-    assert!(parse(&format!("backup-20261119-210000-123-{a}")).is_some());
+    assert!(BackupName::parse(&format!("backup-20261119-210000-123-{a}")).is_some());
     // The same name always gives the same tag, and a short one is left as it is.
     assert_eq!(slug("estacao-de-trabalho-do-escritorio-a").unwrap(), a);
     assert_eq!(slug("desktop-abc"), Some("desktop-abc".into()));
@@ -62,7 +62,7 @@ fn the_tag_comes_from_the_host_name_as_a_plain_slug() {
     assert!(cut.len() <= MAX_TAG && !cut.contains("--") && !cut.ends_with('-'));
     // Every slug is a name the parser accepts.
     let tag = slug("Meu PC #1").unwrap();
-    assert!(parse(&format!("backup-20261119-210000-123-{tag}")).is_some());
+    assert!(BackupName::parse(&format!("backup-20261119-210000-123-{tag}")).is_some());
 }
 
 #[test]
@@ -83,14 +83,13 @@ fn the_previous_tag_is_the_first_label_of_the_host_name_with_ascii_only() {
 fn the_old_style_tag_is_only_trusted_before_the_new_derivation_shipped() {
     let f = fixture();
     let folder = default_folder(&f.paths);
-    as_computer("m-quina");
-    backup(&f, "2026-11-22T15:00:00.000Z");
+    let old = computer("m-quina");
+    backup_for(&f, &old, "2026-11-22T15:00:00.000Z");
     // Another computer whose tag happens to equal this one's old tag, made later.
-    backup(&f, "2026-11-22T17:00:00.000Z");
-    as_computer("maquina");
-    PREVIOUS.with(|tag| *tag.borrow_mut() = Some("m-quina".to_owned()));
+    backup_for(&f, &old, "2026-11-22T17:00:00.000Z");
+    let updated = computer("Máquina");
 
-    let all = list(&folder);
+    let all = list_for(&folder, &updated);
     let at = |stamp: &str| all.iter().find(|b| b.name.contains(stamp)).unwrap();
     assert!(!at("20261122-150000").other_computer);
     assert!(

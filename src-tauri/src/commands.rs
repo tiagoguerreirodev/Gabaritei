@@ -187,7 +187,7 @@ pub fn backup_now(
     paths: State<'_, AppPaths>,
     service: State<'_, BackupService>,
 ) -> AppResult<BackupInfo> {
-    service.backup_now(&db, &paths, &crate::clock::now())
+    service.backup_now(&db, &paths, time::OffsetDateTime::now_utc())
 }
 
 /// Asks for a new backup folder and saves it. `None` if the user cancels.
@@ -235,7 +235,12 @@ pub fn backup_relocate_left_behind(
     service: State<'_, BackupService>,
     remove_originals: bool,
 ) -> AppResult<RelocateOutcome> {
-    service.relocate_left_behind(&db, &paths, remove_originals)
+    let mode = if remove_originals {
+        crate::backup::Relocation::Move
+    } else {
+        crate::backup::Relocation::Copy
+    };
+    service.relocate_left_behind(&db, &paths, mode)
 }
 
 /// Forgets the offer to move backups from the old folder (the "Entendi" button). Nothing is
@@ -258,7 +263,7 @@ pub fn backup_restore(
     on_demand: State<'_, OnDemand>,
     name: String,
 ) -> AppResult<()> {
-    service.restore(&db, &paths, &name, &crate::clock::now(), || {
+    service.restore(&db, &paths, &name, time::OffsetDateTime::now_utc(), || {
         ensure_no_ai_job(&generation, &on_demand, "restaurar")
     })?;
     on_demand.clear_proposals();
@@ -299,8 +304,8 @@ pub async fn export_data<R: Runtime>(app: AppHandle<R>) -> AppResult<bool> {
             .dialog()
             .file()
             .set_title("Exportar dados")
-            .set_file_name(crate::backup::datafile::file_name(&now))
-            .add_filter("Dados do Gabaritei", &[crate::backup::datafile::EXTENSION])
+            .set_file_name(crate::backup::data_file_name(&now))
+            .add_filter("Dados do Gabaritei", &[crate::backup::DATA_FILE_EXTENSION])
             .blocking_save_file()
         else {
             return Ok(false);
@@ -326,7 +331,7 @@ pub async fn import_data<R: Runtime>(app: AppHandle<R>) -> AppResult<bool> {
             .dialog()
             .file()
             .set_title("Importar dados")
-            .add_filter("Dados do Gabaritei", &[crate::backup::datafile::EXTENSION])
+            .add_filter("Dados do Gabaritei", &[crate::backup::DATA_FILE_EXTENSION])
             .blocking_pick_file()
         else {
             return Ok(false);
@@ -339,9 +344,13 @@ pub async fn import_data<R: Runtime>(app: AppHandle<R>) -> AppResult<bool> {
         let service = app.state::<BackupService>();
         let generation = app.state::<GenerationManager>();
         let on_demand = app.state::<OnDemand>();
-        service.import(&db, &paths, &source, &crate::clock::now(), || {
-            ensure_no_ai_job(&generation, &on_demand, "importar")
-        })?;
+        service.import(
+            &db,
+            &paths,
+            &source,
+            time::OffsetDateTime::now_utc(),
+            || ensure_no_ai_job(&generation, &on_demand, "importar"),
+        )?;
         on_demand.clear_proposals();
         Ok(true)
     })

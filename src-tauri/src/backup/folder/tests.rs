@@ -141,8 +141,8 @@ fn a_new_folder_that_is_a_plain_subfolder_of_the_old_one_is_not_moved_into() {
         &f.paths,
         &old,
         BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T10:00:00.000Z"),
     )
     .unwrap();
     // Accepted as a backup folder, but a move would delete the copy
@@ -151,7 +151,11 @@ fn a_new_folder_that_is_a_plain_subfolder_of_the_old_one_is_not_moved_into() {
         .change_folder(&f.db, &f.paths, Some(&old.join("nested")))
         .unwrap();
 
-    assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
+    assert!(
+        service
+            .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
+            .is_err()
+    );
     snapshot::verify(&old.join(&info.name)).unwrap();
 }
 
@@ -168,7 +172,7 @@ fn a_backup_folder_that_does_not_exist_yet_is_reachable() {
         }
     );
     service
-        .backup_now(&f.db, &f.paths, "2026-11-19T10:00:00.000Z")
+        .backup_now(&f.db, &f.paths, instant("2026-11-19T10:00:00.000Z"))
         .unwrap();
     assert_eq!(list(&default_folder(&f.paths)).len(), 1);
 }
@@ -195,7 +199,7 @@ fn a_drive_that_is_gone_shows_as_unavailable_and_a_new_folder_does_not() {
     );
     assert!(
         service
-            .backup_now(&f.db, &f.paths, "2026-11-19T10:00:00.000Z")
+            .backup_now(&f.db, &f.paths, instant("2026-11-19T10:00:00.000Z"))
             .is_err()
     );
 

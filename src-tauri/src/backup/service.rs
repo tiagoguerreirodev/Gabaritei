@@ -1,9 +1,12 @@
 use super::*;
 
+/// Rebuilds application state in the staged database inside a transaction.
+pub type RestoreCleanup = fn(&Connection) -> AppResult<()>;
+
 /// Runs backup, restore and import one at a time, and remembers why the last backup failed.
 /// Managed as Tauri state.
-#[derive(Default)]
 pub struct BackupService {
+    pub(super) computer: Computer,
     pub(super) busy: Mutex<()>,
     pub(super) last_error: Mutex<Option<String>>,
     /// A copy or move of the old folder's backups is running. Its turns share the `busy` lock
@@ -12,13 +15,15 @@ pub struct BackupService {
     pub(super) relocating: AtomicBool,
     /// Bounds filesystem checks that may touch an offline share.
     pub(super) probe: FolderProbe,
+    manifest_timeout: Duration,
+    pub(super) cleanup: RestoreCleanup,
 }
 
 /// Marks a relocation as running until dropped.
 pub(super) struct Relocating<'a>(&'a AtomicBool);
 
 impl<'a> Relocating<'a> {
-    fn start(flag: &'a AtomicBool) -> AppResult<Self> {
+    pub(super) fn start(flag: &'a AtomicBool) -> AppResult<Self> {
         if flag.swap(true, Ordering::AcqRel) {
             return Err(AppError::Invalid(
                 "Já há uma cópia de backups em andamento. Aguarde ela terminar.".into(),
@@ -35,6 +40,23 @@ impl Drop for Relocating<'_> {
 }
 
 impl BackupService {
+    pub(crate) fn new(
+        computer: Computer,
+        folder_timeout: Duration,
+        manifest_timeout: Duration,
+        cleanup: RestoreCleanup,
+    ) -> Self {
+        Self {
+            computer,
+            busy: Mutex::default(),
+            last_error: Mutex::default(),
+            relocating: AtomicBool::default(),
+            probe: FolderProbe::with_timeout(folder_timeout),
+            manifest_timeout,
+            cleanup,
+        }
+    }
+
     /// Runs `work` once nothing else is backing up, restoring or importing.
     pub fn exclusive<T>(&self, work: impl FnOnce() -> T) -> T {
         let _turn = lock(&self.busy);
@@ -69,8 +91,8 @@ impl BackupService {
             let chosen = get_setting::<String>(conn, SettingKey::BackupFolder)?;
             Ok((folder(conn, paths)?, chosen.is_none()))
         })?;
-        let left_behind =
-            pending_old_folder(db, &self.probe, &folder)?.map(|(_, notice, _)| notice);
+        let left_behind = pending_old_folder(db, &self.probe, &folder, &self.computer)?
+            .map(|(_, notice, _)| notice);
         let listing = self.listing(&folder);
         Ok(BackupStatus {
             folder: folder.display().to_string(),
@@ -86,12 +108,13 @@ impl BackupService {
         match self.probe.run(folder, move || folder_state(&path)) {
             Some(FolderState::Present) => {
                 let path = folder.to_path_buf();
+                let computer = self.computer.clone();
                 // Use a separate slot so a slow manifest read cannot hold up the quick checks
                 // for backups, restores or imports.
                 match self
                     .probe
-                    .run_for(&manifest_key(folder), MANIFEST_READ_TIMEOUT, move || {
-                        try_list(&path)
+                    .run_for(&manifest_key(folder), self.manifest_timeout, move || {
+                        try_list(&path, &computer)
                     }) {
                     Some(Some(backups)) => BackupListing::Ready { backups },
                     Some(None) => BackupListing::FolderUnavailable,
@@ -138,29 +161,28 @@ impl BackupService {
                     .ok_or_else(folder_unavailable)?
             })
             .transpose()?;
-        let new = checked
-            .as_deref()
-            .map_or_else(|| default_folder(paths), PathBuf::from);
-
-        // Not while a backup is being written: it could land in the old folder after the
-        // count below. Read the current folder only after taking the lock, since it may have
-        // changed while the chosen folder was being checked.
         self.exclusive(|| {
-            let old = db.with(|conn| folder(conn, paths))?;
-            let has_backups = match self.probe.inspect(&old, &new) {
-                Some(OldFolder::Listed(found)) => found.iter().any(|b| !leave_alone(b)),
-                Some(OldFolder::Current | OldFolder::Unreadable) => false,
-                // No answer in time (an offline share): remember it, offered as unavailable.
-                None => true,
-            };
-            db.transaction(|tx| {
-                match &checked {
-                    Some(folder) => set_setting(tx, SettingKey::BackupFolder, folder)?,
-                    None => crate::db::put_raw_setting(tx, SettingKey::BackupFolder, None)?,
-                }
-                remember_old_folder(tx, has_backups.then_some(old.as_path()))
-            })?;
+            self.save_folder(db, paths, checked.as_deref())?;
             self.status(db, paths)
+        })
+    }
+
+    /// Reads the current folder under the service lock after the candidate check has completed.
+    fn save_folder(&self, db: &Database, paths: &AppPaths, checked: Option<&str>) -> AppResult<()> {
+        let new = checked.map_or_else(|| default_folder(paths), PathBuf::from);
+        let old = db.with(|conn| folder(conn, paths))?;
+        let has_backups = match self.probe.inspect(&old, &new) {
+            Some(OldFolder::Listed(found)) => self.computer.has_owned(&found),
+            Some(OldFolder::Current | OldFolder::Unreadable) => false,
+            // No answer in time (an offline share): remember it, offered as unavailable.
+            None => true,
+        };
+        db.transaction(|tx| {
+            match checked {
+                Some(folder) => set_setting(tx, SettingKey::BackupFolder, &folder)?,
+                None => crate::db::put_raw_setting(tx, SettingKey::BackupFolder, None)?,
+            }
+            remember_old_folder(tx, has_backups.then_some(old.as_path()))
         })
     }
 
@@ -172,99 +194,103 @@ impl BackupService {
         &self,
         db: &Database,
         paths: &AppPaths,
-        remove_originals: bool,
+        mode: Relocation,
     ) -> AppResult<RelocateOutcome> {
-        self.relocate_with(db, paths, remove_originals, &|| {})
+        let _relocating = Relocating::start(&self.relocating)?;
+        let plan = self.exclusive(|| self.plan_relocation(db, paths))?;
+        let report = plan.execute(mode, &|work| self.relocation_turn(db, paths, &plan, work))?;
+        self.finish_relocation(db, paths, &plan, mode, report)
     }
 
-    /// [`Self::relocate_left_behind`] with `between` called after each backup's turn, once the
-    /// lock is released. Tests use it to change things between two backups.
-    pub(super) fn relocate_with(
+    pub(super) fn plan_relocation(
         &self,
         db: &Database,
         paths: &AppPaths,
-        remove_originals: bool,
-        between: &dyn Fn(),
+    ) -> AppResult<RelocationPlan> {
+        let nothing = || AppError::Invalid("Não há backups na pasta anterior.".into());
+        let new = db.with(|conn| folder(conn, paths))?;
+        // Read from the stored setting, so it works after a restart too, and never from a
+        // path the frontend sent. It is cleared when the old folder has nothing of ours left.
+        let (old, notice, found) =
+            pending_old_folder(db, &self.probe, &new, &self.computer)?.ok_or_else(nothing)?;
+        if matches!(notice, LeftBehind::Unavailable { .. }) {
+            return Err(AppError::Invalid(
+                "A pasta anterior não está acessível agora. Conecte-a de novo ou dispense o aviso."
+                    .into(),
+            ));
+        }
+        // A new folder inside the old one (so inside a backup, or a temporary folder) would
+        // be deleted along with the original on a move. Looked at within the deadline: it
+        // touches the old folder.
+        let problem = {
+            let (old_path, new_path) = (old.clone(), new.clone());
+            self.probe
+                .run(&old, move || new_folder_problem(&old_path, &new_path))
+        }
+        .ok_or_else(|| {
+            AppError::Invalid(
+                "A pasta anterior não está acessível agora. Conecte-a de novo ou dispense o aviso."
+                    .into(),
+            )
+        })?;
+        if let Some(message) = problem {
+            return Err(AppError::Invalid(message.into()));
+        }
+        // Created here, under the lock, and not by the copy: the folder could have been
+        // removed since it was chosen (an unplugged drive).
+        self.ensure_reachable(&new)?;
+        fs::create_dir_all(&new)?;
+        // Another computer's backups, and untagged ones on a tagged computer, stay where they are:
+        // they may belong to a computer that still uses that folder.
+        let (others, mine): (Vec<_>, Vec<_>) = found
+            .into_iter()
+            .partition(|backup| !self.computer.owns(backup));
+        let names: Vec<String> = mine.into_iter().map(|backup| backup.name).collect();
+        Ok(RelocationPlan {
+            old,
+            new,
+            names,
+            left_alone: others.len() as u32,
+        })
+    }
+
+    pub(super) fn relocation_turn(
+        &self,
+        db: &Database,
+        paths: &AppPaths,
+        plan: &RelocationPlan,
+        work: &mut dyn FnMut(),
+    ) {
+        self.exclusive(|| {
+            if plan.is_current(db, paths) {
+                work();
+            }
+        })
+    }
+
+    pub(super) fn finish_relocation(
+        &self,
+        db: &Database,
+        paths: &AppPaths,
+        plan: &RelocationPlan,
+        mode: Relocation,
+        report: relocate::RelocateReport,
     ) -> AppResult<RelocateOutcome> {
-        // One relocation at a time: the turns below take the lock per backup, so two calls
-        // would interleave.
-        let _relocating = Relocating::start(&self.relocating)?;
-        // The lock is taken per backup, not for the whole copy: a scheduled backup can run between
-        // two of them, and the folders are read again each time.
-        let (old, new, names, others) = self.exclusive(|| {
-            let nothing = || AppError::Invalid("Não há backups na pasta anterior.".into());
-            let new = db.with(|conn| folder(conn, paths))?;
-            // Read from the stored setting, so it works after a restart too, and never from a
-            // path the frontend sent. It is cleared when the old folder has nothing of ours left.
-            let (old, notice, found) =
-                pending_old_folder(db, &self.probe, &new)?.ok_or_else(nothing)?;
-            if notice.unavailable {
-                return Err(AppError::Invalid(
-                    "A pasta anterior não está acessível agora. Conecte-a de novo ou dispense o aviso."
-                        .into(),
-                ));
-            }
-            // A new folder inside the old one (so inside a backup, or a temporary folder) would
-            // be deleted along with the original on a move. Looked at within the deadline: it
-            // touches the old folder.
-            let problem = {
-                let (old_path, new_path) = (old.clone(), new.clone());
-                self.probe
-                    .run(&old, move || new_folder_problem(&old_path, &new_path))
-            }
-            .ok_or_else(|| {
-                AppError::Invalid(
-                    "A pasta anterior não está acessível agora. Conecte-a de novo ou dispense o aviso."
-                        .into(),
-                )
-            })?;
-            if let Some(message) = problem {
-                return Err(AppError::Invalid(message.into()));
-            }
-            // Created here, under the lock, and not by the copy: the folder could have been
-            // removed since it was chosen (an unplugged drive).
-            self.ensure_reachable(&new)?;
-            fs::create_dir_all(&new)?;
-            // Another computer's backups, and untagged ones on a tagged computer, stay where they are:
-            // they may belong to a computer that still uses that folder.
-            let (others, mine): (Vec<_>, Vec<_>) = found.into_iter().partition(leave_alone);
-            let names: Vec<String> = mine.into_iter().map(|backup| backup.name).collect();
-            Ok((old, new, names, others.len() as u32))
-        })?;
-        let still_the_same = || {
-            let current = db.with(|conn| {
-                Ok((
-                    folder(conn, paths)?,
-                    get_setting::<String>(conn, SettingKey::BackupLeftBehind)?,
-                ))
-            });
-            matches!(current, Ok((folder, Some(stored)))
-                if same_folder(&folder, &new) && stored == old.display().to_string())
-        };
-        let mut report = relocate::relocate(&old, &new, &names, remove_originals, &|work| {
-            self.exclusive(|| {
-                if still_the_same() {
-                    work();
-                }
-            });
-            between();
-        })?;
-        report.left_alone = others;
         self.exclusive(|| {
             // After a move, what is still here is what could not be moved (the other computer's
             // backups are reported apart). A copy leaves the originals on purpose, unless it failed
             // for some backups: then the offer stays so the rest can be tried again. If the folder
             // changed meanwhile, the new change already decided what to remember.
-            if still_the_same() {
+            if plan.is_current(db, paths) {
                 // A folder that stops answering (or can't be read) may still hold what is left:
                 // keep the offer, shown as unavailable, rather than forgetting it.
-                let remaining = (remove_originals || report.failed > 0)
-                    && match self.probe.inspect(&old, &new) {
-                        Some(OldFolder::Listed(found)) => found.iter().any(|b| !leave_alone(b)),
+                let remaining = (mode == Relocation::Move || report.failed > 0)
+                    && match self.probe.inspect(&plan.old, &plan.new) {
+                        Some(OldFolder::Listed(found)) => self.computer.has_owned(&found),
                         Some(OldFolder::Current) => false,
                         Some(OldFolder::Unreadable) | None => true,
                     };
-                db.with(|conn| remember_old_folder(conn, remaining.then_some(old.as_path())))?;
+                db.with(|conn| remember_old_folder(conn, remaining.then_some(plan.old.as_path())))?;
             }
             let status = self.status(db, paths)?;
             Ok(RelocateOutcome { report, status })
@@ -272,11 +298,16 @@ impl BackupService {
     }
 
     /// Makes a backup now.
-    pub fn backup_now(&self, db: &Database, paths: &AppPaths, now: &str) -> AppResult<BackupInfo> {
+    pub fn backup_now(
+        &self,
+        db: &Database,
+        paths: &AppPaths,
+        now: OffsetDateTime,
+    ) -> AppResult<BackupInfo> {
         self.exclusive(|| {
             let result = db.with(|conn| folder(conn, paths)).and_then(|folder| {
                 self.ensure_reachable(&folder)?;
-                create(db, paths, &folder, BackupKind::Manual, now, true)
+                create(db, paths, &folder, BackupKind::Manual, &self.computer, now)
             });
             self.remember(&result);
             result
@@ -297,25 +328,20 @@ impl BackupService {
                 // (a drive spinning up); a gone drive is refused like everywhere else.
                 let due = {
                     let path = folder.clone();
-                    self.probe.run_for(&folder, MANIFEST_READ_TIMEOUT, move || {
+                    let computer = self.computer.clone();
+                    self.probe.run_for(&folder, self.manifest_timeout, move || {
                         match folder_state(&path) {
                             FolderState::Unavailable => None,
-                            FolderState::Present | FolderState::Missing => Some(is_due(&path, now)),
+                            FolderState::Present | FolderState::Missing => {
+                                Some(is_due(&path, &computer, now))
+                            }
                         }
                     })
                 }
                 .flatten()
                 .ok_or_else(folder_unavailable)?;
                 if due {
-                    create(
-                        db,
-                        paths,
-                        &folder,
-                        BackupKind::Backup,
-                        &crate::clock::format(now),
-                        true,
-                    )
-                    .map(Some)
+                    create(db, paths, &folder, BackupKind::Backup, &self.computer, now).map(Some)
                 } else {
                     Ok(None)
                 }
@@ -330,25 +356,34 @@ impl BackupService {
         self.exclusive(|| datafile::export(db, paths, dest, now))
     }
 
-    /// Replaces the local data with a data file's. See [`datafile::import`]. `ready` runs first,
-    /// like in [`Self::restore`].
+    /// Replaces the local data with a data file's. `ready` runs first, like in [`Self::restore`].
     pub fn import(
         &self,
         db: &Database,
         paths: &AppPaths,
         file: &Path,
-        now: &str,
+        now: OffsetDateTime,
         ready: impl FnOnce() -> AppResult<()>,
     ) -> AppResult<()> {
         self.exclusive(|| {
             ready()?;
             let folder = db.with(|conn| folder(conn, paths))?;
             self.ensure_reachable(&folder)?;
-            datafile::import(db, paths, &folder, file, now)
+            let staging = tempfile::tempdir()?;
+            datafile::unpack(file, staging.path())?;
+            restore::replace_data(
+                db,
+                paths,
+                &folder,
+                staging.path(),
+                &self.computer,
+                now,
+                self.cleanup,
+            )
         })
     }
 
-    /// Restores the backup (or safety backup) called `name`. See [`restore`]. `ready` runs
+    /// Restores the backup (or safety backup) called `name`. `ready` runs
     /// first, once nothing else is backing up, and can refuse (for example while an AI job
     /// that writes to the database is running).
     pub fn restore(
@@ -356,15 +391,45 @@ impl BackupService {
         db: &Database,
         paths: &AppPaths,
         name: &str,
-        now: &str,
+        now: OffsetDateTime,
         ready: impl FnOnce() -> AppResult<()>,
     ) -> AppResult<()> {
         self.exclusive(|| {
             ready()?;
             let folder = db.with(|conn| folder(conn, paths))?;
             self.ensure_reachable(&folder)?;
-            restore(db, paths, name, now)
+            restore::restore(db, paths, &folder, name, &self.computer, now, self.cleanup)
         })
+    }
+}
+
+pub(super) struct RelocationPlan {
+    old: PathBuf,
+    new: PathBuf,
+    names: Vec<String>,
+    left_alone: u32,
+}
+
+impl RelocationPlan {
+    pub(super) fn execute(
+        &self,
+        mode: Relocation,
+        turn: relocate::Turn<'_>,
+    ) -> AppResult<relocate::RelocateReport> {
+        let mut report = relocate::relocate(&self.old, &self.new, &self.names, mode, turn)?;
+        report.left_alone = self.left_alone;
+        Ok(report)
+    }
+
+    fn is_current(&self, db: &Database, paths: &AppPaths) -> bool {
+        let current = db.with(|conn| {
+            Ok((
+                folder(conn, paths)?,
+                get_setting::<String>(conn, SettingKey::BackupLeftBehind)?,
+            ))
+        });
+        matches!(current, Ok((folder, Some(stored)))
+            if same_folder(&folder, &self.new) && stored == self.old.display().to_string())
     }
 }
 

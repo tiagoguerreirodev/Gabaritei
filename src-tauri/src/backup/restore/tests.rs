@@ -1,6 +1,37 @@
 use super::*;
 use crate::backup::fixtures::*;
 
+fn restore_fixture(f: &Fixture, name: &str, now: &str) -> AppResult<()> {
+    BackupService::default().restore(&f.db, &f.paths, name, instant(now), || Ok(()))
+}
+
+#[test]
+fn a_cleanup_failure_keeps_the_live_database() {
+    let f = fixture();
+    add_question(&f.db, "q-1");
+    let info = backup(&f, "2026-11-19T10:00:00.000Z");
+    add_question(&f.db, "q-2");
+    let service = BackupService::with_cleanup(|conn| {
+        conn.execute("DELETE FROM questions", [])?;
+        Err(AppError::Invalid(
+            "Revisões não puderam ser reconstruídas.".into(),
+        ))
+    });
+
+    let error = service
+        .restore(
+            &f.db,
+            &f.paths,
+            &info.name,
+            instant("2026-11-19T11:00:00.000Z"),
+            || Ok(()),
+        )
+        .unwrap_err();
+
+    assert_eq!(error.to_string(), "Revisões não puderam ser reconstruídas.");
+    assert_eq!(question_ids(&f.db), ["q-1", "q-2"]);
+}
+
 #[test]
 fn a_consistent_backup_restores_the_answers_and_passes_the_integrity_check() {
     let f = fixture();
@@ -17,7 +48,7 @@ fn a_consistent_backup_restores_the_answers_and_passes_the_integrity_check() {
     .unwrap();
     add_question(&f.db, "q-3");
 
-    restore(&f.db, &f.paths, &info.name, "2026-11-19T11:00:00.000Z").unwrap();
+    restore_fixture(&f, &info.name, "2026-11-19T11:00:00.000Z").unwrap();
 
     assert_eq!(question_ids(&f.db), ["q-1", "q-2"]);
     f.db.with(|conn| {
@@ -42,7 +73,7 @@ fn a_page_size_mismatch_is_refused_before_the_safety_backup_so_nothing_changes()
     change_page_size(&folder, &info.name);
     add_question(&f.db, "q-2");
 
-    let error = restore(&f.db, &f.paths, &info.name, "2026-11-19T11:00:00.000Z").unwrap_err();
+    let error = restore_fixture(&f, &info.name, "2026-11-19T11:00:00.000Z").unwrap_err();
 
     assert!(matches!(error, AppError::Invalid(_)), "{error:?}");
     assert!(error.to_string().contains("Nada foi alterado"));
@@ -65,8 +96,8 @@ fn changing_the_folder_reports_the_backups_left_in_the_old_one() {
         &f.paths,
         &old,
         BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        true,
+        &Computer::default(),
+        instant("2026-11-19T10:00:00.000Z"),
     )
     .unwrap();
     create(
@@ -74,8 +105,8 @@ fn changing_the_folder_reports_the_backups_left_in_the_old_one() {
         &f.paths,
         &old,
         BackupKind::Safety,
-        "2026-11-19T11:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T11:00:00.000Z"),
     )
     .unwrap();
     let elsewhere = f._dir.path().join("synced");
@@ -93,11 +124,10 @@ fn changing_the_folder_reports_the_backups_left_in_the_old_one() {
     );
     assert_eq!(
         status.left_behind,
-        Some(LeftBehind {
+        Some(LeftBehind::Available {
             folder: old.display().to_string(),
             backups: 2,
             safety: 1,
-            unavailable: false,
         })
     );
     // Nothing was moved or deleted.
@@ -124,7 +154,7 @@ fn restoring_makes_a_safety_backup_of_what_it_replaces() {
     let info = backup(&f, "2026-11-19T10:00:00.000Z");
     add_question(&f.db, "q-2");
 
-    restore(&f.db, &f.paths, &info.name, "2026-11-19T11:00:00.000Z").unwrap();
+    restore_fixture(&f, &info.name, "2026-11-19T11:00:00.000Z").unwrap();
 
     let all = list(&default_folder(&f.paths));
     let safety = all
@@ -133,7 +163,7 @@ fn restoring_makes_a_safety_backup_of_what_it_replaces() {
         .expect("a safety backup exists");
     assert_eq!(safety.name, "safety-20261119-110000-000");
     // Restoring the safety backup brings the replaced data back.
-    restore(&f.db, &f.paths, &safety.name, "2026-11-19T12:00:00.000Z").unwrap();
+    restore_fixture(&f, &safety.name, "2026-11-19T12:00:00.000Z").unwrap();
     assert_eq!(question_ids(&f.db), ["q-1", "q-2"]);
 }
 
@@ -153,7 +183,7 @@ fn a_corrupt_backup_changes_nothing() {
     bytes[last] ^= 0xFF;
     fs::write(&database, bytes).unwrap();
 
-    let error = restore(&f.db, &f.paths, &info.name, "2026-11-19T11:00:00.000Z").unwrap_err();
+    let error = restore_fixture(&f, &info.name, "2026-11-19T11:00:00.000Z").unwrap_err();
     assert!(error.to_string().contains("corrompidos"), "{error}");
     assert_eq!(question_ids(&f.db), ["q-1", "q-2"]);
     assert!(
@@ -224,7 +254,7 @@ fn a_database_with_another_schema_is_rejected_before_anything_changes() {
         add_question(&f.db, "q-2");
         let folder = default_folder(&f.paths);
 
-        let error = restore(&f.db, &f.paths, &info.name, "2026-11-19T11:00:00.000Z").unwrap_err();
+        let error = restore_fixture(&f, &info.name, "2026-11-19T11:00:00.000Z").unwrap_err();
 
         assert!(
             error.to_string().contains("Nada foi alterado"),
@@ -266,7 +296,7 @@ fn restore_only_accepts_backup_names() {
         "backup-20261119-100000-00x",
         "",
     ] {
-        assert!(restore(&f.db, &f.paths, name, "2026-11-19T11:00:00.000Z").is_err());
+        assert!(restore_fixture(&f, name, "2026-11-19T11:00:00.000Z").is_err());
     }
 }
 
@@ -315,7 +345,7 @@ fn a_restore_still_puts_every_image_in_its_safety_backup() {
     let info = backup(&f, "2026-11-19T10:00:00.000Z");
     let extra = "fedcba9876543210fedcba98.png";
     fs::write(f.paths.images_dir().join(extra), b"extra").unwrap();
-    restore(&f.db, &f.paths, &info.name, "2026-11-19T11:00:00.000Z").unwrap();
+    restore_fixture(&f, &info.name, "2026-11-19T11:00:00.000Z").unwrap();
     let safety = default_folder(&f.paths).join("safety-20261119-110000-000");
     assert_eq!(
         fs::read(safety.join("images").join(extra)).unwrap(),
@@ -356,7 +386,7 @@ fn images_are_backed_up_and_come_back() {
     );
 
     fs::remove_file(f.paths.images_dir().join(IMAGE)).unwrap();
-    restore(&f.db, &f.paths, &info.name, "2026-11-19T11:00:00.000Z").unwrap();
+    restore_fixture(&f, &info.name, "2026-11-19T11:00:00.000Z").unwrap();
     assert_eq!(
         fs::read(f.paths.images_dir().join(IMAGE)).unwrap(),
         b"png bytes"
@@ -415,7 +445,7 @@ fn restoring_keeps_this_computers_own_settings() {
         elsewhere.path().join(&info.name),
     )
     .unwrap();
-    restore(&f.db, &f.paths, &info.name, "2026-11-19T11:00:00.000Z").unwrap();
+    restore_fixture(&f, &info.name, "2026-11-19T11:00:00.000Z").unwrap();
 
     f.db.with(|conn| {
         assert_eq!(
@@ -466,7 +496,7 @@ fn restoring_rebuilds_reviews_from_the_restored_answers() {
     })
     .unwrap();
     let info = backup(&f, "2026-11-19T10:00:00.000Z");
-    restore(&f.db, &f.paths, &info.name, "2026-11-19T11:00:00.000Z").unwrap();
+    restore_fixture(&f, &info.name, "2026-11-19T11:00:00.000Z").unwrap();
     let reviews: i64 = f
         .db
         .with(|conn| Ok(conn.query_row("SELECT COUNT(*) FROM review_state", [], |r| r.get(0))?))

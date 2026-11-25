@@ -5,18 +5,16 @@ use time::macros::datetime;
 #[test]
 fn old_style_backups_of_this_computer_are_moved_with_the_rest() {
     let f = fixture();
-    let service = BackupService::default();
+    let service = service_for(computer("Máquina"));
     let old = default_folder(&f.paths);
-    as_computer("m-quina");
-    backup(&f, "2026-11-19T10:00:00.000Z");
-    as_computer("laptop");
-    backup(&f, "2026-11-19T11:00:00.000Z");
-    as_computer("maquina");
-    PREVIOUS.with(|tag| *tag.borrow_mut() = Some("m-quina".to_owned()));
+    backup_for(&f, &computer("m-quina"), "2026-11-19T10:00:00.000Z");
+    backup_for(&f, &computer("laptop"), "2026-11-19T11:00:00.000Z");
     let new = f._dir.path().join("new");
     service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
 
-    let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+    let outcome = service
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
+        .unwrap();
 
     assert_eq!((outcome.report.removed, outcome.report.left_alone), (1, 1));
     assert_eq!(list(&new).len(), 1);
@@ -32,7 +30,7 @@ fn each_backup_is_moved_in_its_own_turn_and_a_refused_turn_stops_the_rest() {
     assert_eq!(names.len(), 2);
 
     let turns = std::cell::Cell::new(0);
-    let report = relocate::relocate(&old, &new, &names, true, &|work| {
+    let report = relocate::relocate(&old, &new, &names, Relocation::Move, &|work| {
         turns.set(turns.get() + 1);
         // The second turn is refused (say the folder changed meanwhile).
         if turns.get() == 1 {
@@ -56,7 +54,7 @@ fn changing_the_folder_between_two_backups_stops_the_move_and_keeps_the_rest() {
     let turns = std::cell::Cell::new(0);
 
     let outcome = service
-        .relocate_with(&f.db, &f.paths, true, &|| {
+        .relocate_with(&f.db, &f.paths, Relocation::Move, &|| {
             turns.set(turns.get() + 1);
             if turns.get() == 1 {
                 // Between the first backup and the second.
@@ -73,7 +71,9 @@ fn changing_the_folder_between_two_backups_stops_the_move_and_keeps_the_rest() {
     assert!(list(&third).is_empty());
     // The change made meanwhile decided what is offered: the old folder (`new` here) is
     // the one with the moved backup, and the notice was not overwritten by the move.
-    let left = outcome.status.left_behind.map(|left| left.folder);
+    let left = outcome.status.left_behind.map(|left| match left {
+        LeftBehind::Available { folder, .. } | LeftBehind::Unavailable { folder } => folder,
+    });
     assert_eq!(left, Some(new.display().to_string()));
 }
 
@@ -85,9 +85,10 @@ fn a_second_relocation_is_refused_while_one_runs_and_allowed_after_it() {
     let refused = std::cell::RefCell::new(None);
 
     let outcome = service
-        .relocate_with(&f.db, &f.paths, true, &|| {
+        .relocate_with(&f.db, &f.paths, Relocation::Move, &|| {
             if refused.borrow().is_none() {
-                *refused.borrow_mut() = Some(service.relocate_left_behind(&f.db, &f.paths, true));
+                *refused.borrow_mut() =
+                    Some(service.relocate_left_behind(&f.db, &f.paths, Relocation::Move));
             }
         })
         .unwrap();
@@ -102,7 +103,11 @@ fn a_second_relocation_is_refused_while_one_runs_and_allowed_after_it() {
     assert_eq!((outcome.report.removed, outcome.report.failed), (2, 0));
     // The flag is released when the first one ends, even if it fails.
     assert!(!service.relocating.load(Ordering::Acquire));
-    assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
+    assert!(
+        service
+            .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
+            .is_err()
+    );
     assert!(!service.relocating.load(Ordering::Acquire));
 }
 
@@ -118,7 +123,11 @@ fn a_missing_new_folder_inside_the_old_one_is_still_refused_and_not_created() {
         .unwrap();
     fs::remove_dir_all(old.join("sub")).unwrap();
 
-    assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
+    assert!(
+        service
+            .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
+            .is_err()
+    );
 
     assert!(
         !old.join("sub").exists(),
@@ -151,7 +160,7 @@ fn a_new_folder_behind_a_dangling_link_into_the_old_one_is_refused() {
     .unwrap();
 
     let error = service
-        .relocate_left_behind(&f.db, &f.paths, true)
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
         .unwrap_err();
     assert!(
         error
@@ -247,7 +256,7 @@ fn a_backup_can_finish_while_the_chosen_folder_is_being_checked() {
 
         let (done, backup) = mpsc::channel();
         scope.spawn(move || {
-            let result = service.backup_now(&f.db, &f.paths, "2026-11-19T10:00:00.000Z");
+            let result = service.backup_now(&f.db, &f.paths, instant("2026-11-19T10:00:00.000Z"));
             let _ = done.send(result);
         });
         backup
@@ -258,7 +267,9 @@ fn a_backup_can_finish_while_the_chosen_folder_is_being_checked() {
 
         let status = change.join().unwrap().unwrap();
         let left = status.left_behind.unwrap();
-        assert_eq!((left.folder, left.backups), (old.display().to_string(), 1));
+        assert!(
+            matches!(left, LeftBehind::Available { folder, backups: 1, .. } if folder == old.display().to_string())
+        );
     });
 }
 
@@ -275,8 +286,12 @@ fn an_old_folder_that_does_not_answer_is_offered_as_unavailable_without_blocking
         .unwrap()
         .left_behind
         .unwrap();
-    assert!(notice.unavailable);
-    assert_eq!(notice.folder, old.display().to_string());
+    assert_eq!(
+        notice,
+        LeftBehind::Unavailable {
+            folder: old.display().to_string()
+        }
+    );
 
     // Changing the folder while the folder being left (`new` now) doesn't answer keeps the
     // offer for it (as unavailable) instead of losing it.
@@ -286,10 +301,14 @@ fn an_old_folder_that_does_not_answer_is_offered_as_unavailable_without_blocking
         .change_folder(&f.db, &f.paths, Some(&third))
         .unwrap();
     let left = status.left_behind.unwrap();
-    assert!(left.unavailable);
-    assert_eq!(left.folder, new.display().to_string());
+    assert_eq!(
+        left,
+        LeftBehind::Unavailable {
+            folder: new.display().to_string()
+        }
+    );
     let error = service
-        .relocate_left_behind(&f.db, &f.paths, true)
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
         .unwrap_err();
     assert!(error.to_string().contains("não está acessível"), "{error}");
 }
@@ -305,12 +324,14 @@ fn a_folder_that_stops_answering_after_a_move_keeps_the_offer() {
     fs::remove_file(old.join(&broken).join(snapshot::MANIFEST_FILE)).unwrap();
 
     let outcome = service
-        .relocate_with(&f.db, &f.paths, true, &|| service.probe.mark_stuck(&old))
+        .relocate_with(&f.db, &f.paths, Relocation::Move, &|| {
+            service.probe.mark_stuck(&old)
+        })
         .unwrap();
 
     assert_eq!(outcome.report.failed, 1);
     let left = outcome.status.left_behind.expect("the offer stays");
-    assert!(left.unavailable);
+    assert!(matches!(left, LeftBehind::Unavailable { .. }));
 }
 
 #[test]
@@ -332,7 +353,7 @@ fn a_current_folder_that_does_not_answer_shows_as_unavailable_and_blocks_nothing
     let status = service.status(&f.db, &f.paths).unwrap();
     assert_eq!(status.listing, BackupListing::FolderUnavailable);
     // Nothing that takes the backup lock waits on the folder: each is refused at once.
-    let now = "2026-11-19T12:00:00.000Z";
+    let now = instant("2026-11-19T12:00:00.000Z");
     let errors = [
         service.backup_now(&f.db, &f.paths, now).unwrap_err(),
         service
@@ -372,7 +393,7 @@ fn a_new_folder_that_does_not_answer_stops_the_relocation_before_it_creates_anyt
     service.probe.mark_stuck(&new);
 
     let error = service
-        .relocate_left_behind(&f.db, &f.paths, true)
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
         .unwrap_err();
 
     assert!(error.to_string().contains("não está acessível"), "{error}");
@@ -396,7 +417,7 @@ fn stuck_manifests_report_a_slow_list_while_backups_keep_working() {
         .unwrap()
         .expect("a daily backup was due");
     let manual = service
-        .backup_now(&f.db, &f.paths, "2026-11-19T11:00:00.000Z")
+        .backup_now(&f.db, &f.paths, instant("2026-11-19T11:00:00.000Z"))
         .unwrap();
     assert_eq!(
         service.status(&f.db, &f.paths).unwrap().listing,
@@ -417,7 +438,7 @@ fn a_copy_that_failed_for_some_backups_can_be_tried_again() {
     fs::create_dir_all(new.join(&blocked)).unwrap();
 
     let first = service
-        .relocate_left_behind(&f.db, &f.paths, false)
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Copy)
         .unwrap();
     assert_eq!((first.report.copied, first.report.failed), (1, 1));
     assert!(
@@ -427,7 +448,7 @@ fn a_copy_that_failed_for_some_backups_can_be_tried_again() {
 
     fs::remove_dir_all(new.join(&blocked)).unwrap();
     let second = service
-        .relocate_left_behind(&f.db, &f.paths, false)
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Copy)
         .unwrap();
     assert_eq!(second.report.failed, 0);
     assert_eq!(second.status.left_behind, None, "done: nothing failed");
@@ -441,7 +462,7 @@ fn copying_the_left_behind_backups_keeps_the_originals() {
     let (old, new) = make_left_behind(&f, &service);
 
     let outcome = service
-        .relocate_left_behind(&f.db, &f.paths, false)
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Copy)
         .unwrap();
 
     assert_eq!(outcome.report.copied, 2);
@@ -461,7 +482,11 @@ fn copying_the_left_behind_backups_keeps_the_originals() {
         snapshot::verify(&new.join(&info.name)).unwrap();
     }
     // The notice is gone, so there is nothing more to move.
-    assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
+    assert!(
+        service
+            .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
+            .is_err()
+    );
 }
 
 #[test]
@@ -470,7 +495,9 @@ fn moving_deletes_each_original_only_after_its_copy_is_verified() {
     let service = BackupService::default();
     let (old, new) = make_left_behind(&f, &service);
 
-    let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+    let outcome = service
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
+        .unwrap();
 
     assert_eq!(outcome.report.copied, 2);
     assert_eq!(outcome.report.removed, 2);
@@ -495,7 +522,9 @@ fn a_backup_that_does_not_verify_after_copying_keeps_its_original() {
     )
     .unwrap();
 
-    let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+    let outcome = service
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
+        .unwrap();
 
     assert_eq!(outcome.report.copied, 1);
     assert_eq!(outcome.report.removed, 1);
@@ -513,11 +542,10 @@ fn a_backup_that_does_not_verify_after_copying_keeps_its_original() {
     // What is still in the old folder is reported, and can be tried again.
     assert_eq!(
         outcome.status.left_behind,
-        Some(LeftBehind {
+        Some(LeftBehind::Available {
             folder: old.display().to_string(),
             backups: 1,
             safety: 1,
-            unavailable: false,
         })
     );
 }
@@ -528,13 +556,15 @@ fn a_backup_already_in_the_new_folder_is_not_copied_again_but_can_be_removed() {
     let service = BackupService::default();
     let (old, new) = make_left_behind(&f, &service);
     service
-        .relocate_left_behind(&f.db, &f.paths, false)
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Copy)
         .unwrap();
     // The copy exists and the notice is gone: go to the default folder and back to get the
     // notice for the originals again.
     service.change_folder(&f.db, &f.paths, None).unwrap();
     service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
-    let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+    let outcome = service
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
+        .unwrap();
     assert_eq!(outcome.report.copied, 0);
     assert_eq!(outcome.report.already_there, 2);
     assert_eq!(outcome.report.removed, 2);
@@ -552,8 +582,8 @@ fn a_different_backup_with_the_same_name_is_never_overwritten_or_removed() {
         &f.paths,
         &old,
         BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T10:00:00.000Z"),
     )
     .unwrap();
     let new = f._dir.path().join("synced");
@@ -564,13 +594,15 @@ fn a_different_backup_with_the_same_name_is_never_overwritten_or_removed() {
         &f.paths,
         &new,
         BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T10:00:00.000Z"),
     )
     .unwrap();
     service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
 
-    let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+    let outcome = service
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
+        .unwrap();
 
     assert_eq!(outcome.report.failed, 1);
     assert_eq!(outcome.report.removed, 0);
@@ -588,8 +620,8 @@ fn moving_into_the_same_physical_folder_never_deletes_the_only_copy() {
         &f.paths,
         &old,
         BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T10:00:00.000Z"),
     )
     .unwrap();
     // Another spelling of the same folder.
@@ -600,7 +632,7 @@ fn moving_into_the_same_physical_folder_never_deletes_the_only_copy() {
         &old,
         &alias,
         std::slice::from_ref(&info.name),
-        true,
+        Relocation::Move,
         &|work| work(),
     )
     .unwrap();
@@ -620,8 +652,8 @@ fn a_new_folder_inside_the_old_one_is_refused() {
         &f.paths,
         &old,
         BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T10:00:00.000Z"),
     )
     .unwrap();
     let inside = old.join(&info.name).join("sub");
@@ -638,32 +670,16 @@ fn a_new_folder_inside_the_old_one_is_refused() {
 #[test]
 fn another_computers_backups_are_left_where_they_are() {
     let f = fixture();
-    let service = BackupService::default();
+    let service = service_for(computer("desktop"));
     let old = default_folder(&f.paths);
-    as_computer("laptop");
-    let theirs = create(
-        &f.db,
-        &f.paths,
-        &old,
-        BackupKind::Backup,
-        "2026-11-19T09:00:00.000Z",
-        false,
-    )
-    .unwrap();
-    as_computer("desktop");
-    create(
-        &f.db,
-        &f.paths,
-        &old,
-        BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
-    )
-    .unwrap();
+    let theirs = backup_for(&f, &computer("laptop"), "2026-11-19T09:00:00.000Z");
+    backup_for(&f, &service.computer, "2026-11-19T10:00:00.000Z");
     let new = f._dir.path().join("synced");
     service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
 
-    let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+    let outcome = service
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
+        .unwrap();
 
     assert_eq!(outcome.report.removed, 1);
     assert_eq!(outcome.report.left_alone, 1);
@@ -675,33 +691,17 @@ fn another_computers_backups_are_left_where_they_are() {
 #[test]
 fn untagged_backups_are_not_ours_to_move_on_a_tagged_computer() {
     let f = fixture();
-    let service = BackupService::default();
+    let service = service_for(computer("desktop"));
     let old = default_folder(&f.paths);
     // Made before tags existed (or by a computer without a tag): it can't be told whose.
-    TAG.with(|tag| *tag.borrow_mut() = Some(None));
-    let untagged = create(
-        &f.db,
-        &f.paths,
-        &old,
-        BackupKind::Backup,
-        "2026-11-19T09:00:00.000Z",
-        false,
-    )
-    .unwrap();
-    as_computer("desktop");
-    create(
-        &f.db,
-        &f.paths,
-        &old,
-        BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
-    )
-    .unwrap();
+    let untagged = backup(&f, "2026-11-19T09:00:00.000Z");
+    backup_for(&f, &service.computer, "2026-11-19T10:00:00.000Z");
     let new = f._dir.path().join("synced");
     service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
 
-    let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+    let outcome = service
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
+        .unwrap();
 
     assert_eq!(outcome.report.removed, 1);
     assert_eq!(outcome.report.left_alone, 1);
@@ -724,8 +724,8 @@ fn a_link_inside_a_backup_is_never_followed_and_extra_files_are_not_copied() {
         &f.paths,
         &old,
         BackupKind::Backup,
-        "2026-11-19T10:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T10:00:00.000Z"),
     )
     .unwrap();
     let dir = old.join(&info.name);
@@ -733,7 +733,7 @@ fn a_link_inside_a_backup_is_never_followed_and_extra_files_are_not_copied() {
     let new = f._dir.path().join("synced");
     service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
     let outcome = service
-        .relocate_left_behind(&f.db, &f.paths, false)
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Copy)
         .unwrap();
     assert_eq!(outcome.report.copied, 1);
     assert!(!new.join(&info.name).join("notes.txt").exists());
@@ -744,8 +744,8 @@ fn a_link_inside_a_backup_is_never_followed_and_extra_files_are_not_copied() {
         &f.paths,
         &old,
         BackupKind::Backup,
-        "2026-11-19T11:00:00.000Z",
-        false,
+        &Computer::default(),
+        instant("2026-11-19T11:00:00.000Z"),
     )
     .unwrap();
     let db_file = old.join(&other.name).join("gabaritei.sqlite");
@@ -754,7 +754,9 @@ fn a_link_inside_a_backup_is_never_followed_and_extra_files_are_not_copied() {
     std::os::unix::fs::symlink(&real, &db_file).unwrap();
     service.change_folder(&f.db, &f.paths, None).unwrap();
     service.change_folder(&f.db, &f.paths, Some(&new)).unwrap();
-    let outcome = service.relocate_left_behind(&f.db, &f.paths, true).unwrap();
+    let outcome = service
+        .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
+        .unwrap();
     assert_eq!(outcome.report.failed, 1);
     assert!(old.join(&other.name).is_dir());
 }

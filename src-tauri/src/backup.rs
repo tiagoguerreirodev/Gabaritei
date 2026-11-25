@@ -1,17 +1,13 @@
 //! Daily automatic backups and restore (spec §3.6); the export/import data file (#24) builds on
 //! the same snapshots.
 //!
-//! A backup is a folder `backup-<UTC time>-<computer tag>` (see [`computer_tag`]; the tag is
+//! A backup is a folder `backup-<UTC time>-<computer tag>` (see [`Computer`]; the tag is
 //! missing in names made before tags existed, or when the host name gives none) in the backup
 //! folder, holding a consistent copy of the database, the images and a manifest of sha256
 //! hashes (see [`snapshot`]). It is written to a hidden temporary folder and renamed, so a crash never leaves a half-written backup
 //! that looks complete. The newest 7 are kept. Before a restore replaces anything, a
 //! `safety-<UTC time>-<tag>` backup of the current data is made; the newest 5 of those are
 //! kept. Each computer rotates only the backups with its own tag.
-
-pub mod datafile;
-pub mod relocate;
-pub mod snapshot;
 
 use crate::sync::lock;
 use std::collections::HashMap;
@@ -30,24 +26,29 @@ use crate::db::{Database, SettingKey, get_setting, set_setting};
 use crate::error::{AppError, AppResult};
 use crate::paths::AppPaths;
 mod computer;
+mod datafile;
 #[cfg(test)]
 mod fixtures;
 mod folder;
 mod left_behind;
 mod name;
 mod probe;
+mod relocate;
 mod restore;
 mod rotation;
 mod service;
+mod snapshot;
 
-pub use computer::*;
+pub use computer::Computer;
+use computer::MAX_TAG;
+pub(crate) use datafile::{EXTENSION as DATA_FILE_EXTENSION, file_name as data_file_name};
 pub use folder::*;
 use left_behind::*;
 use name::*;
 use probe::*;
-pub use restore::*;
+pub use relocate::{RelocateReport, Relocation};
 use rotation::*;
-pub use service::*;
+pub use service::{BackupService, RestoreCleanup};
 
 /// Settings that describe this computer. Restoring or importing data from another computer
 /// must not overwrite them.
@@ -101,7 +102,7 @@ pub struct BackupInfo {
     /// Folder name; identifies the backup in `backup_restore`.
     pub name: String,
     pub kind: BackupKind,
-    /// The computer tag in the name (see [`computer_tag`]); none for backups made before tags.
+    /// The computer tag in the name (see [`Computer`]); none for backups made before tags.
     pub computer: Option<String>,
     /// Whether the backup was made by another computer (a tagged one with another tag). Such
     /// backups can be restored but are never deleted by this computer's rotation.
@@ -145,17 +146,17 @@ pub enum BackupListing {
 /// moved, so they no longer show in the list, and safety backups among them can no longer be
 /// used to undo an import or restore from here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(tag = "state", rename_all = "camelCase")]
 #[ts(export)]
-pub struct LeftBehind {
-    pub folder: String,
-    pub backups: u32,
-    /// How many of them are safety backups ("antes de restaurar").
-    pub safety: u32,
-    /// The old folder can't be read now (a drive that is unplugged, a share that is offline, a
-    /// folder that was deleted). The offer is kept, since the drive may come back, but there is
-    /// nothing to count or move: the user can only dismiss it.
-    pub unavailable: bool,
+pub enum LeftBehind {
+    Available {
+        folder: String,
+        backups: u32,
+        safety: u32,
+    },
+    Unavailable {
+        folder: String,
+    },
 }
 
 /// What copying or moving the backups of the old folder did, and the status afterwards.
@@ -163,7 +164,7 @@ pub struct LeftBehind {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct RelocateOutcome {
-    pub report: relocate::RelocateReport,
+    pub report: RelocateReport,
     /// The new folder's status. `left_behind` is what a *move* could not take out of the old
     /// folder; a copy leaves the originals on purpose and reports nothing.
     pub status: BackupStatus,

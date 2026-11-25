@@ -1,5 +1,5 @@
 import { A, useNavigate, useSearchParams } from "@solidjs/router";
-import { For, Show, createEffect, createResource, createSignal, on } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal } from "solid-js";
 import { createAction } from "../actions";
 import { api } from "../api";
 import type { DraftSummary } from "../bindings/DraftSummary";
@@ -9,7 +9,7 @@ import ConfirmModal from "../components/ConfirmModal";
 import RichText from "../components/RichText";
 import { InlineError, ResourceView } from "../components/states";
 import { showToast } from "../components/toasts";
-import { generationStatus, refreshWaitingDrafts } from "../generation";
+import { generationRunRevision, refreshWaitingDrafts } from "../generation";
 import { agentLabels, effortLabels } from "../labels";
 import { formatDuration, formatNumber, optionLetters } from "../format";
 
@@ -38,7 +38,8 @@ export default function ReviewPackage() {
 }
 
 function WaitingList() {
-  const [drafts, { refetch }] = createResource(() => api.draftsWaiting());
+  const runRevision = createMemo(generationRunRevision);
+  const [drafts, { refetch }] = createResource(runRevision, () => api.draftsWaiting());
   return (
     <ResourceView
       value={drafts()?.length ? drafts() : undefined}
@@ -78,17 +79,10 @@ function WaitingList() {
 }
 
 function Package(props: { id: string }) {
+  const runRevision = createMemo(generationRunRevision);
   const [summary, { refetch }] = createResource(
-    () => props.id,
-    (id) => api.draftSummary(id),
-  );
-  // A check that was running ends (or a retry finishes): show the new verdicts.
-  createEffect(
-    on(
-      () => generationStatus()?.running,
-      () => void refetch(),
-      { defer: true },
-    ),
+    () => ({ id: props.id, runRevision: runRevision() }),
+    ({ id }) => api.draftSummary(id),
   );
   return (
     <ResourceView
@@ -106,6 +100,7 @@ function Package(props: { id: string }) {
 function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
   const navigate = useNavigate();
   const { active: busy, run } = createAction();
+  const [requestingCheck, setRequestingCheck] = createSignal(false);
   const [onlyFlagged, setOnlyFlagged] = createSignal(false);
   const [expanded, setExpanded] = createSignal<ReadonlySet<number>>(new Set());
   const [confirmingDiscard, setConfirmingDiscard] = createSignal(false);
@@ -127,10 +122,8 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
     const { id, needsCheck } = s();
     const onChanged = props.onChanged;
     return run(async () => {
-      if (needsCheck) {
-        showToast("Conferindo as questões que faltavam. A importação segue sozinha.");
-      }
-      const outcome = await api.draftImportAll(id);
+      setRequestingCheck(needsCheck);
+      const outcome = await api.draftImportAll(id).finally(() => setRequestingCheck(false));
       if (outcome.kind === "pending") {
         onChanged();
         showToast(outcome.message);
@@ -359,6 +352,9 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
           </p>
         }
       >
+        <Show when={requestingCheck() && !checking()}>
+          <p role="status">Solicitando conferência e importação…</p>
+        </Show>
         <div class="review-actions">
           <button
             type="button"

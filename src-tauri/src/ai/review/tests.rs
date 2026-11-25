@@ -581,6 +581,80 @@ fn a_checked_draft_imports_every_question_without_running_the_checker_again() {
 }
 
 #[test]
+fn a_whole_draft_import_refuses_to_check_while_the_generation_slot_is_held() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = draft_of("d1", vec![question("q1", "a")], None);
+    insert(&db, &draft);
+    let manager = GenerationManager::default();
+
+    manager
+        .run_check_then_import(
+            NOW.into(),
+            |_, _| {
+                let error = import_all(
+                    &db,
+                    files.path(),
+                    &draft.id,
+                    &manager,
+                    || NOW.into(),
+                    |_, _| panic!("the generation slot is occupied"),
+                    |_| {},
+                )
+                .unwrap_err();
+                assert_eq!(
+                    error.to_string(),
+                    "Já existe uma geração em andamento. Espere terminar ou cancele."
+                );
+                Ok(())
+            },
+            |_| {},
+        )
+        .unwrap();
+
+    assert_eq!(summary_of(&db, "d1").status, DraftStatus::Review);
+}
+
+#[test]
+fn a_whole_draft_import_consults_the_check_state_at_write_time() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = mixed(&db);
+    assert!(!summary_of(&db, "d1").needs_check);
+    let first_clock_read = std::cell::Cell::new(true);
+
+    let result = import_all(
+        &db,
+        files.path(),
+        &draft.id,
+        &GenerationManager::default(),
+        || {
+            // A retry completed unsuccessfully after the preview read the old verdicts.
+            if first_clock_read.replace(false) {
+                blind_check::record_failure(&db, &draft.id, "Conferência indisponível.").unwrap();
+            }
+            NOW.into()
+        },
+        |_, _| {
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM questions"), 0);
+            blind_check::record_failure(&db, &draft.id, "A conferência falhou de novo.")
+        },
+        |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(
+        result,
+        ImportAllOutcome::Pending {
+            message:
+                "A conferência não terminou: A conferência falhou de novo. Nada foi importado."
+                    .into(),
+        }
+    );
+    assert_eq!(summary_of(&db, "d1").status, DraftStatus::Review);
+}
+
+#[test]
 fn the_generation_slot_stays_held_until_the_checked_draft_is_imported() {
     let db = Database::open_in_memory().unwrap();
     let files = tempfile::tempdir().unwrap();

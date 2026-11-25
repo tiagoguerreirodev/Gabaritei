@@ -35,6 +35,8 @@ const steps: GenerationStatus["stages"] = [
 ];
 const checkSteps = steps.slice(1);
 const idle: GenerationStatus = {
+  revision: 0,
+  runRevision: 0,
   running: false,
   startedAt: null,
   kind: null,
@@ -314,6 +316,8 @@ describe("Gerar", () => {
 
   it("shows progress and a cancel button while a generation runs", async () => {
     const calls = backend({
+      revision: 1,
+      runRevision: 1,
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
@@ -336,6 +340,8 @@ describe("Gerar", () => {
 
   it("marks the current stage of a running generation", async () => {
     backend({
+      revision: 1,
+      runRevision: 1,
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
@@ -398,6 +404,8 @@ describe("Gerar", () => {
 
   it("makes Revisão the current step while a package generates", async () => {
     backend({
+      revision: 1,
+      runRevision: 1,
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
@@ -522,6 +530,8 @@ describe("Gerar", () => {
 describe("Aviso de geração", () => {
   it("shows on every page that a package is being generated", async () => {
     backend({
+      revision: 1,
+      runRevision: 1,
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
@@ -572,6 +582,8 @@ describe("Aviso de geração", () => {
 
   it("keeps the announced text to the stage, not the per-tool label", async () => {
     backend({
+      revision: 1,
+      runRevision: 1,
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
@@ -586,6 +598,8 @@ describe("Aviso de geração", () => {
     renderPage("/outra");
     await screen.findByText(/Gerando um pacote…/);
     applyGenerationStatus({
+      revision: 2,
+      runRevision: 1,
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
@@ -605,6 +619,8 @@ describe("Aviso de geração", () => {
 
   it("stays out of the way on the Gerar page, which shows the progress itself", async () => {
     backend({
+      revision: 1,
+      runRevision: 1,
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
@@ -624,6 +640,8 @@ describe("Aviso de geração", () => {
 
   it("keeps Cancelar in the banner while the Gerar page is loading or failed", async () => {
     const running: GenerationStatus = {
+      revision: 1,
+      runRevision: 1,
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
@@ -647,6 +665,8 @@ describe("Aviso de geração", () => {
 
   it("shows a pending state after Cancelar", async () => {
     const calls = backend({
+      revision: 1,
+      runRevision: 1,
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
@@ -667,6 +687,8 @@ describe("Aviso de geração", () => {
 
   it("asks before cancelling during the check, which discards the draft", async () => {
     const calls = backend({
+      revision: 1,
+      runRevision: 1,
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
@@ -682,6 +704,8 @@ describe("Aviso de geração", () => {
     renderPage("/outra");
     await screen.findByText(/Gerando um pacote…/);
     applyGenerationStatus({
+      revision: 2,
+      runRevision: 1,
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "generate",
@@ -707,6 +731,8 @@ describe("Aviso de geração", () => {
 
   it("words a re-check as a check, and its cancel as keeping the package", async () => {
     backend({
+      revision: 1,
+      runRevision: 1,
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "recheck",
@@ -723,6 +749,8 @@ describe("Aviso de geração", () => {
     expect(screen.queryByText(/Gerando/)).not.toBeInTheDocument();
     applyGenerationStatus({
       ...idle,
+      revision: 2,
+      runRevision: 2,
       outcome: { kind: "cancelled" },
       outcomeKind: "recheck",
     });
@@ -732,6 +760,8 @@ describe("Aviso de geração", () => {
 
   it("says a banner is checking, not generating, during a re-check", async () => {
     backend({
+      revision: 1,
+      runRevision: 1,
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "recheck",
@@ -750,6 +780,8 @@ describe("Aviso de geração", () => {
 
   it("does not ask when a re-check is cancelled, since the draft stays", async () => {
     const calls = backend({
+      revision: 1,
+      runRevision: 1,
       running: true,
       startedAt: "2026-11-20T10:00:00.000Z",
       kind: "recheck",

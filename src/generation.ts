@@ -11,6 +11,7 @@ import type { GenerationStatus } from "./bindings/GenerationStatus";
 const [status, setStatusRaw] = createSignal<GenerationStatus | null>(null);
 const [waiting, setWaiting] = createSignal<DraftListItem[]>([]);
 let watching = false;
+let waitingRequest = 0;
 
 /** The ordered stages the backend reports for the current run. */
 export const generationStages = () => status()?.stages ?? [];
@@ -59,22 +60,29 @@ const [progressPanel, setProgressPanel] = createSignal(false);
 export const generationPanelShown = progressPanel;
 export const setGenerationPanelShown = setProgressPanel;
 
-/** Updates the mirrored status. Exported for tests; the app calls it from `watchGeneration`. */
-export function applyGenerationStatus(next: GenerationStatus | null) {
+/** Updates the mirrored status when the snapshot is newer. Exported for tests. */
+export function applyGenerationStatus(next: GenerationStatus) {
+  const before = untrack(status);
+  if (before && next.revision <= before.revision) return false;
   setStatusRaw(next);
+  return true;
 }
-const setStatus = applyGenerationStatus;
 
 /** The latest known status (`null` until the first read). */
 export const generationStatus = status;
+
+/** Changes when a run starts or finishes, including across an unseen completion. */
+export const generationRunRevision = () => status()?.runRevision ?? 0;
 
 /** The drafts waiting for review. They stay until imported or discarded, unlike `outcome`. */
 export const waitingDrafts = waiting;
 
 /** Reads the drafts waiting for review again. Call after anything that adds or removes one. */
 export async function refreshWaitingDrafts() {
+  const request = ++waitingRequest;
   try {
-    setWaiting(await api.draftsWaiting());
+    const drafts = await api.draftsWaiting();
+    if (request === waitingRequest) setWaiting(drafts);
   } catch {
     // Keep what we had: the banner is a convenience, and the Revisar pacote page reports errors.
   }
@@ -84,26 +92,24 @@ export async function refreshWaitingDrafts() {
 export function watchGeneration() {
   if (watching) return;
   watching = true;
-  // Listen first, then read: an event that arrives before the read answers is newer than it.
-  let sawEvent = false;
-  void refreshWaitingDrafts();
-  // A finished generation adds a draft, and a finished blind check changes its verdicts. The
-  // list only changes when a run starts or ends, not on every progress update.
-  const listening = api.onGenerationStatus((next) => {
-    sawEvent = true;
+  // Listen first to cover transitions during the read. Snapshots may arrive in either order.
+  const update = (next: GenerationStatus) => {
     const before = untrack(status);
-    const changed =
-      before?.running !== next.running || before?.outcome?.kind !== next.outcome?.kind;
-    setStatus(next);
-    if (changed) void refreshWaitingDrafts();
-  });
-  void listening
+    if (
+      applyGenerationStatus(next) &&
+      (before === null || before.runRevision !== next.runRevision)
+    ) {
+      void refreshWaitingDrafts();
+    }
+  };
+  void api
+    .onGenerationStatus(update)
     .catch(() => undefined)
     .then(() => api.generationStatus())
-    .then((initial) => {
-      if (!sawEvent) setStatus(initial);
-    })
-    .catch(() => undefined);
+    .then(update)
+    .catch(() => {
+      if (untrack(status) === null) void refreshWaitingDrafts();
+    });
 }
 
 /** Forgets how the last generation ended, here and in the backend. */
@@ -116,6 +122,7 @@ export async function dismissGeneration() {
 /** For tests: forget everything and allow `watchGeneration` to run again. */
 export function resetGenerationWatch() {
   watching = false;
-  setStatus(null);
+  waitingRequest++;
+  setStatusRaw(null);
   setWaiting([]);
 }

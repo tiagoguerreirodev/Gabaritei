@@ -19,6 +19,8 @@ const draft = (id: string): DraftListItem => ({
 });
 // The outcome was already dismissed (as clicking "Revisar pacote" used to do).
 const idle: GenerationStatus = {
+  revision: 0,
+  runRevision: 0,
   running: false,
   startedAt: null,
   kind: null,

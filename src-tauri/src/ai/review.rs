@@ -351,20 +351,33 @@ pub(crate) fn import_all(
     check: impl FnOnce(&CancelToken, &mut dyn FnMut(Progress)) -> AppResult<()>,
     on_event: impl Fn(&GenerationStatus),
 ) -> AppResult<ImportAllOutcome> {
-    let needs_check = db.with(|conn| {
-        let (draft, states) = waiting_draft(conn, id)?;
-        if states.needs_check() && !check_draft(conn, &draft)?.problems.is_empty() {
-            return Err(import_problems());
+    let started_at = now();
+    let already_checked = db.transaction(|tx| {
+        let (draft, states) = waiting_draft(tx, id)?;
+        let check = check_draft(tx, &draft)?;
+        if states.needs_check() {
+            if !check.problems.is_empty() {
+                return Err(import_problems());
+            }
+            return Ok(None);
         }
-        Ok(states.needs_check())
+        write_import(
+            tx,
+            &draft,
+            &states.lines,
+            &check,
+            ImportMode::All,
+            &started_at,
+        )
+        .map(Some)
     })?;
-    if !needs_check {
-        let result = import(db, files_dir, id, ImportMode::All, &now())?;
+    if let Some(result) = already_checked {
+        draft_files::remove(files_dir, id);
         return Ok(ImportAllOutcome::Imported { result });
     }
 
     manager.run_check_then_import(
-        now(),
+        started_at,
         |run, progress| {
             let checked = check(run.cancel_token(), progress);
             if !run.begin_import() {

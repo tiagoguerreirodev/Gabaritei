@@ -1,21 +1,22 @@
 #![cfg_attr(not(unix), allow(dead_code, unused_imports))] // fake CLIs need `sh`
 
 use super::*;
-use crate::ai::settings::AiSettingsInput;
 use crate::attempts::{FeedbackMode, SessionSource, SessionStart, answer as answer_question};
 use crate::bank::import_questions;
 use crate::bank::question::tests::multiple;
+use crate::bank::store::load_question;
 use rand::SeedableRng;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
 const T0: &str = "2026-11-20T10:00:00.000Z";
+const EXPLAINED_AT: &str = "2026-11-20T11:00:00.000Z";
 
 struct World {
     dir: tempfile::TempDir,
     db: Database,
     secrets: Secrets,
-    jobs: OnDemand,
+    clis: ResolvedClis,
     attempt: AttemptId,
     key: String,
 }
@@ -70,19 +71,6 @@ fn world(
     let _ = id;
     std::fs::write(dir.path().join("answer.json"), answer.to_string()).unwrap();
     let cli = fake_codex(dir.path());
-    db.with(|conn| {
-        let mut current = settings::load(conn, &secrets)?;
-        current.cli_paths.codex = Some(cli.to_string_lossy().into_owned());
-        settings::save(
-            conn,
-            AiSettingsInput {
-                cli_paths: current.cli_paths,
-                roles: current.roles,
-                remnote: current.remnote,
-            },
-        )
-    })
-    .unwrap();
     let attempt = db
         .transaction(|tx| {
             attempts::start(
@@ -107,7 +95,7 @@ fn world(
         dir,
         db,
         secrets,
-        jobs: OnDemand::default(),
+        clis: ResolvedClis::new(None, Some(cli)),
         attempt,
         key,
     }
@@ -120,7 +108,15 @@ fn calls(world: &World) -> usize {
 }
 
 fn explain(world: &World) -> AppResult<AttemptView> {
-    ask_explain(&world.db, &world.secrets, &world.jobs, &world.attempt, 0)
+    ask_explain(
+        &world.db,
+        &world.secrets,
+        &world.clis,
+        &world.attempt,
+        0,
+        &CancelToken::new(),
+        || EXPLAINED_AT.into(),
+    )
 }
 
 fn good() -> serde_json::Value {
@@ -137,10 +133,16 @@ mod flow {
         let view = explain(&w).unwrap();
         let reveal = view.questions[0].reveal.as_ref().unwrap();
         assert!(reveal.explanation.starts_with("A alternativa certa é a B"));
-        let stored: String =
-            w.db.with(|c| Ok(c.query_row("SELECT explanation FROM questions", [], |r| r.get(0))?))
-                .unwrap();
-        assert_eq!(stored, reveal.explanation);
+        let stored: (String, String) =
+            w.db.with(|c| {
+                Ok(
+                    c.query_row("SELECT explanation, updated_at FROM questions", [], |r| {
+                        Ok((r.get(0)?, r.get(1)?))
+                    })?,
+                )
+            })
+            .unwrap();
+        assert_eq!(stored, (reveal.explanation.clone(), EXPLAINED_AT.into()));
     }
 
     #[test]
@@ -247,34 +249,47 @@ mod flow {
 
     #[test]
     fn it_is_refused_before_the_answer_is_revealed() {
-        let w = world("", FeedbackMode::Exam, true, good());
+        let mut w = world("", FeedbackMode::Exam, true, good());
+        w.clis = ResolvedClis::new(None, None);
         let error = explain(&w).unwrap_err();
         assert!(error.to_string().contains("depois de ver o gabarito"));
         assert_eq!(calls(&w), 0);
     }
 
     #[test]
-    fn bad_answers_save_nothing() {
-        for bad in [
-            json!({ "explanation": "  ", "refs": [] }),
-            json!({ "explanation": "Texto.", "refs": ["  "] }),
-            json!({ "explanation": "Texto.", "extra": 1, "refs": [] }),
-        ] {
-            let w = world("", FeedbackMode::Study, true, bad);
-            assert!(explain(&w).is_err());
-            let stored: String = w
-                .db
-                .with(|c| Ok(c.query_row("SELECT explanation FROM questions", [], |r| r.get(0))?))
+    fn a_blank_explanation_saves_nothing() {
+        assert_explanation_rejected(json!({ "explanation": "  ", "refs": [] }));
+    }
+
+    #[test]
+    fn a_blank_reference_saves_nothing() {
+        assert_explanation_rejected(json!({ "explanation": "Texto.", "refs": ["  "] }));
+    }
+
+    #[test]
+    fn an_answer_with_an_unknown_field_saves_nothing() {
+        assert_explanation_rejected(json!({ "explanation": "Texto.", "extra": 1, "refs": [] }));
+    }
+
+    fn assert_explanation_rejected(answer: serde_json::Value) {
+        let w = world("", FeedbackMode::Study, true, answer);
+        assert!(explain(&w).is_err());
+        let stored: String =
+            w.db.with(|c| Ok(c.query_row("SELECT explanation FROM questions", [], |r| r.get(0))?))
                 .unwrap();
-            assert_eq!(stored, "");
-        }
+        assert_eq!(stored, "");
     }
 }
 
 #[test]
-fn the_explain_schema_is_strict_and_matches_its_snapshot() {
-    let schema = crate::ai::blind_check::schema_of::<ExplainAnswer>();
+fn the_explain_schema_is_strict() {
+    let schema = crate::ai::task::schema_of::<ExplainAnswer>();
     assert_eq!(schema["additionalProperties"], json!(false));
+}
+
+#[test]
+fn the_explain_schema_matches_its_snapshot() {
+    let schema = crate::ai::task::schema_of::<ExplainAnswer>();
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("schemas/explain.schema.json");
     let generated = serde_json::to_string_pretty(&schema).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {

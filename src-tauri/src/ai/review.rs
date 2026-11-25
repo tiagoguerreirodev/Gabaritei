@@ -6,17 +6,21 @@
 //! disputes it, or it has a validation problem) also carries its stem and options, so the user can
 //! judge it. No key, explanation, reference or checker reason ever appears.
 
+use std::path::Path;
+
 use rusqlite::{Connection, Transaction, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::agent::{Agent, Effort};
-use super::blind_check::{self, VerdictState};
+use super::blind_check::{BlindCheck, VerdictState};
 use super::draft::{self, Draft, DraftStatus};
+use super::draft_files;
 use super::generate::{DraftCheck, DraftProblem, check_draft, draft_inputs};
 use crate::bank::catalog::CollectionKind;
 use crate::bank::store::{ImportOutcome, import_questions};
 use crate::bank::{PackageQuestion, QuestionType, TopicPath};
+use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use crate::ids::{self, CollectionId, DraftId, QuestionId};
 
@@ -157,17 +161,16 @@ struct ReviewStates {
 }
 
 fn states(draft: &Draft) -> AppResult<ReviewStates> {
-    let check = blind_check::stored(draft)?;
-    let failed = check.as_ref().and_then(|c| c.failed.clone());
-    let pending = check.as_ref().is_some_and(|c| c.pending);
+    let check = draft.blind_check.as_ref();
+    let failed = check.and_then(BlindCheck::failure).map(str::to_owned);
+    let pending = check.is_some_and(BlindCheck::is_pending);
     let lines = draft
         .package
         .questions
         .iter()
         .map(|question| {
             check
-                .as_ref()
-                .and_then(|c| c.verdicts.iter().find(|v| v.question_id == question.id))
+                .and_then(|c| c.verdicts().iter().find(|v| v.question_id == question.id))
                 .map_or(LineState::Unchecked, |verdict| match verdict.state {
                     VerdictState::Agreed => LineState::Agreed,
                     VerdictState::Fixed => LineState::Fixed,
@@ -305,9 +308,21 @@ fn not_waiting() -> AppError {
     AppError::Invalid("Este pacote já foi importado ou descartado.".into())
 }
 
-/// Imports a draft's questions into the bank as a new `generated` collection. Call inside a
-/// transaction. Nothing is written if it fails.
+/// Imports a draft's questions as a new generated collection and removes its kept attachments
+/// after the transaction commits.
 pub fn import(
+    db: &Database,
+    files_dir: &Path,
+    id: &DraftId,
+    mode: ImportMode,
+    now: &str,
+) -> AppResult<ImportResult> {
+    let result = db.transaction(|tx| import_into_bank(tx, id, mode, now))?;
+    draft_files::remove(files_dir, id);
+    Ok(result)
+}
+
+fn import_into_bank(
     conn: &Transaction<'_>,
     id: &DraftId,
     mode: ImportMode,
@@ -463,8 +478,14 @@ fn place_questions(
     Ok(())
 }
 
-/// Discards a draft that is still waiting.
-pub fn discard(conn: &Connection, id: &DraftId) -> AppResult<()> {
+/// Discards a waiting draft and removes its attachments after the transaction commits.
+pub fn discard(db: &Database, files_dir: &Path, id: &DraftId) -> AppResult<()> {
+    db.transaction(|tx| mark_discarded(tx, id))?;
+    draft_files::remove(files_dir, id);
+    Ok(())
+}
+
+fn mark_discarded(conn: &Transaction<'_>, id: &DraftId) -> AppResult<()> {
     let draft = draft::load(conn, id)?;
     if draft.status != DraftStatus::Review {
         return Err(not_waiting());

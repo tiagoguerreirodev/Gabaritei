@@ -2,26 +2,28 @@
 //!
 //! Every command must also be added to [`crate::register`] and wrapped in `src/api.ts`.
 
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, FilePath};
 use ts_rs::TS;
 
 use crate::ai::agent::Agent;
 use crate::ai::blind_check;
 use crate::ai::catalog::{self as model_catalog, CatalogCache};
 use crate::ai::discovery::{self, CliStatus};
-use crate::ai::draft_files;
 use crate::ai::explain;
-use crate::ai::generate::GenerateRequest;
-use crate::ai::jobs::{GenerationKind, GenerationManager, GenerationStatus};
+use crate::ai::generate::{GenerateRequest, GenerationRuntime};
+use crate::ai::jobs::{self, DataReplacement, GenerationKind, GenerationManager, GenerationStatus};
 use crate::ai::ondemand::OnDemand;
 use crate::ai::recheck::{self, RecheckView};
 use crate::ai::remnote_probe::{self, RemNoteTest};
 use crate::ai::review::{self, DraftListItem, DraftSummary, ImportMode, ImportResult};
-use crate::ai::roles::RoleSettings;
+use crate::ai::roles::{self, Role};
 use crate::ai::secrets::Secrets;
-use crate::ai::settings::{self, AiSettings, AiSettingsInput};
+use crate::ai::settings::{self, AiSettings, AiSettingsInput, ResolvedClis};
 use crate::appearance::{self, Appearance};
 use crate::attempts::{self, AttemptView, SessionStart};
 use crate::backup::{BackupInfo, BackupService, BackupStatus, OpenableFolder, RelocateOutcome};
@@ -45,6 +47,8 @@ impl From<AppError> for tauri::ipc::InvokeError {
     }
 }
 
+const APP_NAME: &str = "Gabaritei";
+
 /// Basic information about the running app.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -57,7 +61,7 @@ pub struct AppInfo {
 /// Returns the app's name and version (from `Cargo.toml`).
 pub fn current_app_info() -> AppInfo {
     AppInfo {
-        name: "Gabaritei".to_owned(),
+        name: APP_NAME.to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
     }
 }
@@ -135,18 +139,14 @@ pub fn legacy_import_status(db: State<'_, Database>) -> AppResult<LegacyImportSt
 pub async fn import_legacy_bank<R: Runtime>(
     app: AppHandle<R>,
 ) -> AppResult<Option<LegacyImportOutcome>> {
-    let Some(folder) = app
-        .dialog()
-        .file()
-        .set_title("Escolha a pasta do Caderno Local (repositório Simulados-Concursos)")
-        .blocking_pick_folder()
+    let Some(source) = pick_folder(
+        &app,
+        "Escolha a pasta do Caderno Local (repositório Simulados-Concursos)",
+    )?
     else {
         return Ok(None);
     };
-    let source = folder
-        .into_path()
-        .map_err(|_| AppError::Invalid("Escolha uma pasta deste computador.".into()))?;
-    tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(app, move |app| {
         let db = app.state::<Database>();
         let paths = app.state::<AppPaths>();
         let service = app.state::<BackupService>();
@@ -158,7 +158,6 @@ pub async fn import_legacy_bank<R: Runtime>(
         })
     })
     .await
-    .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
 /// Where backups go, the ones that exist and the last backup failure.
@@ -173,8 +172,8 @@ pub fn backup_status(
 
 /// The app data folder, shown in Configurações → Dados.
 #[tauri::command]
-pub fn data_folder(paths: State<'_, AppPaths>) -> String {
-    paths.data_dir().display().to_string()
+pub fn data_folder(paths: State<'_, AppPaths>) -> AppResult<String> {
+    Ok(paths.data_dir().display().to_string())
 }
 
 /// Opens the app data folder or the backup folder in the system file manager. The frontend
@@ -210,25 +209,16 @@ pub fn backup_now(
 pub async fn backup_choose_folder<R: Runtime>(
     app: AppHandle<R>,
 ) -> AppResult<Option<BackupStatus>> {
-    let Some(folder) = app
-        .dialog()
-        .file()
-        .set_title("Escolha a pasta dos backups")
-        .blocking_pick_folder()
-    else {
+    let Some(chosen) = pick_folder(&app, "Escolha a pasta dos backups")? else {
         return Ok(None);
     };
-    let chosen = folder
-        .into_path()
-        .map_err(|_| AppError::Invalid("Escolha uma pasta deste computador.".into()))?;
-    tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(app, move |app| {
         let db = app.state::<Database>();
         let paths = app.state::<AppPaths>();
         let service = app.state::<BackupService>();
         service.change_folder(&db, &paths, Some(&chosen)).map(Some)
     })
     .await
-    .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
 /// Goes back to the default backup folder.
@@ -278,42 +268,21 @@ pub fn backup_restore(
     on_demand: State<'_, OnDemand>,
     name: String,
 ) -> AppResult<()> {
-    service.restore(&db, &paths, &name, time::OffsetDateTime::now_utc(), || {
-        ensure_no_ai_job(&generation, &on_demand, "restaurar")
-    })?;
-    on_demand.clear_proposals();
-    Ok(())
-}
-
-/// Replacing the data under a running AI job would lose what the job writes.
-fn ensure_no_ai_job(
-    generation: &GenerationManager,
-    on_demand: &OnDemand,
-    action: &str,
-) -> AppResult<()> {
-    if generation.status().running || on_demand.is_running() {
-        return Err(AppError::Invalid(format!(
-            "Há uma consulta à IA em andamento. Espere ou cancele antes de {action}."
-        )));
-    }
-    Ok(())
-}
-
-/// Backups, restores and imports replace the data, so no AI job starts meanwhile.
-fn ensure_not_backing_up(service: &BackupService) -> AppResult<()> {
-    if service.is_busy() {
-        return Err(AppError::Invalid(
-            "Um backup, restauração, importação ou a cópia de backups para a pasta nova está em andamento. Tente de novo em instantes."
-                .into(),
-        ));
-    }
-    Ok(())
+    jobs::replace_study_data(
+        &service,
+        &db,
+        &paths,
+        &generation,
+        &on_demand,
+        DataReplacement::Restore(&name),
+        time::OffsetDateTime::now_utc(),
+    )
 }
 
 /// Asks where to save the data file and writes it. `false` if the user cancels.
 #[tauri::command]
 pub async fn export_data<R: Runtime>(app: AppHandle<R>) -> AppResult<bool> {
-    tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(app, move |app| {
         let now = crate::clock::now();
         let Some(file) = app
             .dialog()
@@ -325,23 +294,20 @@ pub async fn export_data<R: Runtime>(app: AppHandle<R>) -> AppResult<bool> {
         else {
             return Ok(false);
         };
-        let dest = file
-            .into_path()
-            .map_err(|_| AppError::Invalid("Escolha um local deste computador.".into()))?;
+        let dest = local_path(file, "Escolha um local deste computador.")?;
         let db = app.state::<Database>();
         let paths = app.state::<AppPaths>();
         let service = app.state::<BackupService>();
         service.export(&db, &paths, &dest, &now).map(|()| true)
     })
     .await
-    .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
 /// Asks for a data file and replaces the local data with it, after a safety backup. `false` if
 /// the user cancels. Not while a generation runs.
 #[tauri::command]
 pub async fn import_data<R: Runtime>(app: AppHandle<R>) -> AppResult<bool> {
-    tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(app, move |app| {
         let Some(file) = app
             .dialog()
             .file()
@@ -351,26 +317,24 @@ pub async fn import_data<R: Runtime>(app: AppHandle<R>) -> AppResult<bool> {
         else {
             return Ok(false);
         };
-        let source = file
-            .into_path()
-            .map_err(|_| AppError::Invalid("Escolha um arquivo deste computador.".into()))?;
+        let source = local_path(file, "Escolha um arquivo deste computador.")?;
         let db = app.state::<Database>();
         let paths = app.state::<AppPaths>();
         let service = app.state::<BackupService>();
         let generation = app.state::<GenerationManager>();
         let on_demand = app.state::<OnDemand>();
-        service.import(
+        jobs::replace_study_data(
+            &service,
             &db,
             &paths,
-            &source,
+            &generation,
+            &on_demand,
+            DataReplacement::Import(&source),
             time::OffsetDateTime::now_utc(),
-            || ensure_no_ai_job(&generation, &on_demand, "importar"),
-        )?;
-        on_demand.clear_proposals();
-        Ok(true)
+        )
+        .map(|()| true)
     })
     .await
-    .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
 /// Topic strength, weekly trend and filter options under the given filters.
@@ -404,7 +368,7 @@ pub async fn export_performance_csv<R: Runtime>(
     let performance = app
         .state::<Database>()
         .with(|conn| metrics::performance(conn, &query))?;
-    tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(app, move |app| {
         let Some(file) = app
             .dialog()
             .file()
@@ -415,14 +379,11 @@ pub async fn export_performance_csv<R: Runtime>(
         else {
             return Ok(false);
         };
-        let path = file
-            .into_path()
-            .map_err(|_| AppError::Invalid("Escolha um local deste computador.".into()))?;
+        let path = local_path(file, "Escolha um local deste computador.")?;
         metrics::export_csv(&path, &performance)?;
         Ok(true)
     })
     .await
-    .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
 /// Starts a session from a collection, a topic, errors or due reviews.
@@ -514,26 +475,6 @@ pub fn abandon(db: State<'_, Database>, attempt_id: AttemptId) -> AppResult<()> 
     db.transaction(|tx| attempts::abandon(tx, &attempt_id))
 }
 
-/// Refuses to start AI work with a model the agent's list no longer offers. `roles` picks the
-/// configurations the work will use from the saved settings. Uses only lists that are already
-/// loaded, so it never starts a CLI.
-fn ensure_roles_listed(
-    db: &Database,
-    cache: &CatalogCache,
-    roles: impl FnOnce(&RoleSettings) -> Vec<(crate::ai::roles::RoleConfig, &'static str)>,
-) -> AppResult<()> {
-    if cache.cached().is_none() {
-        return Ok(());
-    }
-    let saved = db.with(|conn| settings::load_roles(conn))?;
-    let roles = roles(&saved);
-    let refs: Vec<_> = roles
-        .iter()
-        .map(|(config, label)| (config, *label))
-        .collect();
-    model_catalog::ensure_cached_listed(cache, &refs)
-}
-
 /// The AI settings (CLI paths, roles, RemNote). Writes the defaults on first use.
 #[tauri::command]
 pub fn ai_settings(db: State<'_, Database>, secrets: State<'_, Secrets>) -> AppResult<AiSettings> {
@@ -560,21 +501,14 @@ pub fn save_ai_settings(
     catalog: State<'_, CatalogCache>,
     input: AiSettingsInput,
 ) -> AppResult<AiSettings> {
-    let saved = db.with(|conn| {
-        settings::save(conn, input)?;
-        settings::load(conn, &secrets)
-    })?;
-    // The CLI paths may have changed, so the model lists are read again on next use.
-    catalog.clear();
-    Ok(saved)
+    settings::save_and_reload(&db, &secrets, &catalog, input)
 }
 
 /// Saves the RemNote token in the OS keychain; `None` or blank removes it. Returns whether a
 /// token is saved. The token is never returned.
 #[tauri::command]
 pub fn set_remnote_token(secrets: State<'_, Secrets>, token: Option<String>) -> AppResult<bool> {
-    secrets.set_remnote_token(token.as_deref())?;
-    Ok(secrets.remnote_token()?.is_some())
+    secrets.set_remnote_token(token.as_deref())
 }
 
 /// Finds the CLI (using the saved path override) and reports its version and login state.
@@ -584,9 +518,7 @@ pub fn cli_test(
     secrets: State<'_, Secrets>,
     agent: Agent,
 ) -> AppResult<CliStatus> {
-    let settings = db.with(|conn| settings::load(conn, &secrets))?;
-    let custom = settings.cli_paths.get(agent).map(std::path::Path::new);
-    Ok(discovery::cli_test(agent, custom))
+    settings::test_cli(&db, &secrets, agent)
 }
 
 /// Checks the saved RemNote connection and lists the tools the server offers.
@@ -602,9 +534,30 @@ pub fn remnote_test(
 /// Name of the window event that carries every [`GenerationStatus`] change.
 pub const GENERATION_EVENT: &str = "generation-status";
 
+fn resolve_job_clis(db: &Database) -> AppResult<ResolvedClis> {
+    let overrides = db.with(|conn| settings::load_cli_paths(conn))?;
+    let resolve = |agent| discovery::find_cli(agent, overrides.get(agent).map(Path::new));
+    Ok(ResolvedClis::new(
+        resolve(Agent::Claude),
+        resolve(Agent::Codex),
+    ))
+}
+
+fn with_generation_runtime<T>(
+    clis: &ResolvedClis,
+    work: impl FnOnce(&GenerationRuntime<'_>) -> AppResult<T>,
+) -> AppResult<T> {
+    let origin = Instant::now();
+    work(&GenerationRuntime {
+        clis,
+        now: &crate::clock::now,
+        monotonic_time: &|| origin.elapsed(),
+    })
+}
+
 /// Starts a generation in the background. Fails at once if the form is invalid or another
 /// generation is running. Progress and the result arrive as [`GENERATION_EVENT`] events.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn generation_start<R: Runtime>(
     app: AppHandle<R>,
     manager: State<'_, GenerationManager>,
@@ -612,48 +565,34 @@ pub fn generation_start<R: Runtime>(
     paths: State<'_, AppPaths>,
     mut request: GenerateRequest,
 ) -> AppResult<()> {
-    ensure_not_backing_up(&service)?;
-    request.validate()?;
-    ensure_roles_listed(
+    service.ensure_idle()?;
+    roles::validate_generation(
         &app.state::<Database>(),
         &app.state::<CatalogCache>(),
-        |roles| {
-            vec![
-                (
-                    request
-                        .generator
-                        .clone()
-                        .unwrap_or_else(|| roles.generate.clone()),
-                    "Gerar questões",
-                ),
-                (
-                    request
-                        .checker
-                        .clone()
-                        .unwrap_or_else(|| roles.blind_check.clone()),
-                    "Conferência às cegas",
-                ),
-            ]
-        },
+        &mut request,
     )?;
+    let clis = resolve_job_clis(&app.state::<Database>())?;
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
         GenerationKind::Generate,
+        crate::clock::now(),
         move |cancel, progress| {
             let db = worker.state::<Database>();
             let secrets = worker.state::<Secrets>();
-            blind_check::generate_and_check(&db, &secrets, &files_dir, request, cancel, progress)
+            with_generation_runtime(&clis, |runtime| {
+                blind_check::generate_and_check(
+                    &db, &secrets, runtime, &files_dir, request, cancel, progress,
+                )
+            })
         },
-        move |status| {
-            let _ = app.emit(GENERATION_EVENT, status);
-        },
+        move |status| emit_generation_status(&app, status),
     )
 }
 
 /// Runs the blind check again on a draft whose check failed. Uses the same background slot as
 /// a generation, so only one runs at a time.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn blind_check_start<R: Runtime>(
     app: AppHandle<R>,
     manager: State<'_, GenerationManager>,
@@ -661,24 +600,28 @@ pub fn blind_check_start<R: Runtime>(
     paths: State<'_, AppPaths>,
     draft_id: DraftId,
 ) -> AppResult<()> {
-    ensure_not_backing_up(&service)?;
-    ensure_roles_listed(
+    service.ensure_idle()?;
+    roles::validate_saved_role(
         &app.state::<Database>(),
         &app.state::<CatalogCache>(),
-        |roles| vec![(roles.blind_check.clone(), "Conferência às cegas")],
+        Role::BlindCheck,
     )?;
+    let clis = resolve_job_clis(&app.state::<Database>())?;
     let files_dir = paths.draft_files_dir();
     let worker = app.clone();
     manager.start(
         GenerationKind::Recheck,
+        crate::clock::now(),
         move |cancel, progress| {
             let db = worker.state::<Database>();
             let secrets = worker.state::<Secrets>();
-            blind_check::recheck_draft(&db, &secrets, &files_dir, &draft_id, cancel, progress)
+            with_generation_runtime(&clis, |runtime| {
+                blind_check::recheck_draft(
+                    &db, &secrets, runtime, &files_dir, &draft_id, cancel, progress,
+                )
+            })
         },
-        move |status| {
-            let _ = app.emit(GENERATION_EVENT, status);
-        },
+        move |status| emit_generation_status(&app, status),
     )
 }
 
@@ -702,9 +645,13 @@ pub fn draft_import(
     id: DraftId,
     mode: ImportMode,
 ) -> AppResult<ImportResult> {
-    let result = db.transaction(|tx| review::import(tx, &id, mode, &crate::clock::now()))?;
-    draft_files::remove(&paths.draft_files_dir(), &id);
-    Ok(result)
+    review::import(
+        &db,
+        &paths.draft_files_dir(),
+        &id,
+        mode,
+        &crate::clock::now(),
+    )
 }
 
 /// Discards a draft that is waiting for review.
@@ -714,15 +661,13 @@ pub fn draft_discard(
     paths: State<'_, AppPaths>,
     id: DraftId,
 ) -> AppResult<()> {
-    db.with(|conn| review::discard(conn, &id))?;
-    draft_files::remove(&paths.draft_files_dir(), &id);
-    Ok(())
+    review::discard(&db, &paths.draft_files_dir(), &id)
 }
 
 /// Asks which PDF, Markdown or text files to attach to a generation. Empty if cancelled.
 #[tauri::command]
 pub async fn pick_attachments<R: Runtime>(app: AppHandle<R>) -> AppResult<Vec<String>> {
-    tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(app, move |app| {
         let files = app
             .dialog()
             .file()
@@ -733,14 +678,12 @@ pub async fn pick_attachments<R: Runtime>(app: AppHandle<R>) -> AppResult<Vec<St
         files
             .into_iter()
             .map(|file| {
-                file.into_path()
+                local_path(file, "Escolha arquivos deste computador.")
                     .map(|path| path.to_string_lossy().into_owned())
-                    .map_err(|_| AppError::Invalid("Escolha arquivos deste computador.".into()))
             })
             .collect()
     })
     .await
-    .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
 /// Asks the re-check role whether the key of a revealed question is right. Waits for the AI;
@@ -751,18 +694,18 @@ pub async fn recheck_ask<R: Runtime>(
     attempt_id: AttemptId,
     position: u32,
 ) -> AppResult<RecheckView> {
-    tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(app, move |app| {
         let db = app.state::<Database>();
         let secrets = app.state::<Secrets>();
         let jobs = app.state::<OnDemand>();
         let catalog = app.state::<CatalogCache>();
-        ensure_roles_listed(&db, &catalog, |roles| {
-            vec![(roles.recheck.clone(), "Revisão sob demanda")]
-        })?;
-        recheck::ask_recheck(&db, &secrets, &jobs, &attempt_id, position)
+        roles::validate_saved_role(&db, &catalog, Role::Recheck)?;
+        let clis = resolve_job_clis(&db)?;
+        jobs.run(|cancel| {
+            recheck::ask_recheck(&db, &secrets, &clis, &jobs, &attempt_id, position, cancel)
+        })
     })
     .await
-    .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
 /// Applies the key the AI proposed, after the user confirmed. Past attempts are re-scored.
@@ -795,42 +738,80 @@ pub async fn explain_ask<R: Runtime>(
     attempt_id: AttemptId,
     position: u32,
 ) -> AppResult<AttemptView> {
-    tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(app, move |app| {
         let db = app.state::<Database>();
         let secrets = app.state::<Secrets>();
         let jobs = app.state::<OnDemand>();
         let catalog = app.state::<CatalogCache>();
-        ensure_roles_listed(&db, &catalog, |roles| {
-            vec![(roles.explain.clone(), "Explicação sob demanda")]
-        })?;
-        explain::ask_explain(&db, &secrets, &jobs, &attempt_id, position)
+        roles::validate_saved_role(&db, &catalog, Role::Explain)?;
+        let clis = resolve_job_clis(&db)?;
+        jobs.run(|cancel| {
+            explain::ask_explain(
+                &db,
+                &secrets,
+                &clis,
+                &attempt_id,
+                position,
+                cancel,
+                crate::clock::now,
+            )
+        })
     })
     .await
-    .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
 /// Cancels the on-demand AI request that is running (re-check or explain).
 #[tauri::command]
-pub fn ai_request_cancel(jobs: State<'_, OnDemand>) -> bool {
-    jobs.cancel()
+pub fn ai_request_cancel(jobs: State<'_, OnDemand>) -> AppResult<bool> {
+    Ok(jobs.cancel())
 }
 
 /// Stops the running generation. Returns whether one was running.
 #[tauri::command]
-pub fn generation_cancel(manager: State<'_, GenerationManager>) -> bool {
-    manager.cancel()
+pub fn generation_cancel(manager: State<'_, GenerationManager>) -> AppResult<bool> {
+    Ok(manager.cancel())
 }
 
 /// What the generation is doing now, or how the last one ended.
 #[tauri::command]
-pub fn generation_status(manager: State<'_, GenerationManager>) -> GenerationStatus {
-    manager.status()
+pub fn generation_status(manager: State<'_, GenerationManager>) -> AppResult<GenerationStatus> {
+    Ok(manager.status())
 }
 
 /// Forgets how the last generation ended.
 #[tauri::command]
-pub fn generation_dismiss(manager: State<'_, GenerationManager>) {
+pub fn generation_dismiss(manager: State<'_, GenerationManager>) -> AppResult<()> {
     manager.dismiss();
+    Ok(())
+}
+
+async fn run_blocking<R: Runtime, T: Send + 'static>(
+    app: AppHandle<R>,
+    work: impl FnOnce(AppHandle<R>) -> AppResult<T> + Send + 'static,
+) -> AppResult<T> {
+    tauri::async_runtime::spawn_blocking(move || work(app))
+        .await
+        .map_err(|error| AppError::Internal(error.to_string()))?
+}
+
+fn pick_folder<R: Runtime>(app: &AppHandle<R>, title: &str) -> AppResult<Option<PathBuf>> {
+    app.dialog()
+        .file()
+        .set_title(title)
+        .blocking_pick_folder()
+        .map(|folder| local_path(folder, "Escolha uma pasta deste computador."))
+        .transpose()
+}
+
+fn local_path(file: FilePath, message: &str) -> AppResult<PathBuf> {
+    file.into_path()
+        .map_err(|_| AppError::Invalid(message.into()))
+}
+
+fn emit_generation_status<R: Runtime>(app: &AppHandle<R>, status: &GenerationStatus) {
+    if let Err(error) = app.emit(GENERATION_EVENT, status) {
+        crate::log::error(format!("could not emit generation status: {error}"));
+    }
 }
 
 #[cfg(test)]
@@ -932,7 +913,7 @@ mod tests {
     }
 
     #[test]
-    fn browsing_commands_decode_camel_case_arguments() {
+    fn collections_decodes_camel_case_arguments() {
         let db = Database::open_in_memory().unwrap();
         db.with(|c| {
             c.execute(
@@ -955,7 +936,10 @@ mod tests {
         assert_eq!(page["pageSize"], json!(5));
         assert_eq!(page["items"][0]["id"], json!("c1"));
         assert_eq!(page["contests"], json!(["ALEPA", "Perito"]));
+    }
 
+    #[test]
+    fn collection_reports_an_unknown_id() {
         let missing = invoke_with(
             "collection",
             json!({ "id": "nope" }),
@@ -965,13 +949,14 @@ mod tests {
             missing,
             Err(json!({ "message": "Caderno não encontrado." }))
         );
+    }
 
-        let tree = invoke_with(
-            "topics_tree",
-            json!({}),
-            Database::open_in_memory().unwrap(),
+    #[test]
+    fn topics_tree_returns_an_empty_tree_for_an_empty_bank() {
+        assert_eq!(
+            invoke("topics_tree"),
+            Ok(json!({ "areas": [], "questions": 0 }))
         );
-        assert_eq!(tree, Ok(json!({ "areas": [], "questions": 0 })));
     }
 
     /// Two questions in collection `c1`, each with a distinctive explanation and reference.
@@ -1243,30 +1228,44 @@ mod tests {
     }
 
     #[test]
-    fn backup_commands_make_list_and_restore_a_backup() {
-        let app = MockApp::new(Database::open_in_memory().unwrap());
-        let status = app.call("backup_status", json!({})).expect("status");
+    fn backup_status_lists_the_default_folder_when_empty() {
+        let status = invoke("backup_status").expect("status");
         assert_eq!(status["isDefaultFolder"], json!(true));
         assert_eq!(
             status["listing"],
             json!({ "state": "ready", "backups": [] })
         );
+    }
 
+    #[test]
+    fn backup_now_appears_in_the_listing_as_a_manual_backup() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
         // The in-memory database has no file to back up from, but the online backup copies it.
         let made = app.call("backup_now", json!({})).expect("backs up");
-        let name = made["name"].as_str().unwrap().to_owned();
         assert_eq!(made["kind"], json!("manual"));
-        let status = app.call("backup_status", json!({})).expect("status");
-        assert_eq!(status["listing"]["backups"][0]["name"], json!(name));
-        assert_eq!(status["lastError"], json!(null));
 
-        app.call("backup_restore", json!({ "name": name }))
+        let status = app.call("backup_status", json!({})).expect("status");
+        assert_eq!(status["listing"]["backups"], json!([made]));
+        assert_eq!(status["lastError"], json!(null));
+    }
+
+    #[test]
+    fn backup_restore_makes_a_safety_backup() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
+        let made = app.call("backup_now", json!({})).expect("backs up");
+
+        app.call("backup_restore", json!({ "name": made["name"] }))
             .expect("restores");
+
         let status = app.call("backup_status", json!({})).expect("status");
         let backups = status["listing"]["backups"].as_array().unwrap();
         assert_eq!(backups.len(), 2);
         assert_eq!(backups[0]["kind"], json!("safety"));
+    }
 
+    #[test]
+    fn backup_restore_refuses_a_name_that_escapes_the_backup_folder() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
         let error = app
             .call("backup_restore", json!({ "name": "../escape" }))
             .unwrap_err();
@@ -1291,41 +1290,56 @@ mod tests {
     }
 
     #[test]
-    fn ai_settings_default_save_and_never_return_the_token() {
-        let app = MockApp::new(Database::open_in_memory().unwrap());
-        let settings = app.call("ai_settings", json!({})).expect("loads");
+    fn ai_settings_returns_the_defaults() {
+        let settings = invoke("ai_settings").expect("loads");
         assert_eq!(settings["roles"]["generate"]["model"], json!("gpt-6.2-sol"));
         assert_eq!(settings["roles"]["generate"]["agent"], json!("codex"));
         assert_eq!(settings["roles"]["blindCheck"]["effort"], json!("xhigh"));
         assert_eq!(settings["hasRemnoteToken"], json!(false));
+    }
 
+    #[test]
+    fn ai_settings_saves_changes_to_roles_and_remnote() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
+        let mut input = app.call("ai_settings", json!({})).expect("loads");
+        input["remnote"] = json!({
+            "mode": "server", "url": "https://r.example/mcp", "tools": ["search"]
+        });
+        input["roles"]["explain"] = json!({
+            "agent": "claude", "model": "claude-sonnet-5-5", "effort": "medium", "fast": false
+        });
+
+        let after = app
+            .call("save_ai_settings", json!({ "input": input }))
+            .expect("saves");
+        assert_eq!(after["roles"]["explain"], input["roles"]["explain"]);
+        assert_eq!(after["remnote"], input["remnote"]);
+        assert_eq!(app.call("ai_settings", json!({})).expect("reloads"), after);
+    }
+
+    #[test]
+    fn ai_settings_responses_only_show_whether_the_token_is_saved() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
         let saved = app
             .call("set_remnote_token", json!({ "token": "TOKEN-SECRETO" }))
             .expect("token saves");
         assert_eq!(saved, json!(true));
 
-        let mut input = json!({
-            "cliPaths": { "claude": null, "codex": null },
-            "roles": settings["roles"],
-            "remnote": { "mode": "server", "url": "https://r.example/mcp", "tools": ["search"] },
-        });
-        input["roles"]["explain"]["agent"] = json!("claude");
-        input["roles"]["explain"]["model"] = json!("claude-sonnet-5-5");
-        input["roles"]["explain"]["effort"] = json!("medium");
+        let loaded = app.call("ai_settings", json!({})).expect("loads");
         let after = app
-            .call("save_ai_settings", json!({ "input": input }))
+            .call("save_ai_settings", json!({ "input": loaded }))
             .expect("saves");
-        assert_eq!(after["roles"]["explain"]["agent"], json!("claude"));
-        assert_eq!(after["remnote"]["tools"], json!(["search"]));
-        assert_eq!(after["hasRemnoteToken"], json!(true));
-        assert!(!after.to_string().contains("TOKEN-SECRETO"));
+        for response in [loaded, after] {
+            assert_eq!(response["hasRemnoteToken"], json!(true));
+            assert!(!response.to_string().contains("TOKEN-SECRETO"));
+        }
+    }
 
-        let reloaded = app.call("ai_settings", json!({})).expect("reloads");
-        assert_eq!(
-            reloaded["roles"]["explain"]["model"],
-            json!("claude-sonnet-5-5")
-        );
-        assert!(!reloaded.to_string().contains("TOKEN-SECRETO"));
+    #[test]
+    fn set_remnote_token_clears_the_saved_token_for_blank_input() {
+        let app = MockApp::new(Database::open_in_memory().unwrap());
+        app.call("set_remnote_token", json!({ "token": "TOKEN-SECRETO" }))
+            .unwrap();
 
         let removed = app
             .call("set_remnote_token", json!({ "token": "" }))
@@ -1352,9 +1366,47 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
-    fn a_generation_runs_in_the_background_and_ends_with_a_checked_draft() {
+    fn a_failed_ai_settings_write_preserves_the_saved_values() {
+        let db = Database::open_in_memory().unwrap();
+        db.with(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER refuse_remnote_settings BEFORE INSERT ON settings
+                 WHEN NEW.key = 'ai.remnote' BEGIN
+                    SELECT RAISE(ABORT, 'test write failure');
+                 END;",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let app = MockApp::new(db);
+        let before = app.call("ai_settings", json!({})).unwrap();
+        let mut input = before.clone();
+        input["roles"]["generate"]["model"] = json!("changed");
+
+        let result = app.call("save_ai_settings", json!({ "input": input }));
+
+        assert_eq!(
+            result,
+            Err(json!({ "message": "Ocorreu um erro inesperado. Tente novamente." }))
+        );
+        assert_eq!(app.call("ai_settings", json!({})), Ok(before));
+    }
+
+    #[cfg(unix)]
+    struct CheckedDraft {
+        app: MockApp,
+        cli: tempfile::TempDir,
+        status: Value,
+        id: String,
+    }
+
+    #[cfg(unix)]
+    fn generate_checked_draft() -> CheckedDraft {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        use tauri::Listener;
+
         let dir = tempfile::tempdir().unwrap();
         // Call 1 is the generator, call 2 the blind checker (which agrees with the key).
         let package = json!({"questions": [{
@@ -1390,30 +1442,55 @@ mod tests {
             "sources": { "remnote": false, "web": false, "attachments": [] },
             "generator": null, "checker": null,
         });
+        let (finished, done) = mpsc::channel();
+        let listener = app._app.listen(GENERATION_EVENT, move |event| {
+            let status: Value = serde_json::from_str(event.payload()).expect("generation status");
+            if status["running"] == json!(false) {
+                finished
+                    .send(status)
+                    .expect("subscriber waits for completion");
+            }
+        });
         app.call("generation_start", json!({ "request": request }))
             .expect("starts");
-
-        let mut status = json!(null);
-        for _ in 0..200 {
-            status = app.call("generation_status", json!({})).unwrap();
-            if status["running"] == json!(false) && !status["outcome"].is_null() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(25));
-        }
+        let status = done
+            .recv_timeout(Duration::from_secs(10))
+            .expect("completion event");
+        app._app.unlisten(listener);
         assert_eq!(status["outcome"]["kind"], json!("draft"), "{status}");
-        assert!(status["outcome"]["draftId"].as_str().unwrap().len() > 8);
+        let id = status["outcome"]["draftId"].as_str().unwrap().to_owned();
+        CheckedDraft {
+            app,
+            cli: dir,
+            status,
+            id,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generation_reports_a_finished_draft_without_question_content() {
+        let CheckedDraft {
+            app,
+            cli,
+            status,
+            id,
+        } = generate_checked_draft();
+        assert!(id.len() > 8);
         assert_eq!(
-            std::fs::read_to_string(dir.path().join("counter"))
+            std::fs::read_to_string(cli.path().join("counter"))
                 .unwrap()
                 .trim(),
             "2"
         );
-        // The status carries labels and an ID, never question content.
+        assert_eq!(app.call("generation_status", json!({})).unwrap(), status);
         assert!(!status.to_string().contains("crase"));
+    }
 
-        // The preview shows counts and states, plus the stem and options of flagged questions only: never the key, explanation or references.
-        let id = status["outcome"]["draftId"].as_str().unwrap().to_owned();
+    #[cfg(unix)]
+    #[test]
+    fn draft_summary_shows_the_check_state_without_agreed_question_content() {
+        let CheckedDraft { app, id, .. } = generate_checked_draft();
         let summary = app
             .call("draft_summary", json!({ "id": id }))
             .expect("summary");
@@ -1433,11 +1510,21 @@ mod tests {
         ] {
             assert!(!shown.contains(secret), "{secret} leaked: {shown}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drafts_waiting_lists_the_draft_without_question_content() {
+        let CheckedDraft { app, id, .. } = generate_checked_draft();
         let waiting = app.call("drafts_waiting", json!({})).unwrap();
         assert_eq!(waiting[0]["id"], json!(id));
         assert!(!waiting.to_string().contains("crase"));
+    }
 
-        // Importing makes a generated collection and closes the draft.
+    #[cfg(unix)]
+    #[test]
+    fn draft_import_creates_a_generated_collection_and_closes_the_draft() {
+        let CheckedDraft { app, id, .. } = generate_checked_draft();
         let imported = app
             .call("draft_import", json!({ "id": id, "mode": "all" }))
             .expect("imports");
@@ -1455,7 +1542,12 @@ mod tests {
                 .is_err()
         );
         assert_eq!(app.call("drafts_waiting", json!({})).unwrap(), json!([]));
+    }
 
+    #[cfg(unix)]
+    #[test]
+    fn generation_dismiss_clears_the_finished_status() {
+        let CheckedDraft { app, .. } = generate_checked_draft();
         app.call("generation_dismiss", json!({})).unwrap();
         assert_eq!(
             app.call("generation_status", json!({})).unwrap()["outcome"],

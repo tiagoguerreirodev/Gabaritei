@@ -10,11 +10,12 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::agent::{Agent, Effort};
-use super::discovery;
+use super::catalog::CatalogCache;
+use super::discovery::{self, CliStatus};
 use super::roles::{Role, RoleConfig, RoleSettings};
 use super::runner::{JobSpec, RemNoteAccess, is_valid_tool_name, is_write_like};
 use super::secrets::Secrets;
-use crate::db::{SettingKey, get_setting, set_setting};
+use crate::db::{Database, SettingKey, get_setting, set_setting};
 use crate::error::{AppError, AppResult};
 
 const MAX_MODEL: usize = 200;
@@ -36,6 +37,31 @@ impl CliPaths {
             Agent::Claude => self.claude.as_deref(),
             Agent::Codex => self.codex.as_deref(),
         }
+    }
+}
+
+/// Executables discovered by the caller. A missing executable only fails a task that uses it.
+pub struct ResolvedClis {
+    claude: Option<PathBuf>,
+    codex: Option<PathBuf>,
+}
+
+impl ResolvedClis {
+    pub fn new(claude: Option<PathBuf>, codex: Option<PathBuf>) -> Self {
+        Self { claude, codex }
+    }
+
+    fn require(&self, agent: Agent) -> AppResult<&Path> {
+        match agent {
+            Agent::Claude => self.claude.as_deref(),
+            Agent::Codex => self.codex.as_deref(),
+        }
+        .ok_or_else(|| {
+            AppError::Invalid(format!(
+                "O {} não foi encontrado. Confira Configurações › Agentes.",
+                agent.label()
+            ))
+        })
     }
 }
 
@@ -110,6 +136,31 @@ pub fn load(conn: &Connection, secrets: &Secrets) -> AppResult<AiSettings> {
         // Best effort: a locked or missing keychain must not break every AI feature.
         has_remnote_token: secrets.remnote_token().ok().flatten().is_some(),
     })
+}
+
+/// Saves settings and reads back the persisted values in one transaction.
+pub(crate) fn save_and_reload(
+    db: &Database,
+    secrets: &Secrets,
+    catalog: &CatalogCache,
+    input: AiSettingsInput,
+) -> AppResult<AiSettings> {
+    let saved = db.transaction(|tx| {
+        save(tx, input)?;
+        load(tx, secrets)
+    })?;
+    // The CLI paths may have changed, so the model lists are read again on next use.
+    catalog.clear();
+    Ok(saved)
+}
+
+/// Tests the configured executable, or the discovered one if there is no override.
+pub(crate) fn test_cli(db: &Database, secrets: &Secrets, agent: Agent) -> AppResult<CliStatus> {
+    let settings = db.with(|conn| load(conn, secrets))?;
+    Ok(discovery::cli_test(
+        agent,
+        settings.cli_paths.get(agent).map(Path::new),
+    ))
 }
 
 fn load_remnote(conn: &Connection) -> AppResult<RemNoteSettings> {
@@ -227,17 +278,6 @@ fn validated_remnote(input: RemNoteSettings) -> AppResult<RemNoteSettings> {
     })
 }
 
-/// The executable for `agent`: the user's override, else detected.
-pub fn resolve_cli(settings: &AiSettings, agent: Agent) -> AppResult<PathBuf> {
-    let custom = settings.cli_paths.get(agent).map(Path::new);
-    discovery::find_cli(agent, custom).ok_or_else(|| {
-        AppError::Invalid(format!(
-            "O {} não foi encontrado. Confira Configurações › Agentes.",
-            agent.label()
-        ))
-    })
-}
-
 /// RemNote access for a run, or an error if it's switched on but incomplete.
 fn remnote_access(settings: &AiSettings, secrets: &Secrets) -> AppResult<Option<RemNoteAccess>> {
     match settings.remnote.mode {
@@ -271,24 +311,27 @@ pub struct Sources {
 pub fn job_spec(
     settings: &AiSettings,
     secrets: &Secrets,
+    clis: &ResolvedClis,
     config: &RoleConfig,
     schema: serde_json::Value,
     sources: Sources,
+    attachments: Vec<PathBuf>,
 ) -> AppResult<JobSpec> {
-    let cli = resolve_cli(settings, config.agent)?;
-    let mut spec = JobSpec::new(
+    let cli = clis.require(config.agent)?.to_path_buf();
+    let remnote = if sources.remnote {
+        remnote_access(settings, secrets)?
+    } else {
+        None
+    };
+    Ok(JobSpec::new(
         config.agent,
         cli,
         config.model.clone(),
         config.effort,
         schema,
-    );
-    spec.fast = config.fast;
-    spec.web = sources.web;
-    if sources.remnote {
-        spec.remnote = remnote_access(settings, secrets)?;
-    }
-    Ok(spec)
+    )
+    .with_sources(attachments, sources.web, remnote)
+    .with_fast(config.fast))
 }
 
 #[cfg(test)]

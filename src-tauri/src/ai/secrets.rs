@@ -1,6 +1,8 @@
 //! Where the RemNote token lives: the OS keychain, never SQLite, logs or exports.
 
+#[cfg(test)]
 use std::collections::HashMap;
+#[cfg(test)]
 use std::sync::Mutex;
 
 use crate::error::{AppError, AppResult};
@@ -50,9 +52,11 @@ impl SecretStore for Keychain {
 }
 
 /// An in-memory store for tests.
+#[cfg(test)]
 #[derive(Default)]
-pub struct MemorySecrets(Mutex<HashMap<String, String>>);
+struct MemorySecrets(Mutex<HashMap<String, String>>);
 
+#[cfg(test)]
 impl SecretStore for MemorySecrets {
     fn get(&self, name: &str) -> AppResult<Option<String>> {
         Ok(self.0.lock().unwrap().get(name).cloned())
@@ -80,6 +84,7 @@ impl Secrets {
         Self(Box::new(Keychain))
     }
 
+    #[cfg(test)]
     pub fn memory() -> Self {
         Self(Box::<MemorySecrets>::default())
     }
@@ -88,11 +93,12 @@ impl Secrets {
         self.0.get(REMNOTE_TOKEN)
     }
 
-    /// Saves the token, or removes it when `token` is `None` or blank.
-    pub fn set_remnote_token(&self, token: Option<&str>) -> AppResult<()> {
+    /// Saves or clears the token and returns whether it is stored.
+    pub fn set_remnote_token(&self, token: Option<&str>) -> AppResult<bool> {
         match token.map(str::trim).filter(|t| !t.is_empty()) {
             Some(token) => self.0.set(REMNOTE_TOKEN, token),
             None => self.0.delete(REMNOTE_TOKEN),
-        }
+        }?;
+        Ok(self.remnote_token()?.is_some())
     }
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::ai::blind_check::{BlindCheck, Confidence, Verdict, pending_record};
+use crate::ai::blind_check::{self, BlindCheck, Confidence, Verdict, pending_record};
 use crate::ai::draft::{DraftRequest, GenerationInfo};
 use crate::ai::generate::{GenerateRequest, GenerateSources};
 use crate::ai::roles::RoleSettings;
@@ -64,14 +64,9 @@ fn draft_of(id: &str, questions: Vec<Value>, verdicts: Option<Vec<Verdict>>) -> 
         },
         package: Package::parse(&json!({ "questions": questions, "notes": [] }).to_string())
             .unwrap(),
-        blind_check: verdicts.map(|verdicts| {
-            serde_json::to_value(BlindCheck {
-                verdicts,
-                failed: None,
-                info: None,
-                pending: false,
-            })
-            .unwrap()
+        blind_check: verdicts.map(|verdicts| BlindCheck::Done {
+            verdicts,
+            info: None,
         }),
     }
 }
@@ -104,7 +99,8 @@ fn summary_of(db: &Database, id: &str) -> DraftSummary {
 }
 
 fn import_with(db: &Database, id: &str, mode: ImportMode) -> AppResult<ImportResult> {
-    db.transaction(|tx| import(tx, &DraftId::from(id), mode, NOW))
+    let files = tempfile::tempdir().unwrap();
+    import(db, files.path(), &DraftId::from(id), mode, NOW)
 }
 
 fn waiting_items(conn: &Connection) -> AppResult<Vec<DraftListItem>> {
@@ -114,6 +110,11 @@ fn waiting_items(conn: &Connection) -> AppResult<Vec<DraftListItem>> {
 fn count(db: &Database, sql: &str) -> i64 {
     db.with(|conn| Ok(conn.query_row(sql, [], |row| row.get(0))?))
         .unwrap()
+}
+
+fn discard_with(db: &Database, id: &DraftId) -> AppResult<()> {
+    let files = tempfile::tempdir().unwrap();
+    discard(db, files.path(), id)
 }
 
 #[test]
@@ -434,7 +435,7 @@ fn a_package_whose_check_is_running_cannot_be_imported_or_discarded() {
         let error = import_with(&db, "d1", mode).unwrap_err();
         assert!(error.to_string().contains("ainda está em andamento"));
     }
-    assert!(db.with(|conn| discard(conn, &draft.id)).is_err());
+    assert!(discard_with(&db, &draft.id).is_err());
     assert_eq!(count(&db, "SELECT COUNT(*) FROM questions"), 0);
     assert_eq!(summary_of(&db, "d1").status, DraftStatus::Review);
 }
@@ -513,10 +514,10 @@ fn a_draft_is_imported_or_discarded_only_once() {
             .to_string()
             .contains("já foi importado")
     );
-    assert!(db.with(|conn| discard(conn, &DraftId::from("d1"))).is_err());
+    assert!(discard_with(&db, &DraftId::from("d1")).is_err());
 
     insert(&db, &draft_of("d2", vec![question("q7", "a")], None));
-    db.with(|conn| discard(conn, &DraftId::from("d2"))).unwrap();
+    discard_with(&db, &DraftId::from("d2")).unwrap();
     assert_eq!(summary_of(&db, "d2").status, DraftStatus::Discarded);
     assert!(import_with(&db, "d2", ImportMode::All).is_err());
     assert_eq!(
@@ -528,13 +529,68 @@ fn a_draft_is_imported_or_discarded_only_once() {
     );
 }
 
+fn keep_attachment(root: &Path, id: &DraftId) -> std::path::PathBuf {
+    let source = root.join("source.md");
+    std::fs::write(&source, "Synthetic attachment").unwrap();
+    draft_files::keep(root, id, &[source]).unwrap().remove(0)
+}
+
+#[test]
+fn importing_removes_the_kept_attachments() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = mixed(&db);
+    let kept = keep_attachment(files.path(), &draft.id);
+
+    import(&db, files.path(), &draft.id, ImportMode::All, NOW).unwrap();
+
+    assert!(!kept.exists());
+}
+
+#[test]
+fn discarding_removes_the_kept_attachments() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = mixed(&db);
+    let kept = keep_attachment(files.path(), &draft.id);
+
+    discard(&db, files.path(), &draft.id).unwrap();
+
+    assert!(!kept.exists());
+}
+
+#[test]
+fn a_failed_import_commit_leaves_the_kept_attachments() {
+    let db = Database::open_in_memory().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let draft = mixed(&db);
+    let kept = keep_attachment(files.path(), &draft.id);
+    db.with(|conn| {
+        conn.execute_batch(
+            "CREATE TABLE commit_guard (
+                question_id TEXT REFERENCES questions(id) DEFERRABLE INITIALLY DEFERRED
+             );
+             CREATE TRIGGER refuse_draft_commit AFTER UPDATE OF status ON drafts BEGIN
+                INSERT INTO commit_guard VALUES ('missing-question');
+             END;",
+        )?;
+        Ok(())
+    })
+    .unwrap();
+
+    assert!(import(&db, files.path(), &draft.id, ImportMode::All, NOW).is_err());
+
+    assert!(kept.is_file());
+    assert_eq!(summary_of(&db, "d1").status, DraftStatus::Review);
+}
+
 #[test]
 fn the_waiting_list_has_only_drafts_to_review() {
     let db = Database::open_in_memory().unwrap();
     mixed(&db);
     insert(&db, &draft_of("d2", vec![question("q7", "a")], None));
     insert(&db, &draft_of("d3", vec![question("q8", "a")], None));
-    db.with(|conn| discard(conn, &DraftId::from("d3"))).unwrap();
+    discard_with(&db, &DraftId::from("d3")).unwrap();
     let list = db.with(|conn| waiting(conn)).unwrap();
     let mut ids: Vec<_> = list.iter().map(|d| d.id.as_str()).collect();
     ids.sort_unstable();

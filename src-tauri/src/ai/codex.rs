@@ -28,9 +28,9 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Result<Plan, RunError> {
         // The prompt is on stdin.
         "-".into(),
         "--output-schema".into(),
-        work.schema.to_string_lossy().into_owned(),
+        work.schema().to_string_lossy().into_owned(),
         "-o".into(),
-        work.output.to_string_lossy().into_owned(),
+        work.output().to_string_lossy().into_owned(),
         "--json".into(),
         "--skip-git-repo-check".into(),
         "--ephemeral".into(),
@@ -48,19 +48,19 @@ pub(super) fn plan(spec: &JobSpec, work: &Workdir) -> Result<Plan, RunError> {
         args.push("-c".into());
         args.push(r#"service_tier="priority""#.into());
     }
-    let executable = if work.has_attachments && !cfg!(windows) {
+    let executable = if work.has_attachments() && !cfg!(windows) {
         restrict_attachment_shell(spec, work, &mut args)?
     } else {
         // Windows rejects a restricted-read profile on both sandbox backends.
         args.extend(["--sandbox".into(), "read-only".into()]);
-        if !work.has_attachments {
+        if !work.has_attachments() {
             for feature in ["shell_tool", "unified_exec"] {
                 args.extend(["--disable".into(), feature.into()]);
             }
         }
         spec.cli.clone()
     };
-    if work.has_attachments {
+    if work.has_attachments() {
         for value in [
             r#"approval_policy="never""#,
             r#"shell_environment_policy.inherit="core""#,
@@ -162,7 +162,7 @@ impl Parser for CodexParser {
     fn feed(&mut self, line: &str) -> Option<Progress> {
         let event: Value = serde_json::from_str(line).ok()?;
         match event.get("type")?.as_str()? {
-            "turn.started" => Some(Progress::new(ProgressKind::Started, "Iniciando…")),
+            "turn.started" => Some(Progress::from_kind(ProgressKind::Started)),
             "turn.failed" => {
                 self.error = event["error"]["message"].as_str().map(str::to_owned);
                 None
@@ -178,23 +178,12 @@ impl Parser for CodexParser {
                         if event["type"] == "item.completed" {
                             self.last_message = item["text"].as_str().map(str::to_owned);
                         }
-                        Some(Progress::new(
-                            ProgressKind::Writing,
-                            "Redigindo a resposta…",
-                        ))
+                        Some(Progress::from_kind(ProgressKind::Writing))
                     }
-                    "reasoning" => Some(Progress::new(ProgressKind::Thinking, "Raciocinando…")),
-                    "command_execution" => {
-                        Some(Progress::new(ProgressKind::Reading, "Lendo as fontes…"))
-                    }
-                    "web_search" => Some(Progress::new(
-                        ProgressKind::Searching,
-                        "Pesquisando na web…",
-                    )),
-                    "mcp_tool_call" => Some(Progress::new(
-                        ProgressKind::Searching,
-                        "Consultando o RemNote…",
-                    )),
+                    "reasoning" => Some(Progress::from_kind(ProgressKind::Thinking)),
+                    "command_execution" => Some(Progress::from_kind(ProgressKind::Reading)),
+                    "web_search" => Some(Progress::from_kind(ProgressKind::Searching)),
+                    "mcp_tool_call" => Some(Progress::consulting_remnote()),
                     _ => None,
                 }
             }
@@ -203,7 +192,7 @@ impl Parser for CodexParser {
     }
 
     fn finish(&mut self, work: &Workdir) -> Result<(Value, Option<f64>), RunError> {
-        let text = std::fs::read_to_string(&work.output)
+        let text = std::fs::read_to_string(work.output())
             .ok()
             .filter(|text| !text.trim().is_empty())
             .or_else(|| self.last_message.take())

@@ -16,6 +16,13 @@ use ts_rs::TS;
 use super::agent::Agent;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
+const PROBE_POLL: Duration = Duration::from_millis(25);
+/// A killed CLI's children may keep output pipes open. Give both readers one shared grace.
+const READER_GRACE: Duration = Duration::from_secs(2);
+const SPAWN_RETRIES: usize = 50;
+const SPAWN_RETRY_DELAY: Duration = Duration::from_millis(10);
+#[cfg(windows)]
+pub(super) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Folders that commonly hold the CLIs, relative to the home folder.
 const HOME_SUBDIRS: &[&str] = &[
@@ -134,10 +141,11 @@ pub(super) fn spawn_retrying(command: &mut Command) -> std::io::Result<std::proc
     loop {
         match command.spawn() {
             Err(error)
-                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 50 =>
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && attempts < SPAWN_RETRIES =>
             {
                 attempts += 1;
-                std::thread::sleep(Duration::from_millis(10));
+                std::thread::sleep(SPAWN_RETRY_DELAY);
             }
             result => return result,
         }
@@ -155,10 +163,6 @@ pub(super) fn capture_limited(cli: &Path, args: &[&str], limit: u64) -> Option<C
     capture_with(cli, args, limit, PROBE_TIMEOUT)
 }
 
-/// How long to wait for the output readers once the child has ended or been killed. A killed
-/// child's own children may keep the pipes open, and must not hold the probe hostage.
-const READER_GRACE: Duration = Duration::from_secs(2);
-
 /// Like [`capture_limited`], with a custom timeout.
 pub(super) fn capture_with(
     cli: &Path,
@@ -175,7 +179,7 @@ pub(super) fn capture_with(
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        command.creation_flags(CREATE_NO_WINDOW);
     }
     let mut child = spawn_retrying(&mut command).ok()?;
     let mut stdout = child.stdout.take()?;
@@ -193,7 +197,7 @@ pub(super) fn capture_with(
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(25));
+                std::thread::sleep(PROBE_POLL);
             }
             _ => {
                 let _ = child.kill();
@@ -357,8 +361,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn cli_test_reads_version_and_login_from_the_clis_own_commands() {
+    fn claude_probe_result() -> CliStatus {
         let dir = tempfile::tempdir().unwrap();
         let fake = crate::ai::runner::tests::write_script(
             dir.path(),
@@ -368,8 +371,22 @@ mod tests {
   auth) echo '{"loggedIn": false}';;
 esac"#,
         );
-        let status = cli_test(Agent::Claude, Some(&fake));
-        assert_eq!(status.version.as_deref(), Some("9.9.9 (Claude Code)"));
+        cli_test(Agent::Claude, Some(&fake))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cli_test_reads_the_claude_version() {
+        assert_eq!(
+            claude_probe_result().version.as_deref(),
+            Some("9.9.9 (Claude Code)")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cli_test_reads_the_claude_login_state() {
+        let status = claude_probe_result();
         assert_eq!(status.logged_in, Some(false));
         assert!(status.message.contains("sem login"));
     }

@@ -68,10 +68,21 @@ impl BackupService {
     }
 
     /// Whether a backup, restore or import is running now.
-    pub fn is_busy(&self) -> bool {
+    fn is_busy(&self) -> bool {
         self.busy
             .try_lock()
             .is_err_and(|error| matches!(error, std::sync::TryLockError::WouldBlock))
+    }
+
+    /// Refuses to start work that must not overlap with an active backup or data replacement.
+    pub(crate) fn ensure_idle(&self) -> AppResult<()> {
+        if self.is_busy() {
+            return Err(AppError::Invalid(
+                "Um backup, restauração, importação ou a cópia de backups para a pasta nova está em andamento. Tente de novo em instantes."
+                    .into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Fails with a clear message when the backup folder does not answer within the deadline,

@@ -52,6 +52,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src-tauri/src/ordering.rs` | Portuguese text folding and ordering of optional values. Collection filter options are shared in `bank/tags.rs`. |
 | `src-tauri/src/ai/remnote_probe.rs` | Tests the configured RemNote server and reads its list of tools. |
 | `src-tauri/src/backup.rs`, `backup/` | Backup DTOs and service, with modules for names, computer ownership, folders, probes, old-folder offers, rotation, restore, relocation, snapshots and data files. |
+| `src-tauri/src/ai/runner/` | Local CLI process isolation, cancellation and streaming, plus per-run file staging and private CLI configuration. |
 | `src-tauri/src/bank/catalog.rs` | Read-only browsing views (topic tree, collections, collection detail) with accent- and case-insensitive search and Portuguese ordering (`fold`). |
 | `src-tauri/src/db.rs` | `Database` (managed Tauri state, opened at startup at `<app data dir>/gabaritei.sqlite`), `with`/`transaction` helpers, JSON settings helpers, migration runner. |
 | `src-tauri/src/paths.rs` | `AppPaths` (managed state): the app data folder, database file and `images/` folder. |

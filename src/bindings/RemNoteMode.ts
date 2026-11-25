@@ -3,4 +3,4 @@
 /**
  * How RemNote reaches the agents.
  */
-export type RemNoteMode = "off" | "server" | "codexConfig";
+export type RemNoteMode = "off" | "server";

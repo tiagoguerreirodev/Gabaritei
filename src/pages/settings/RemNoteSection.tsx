@@ -9,7 +9,6 @@ import { showError, showToast } from "../../components/toasts";
 const modes: { value: RemNoteMode; label: string }[] = [
   { value: "off", label: "Desligado" },
   { value: "server", label: "Servidor MCP (endereço e token)" },
-  { value: "codexConfig", label: "Usar a configuração do meu Codex" },
 ];
 
 /** RemNote as a source: server URL, token (kept in the OS keychain) and the approved tools. */
@@ -121,15 +120,7 @@ export default function RemNoteSection(props: {
         <p class="muted">O token fica no chaveiro do sistema, nunca no banco de dados.</p>
       </Show>
 
-      <Show when={props.remnote.mode === "codexConfig"}>
-        <p class="muted" role="note">
-          Atenção: o Gabaritei não consegue limitar as ferramentas do servidor que está na sua
-          configuração do Codex. Se ele tiver ferramentas que alteram anotações, o Codex poderia
-          usá-las. Prefira o modo “Servidor MCP”.
-        </p>
-      </Show>
-
-      <Show when={props.remnote.mode !== "off"}>
+      <Show when={props.remnote.mode === "server"}>
         <button type="button" disabled={testing()} onClick={() => void test()}>
           {testing() ? "Testando…" : "Testar conexão"}
         </button>

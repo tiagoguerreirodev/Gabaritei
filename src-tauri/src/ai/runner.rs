@@ -38,30 +38,20 @@ const POLL: Duration = Duration::from_millis(50);
 
 /// How a RemNote MCP server is made available to a run.
 #[derive(Clone, PartialEq, Eq)]
-pub enum RemNoteAccess {
-    /// The app passes the server's URL and token to the CLI. Only the named tools may be used:
-    /// an allowlist of exact read-only tool names, so a write tool can never run. With no
-    /// names, the agent gets no RemNote tools at all.
-    Server {
-        url: String,
-        token: String,
-        tools: Vec<String>,
-    },
-    /// Codex only: use the RemNote server already in the user's own Codex config.
-    CodexConfig,
+pub struct RemNoteAccess {
+    pub url: String,
+    pub token: String,
+    /// Exact read-only tools approved for this server. An empty list grants no tools.
+    pub tools: Vec<String>,
 }
 
 impl std::fmt::Debug for RemNoteAccess {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Server { url, tools, .. } => f
-                .debug_struct("Server")
-                .field("url", url)
-                .field("tools", tools)
-                .field("token", &"<redacted>")
-                .finish(),
-            Self::CodexConfig => f.write_str("CodexConfig"),
-        }
+        f.debug_struct("RemNoteAccess")
+            .field("url", &self.url)
+            .field("tools", &self.tools)
+            .field("token", &"<redacted>")
+            .finish()
     }
 }
 
@@ -213,6 +203,10 @@ pub enum RunError {
     InvalidOutput(String),
     #[error("Não foi possível preparar os arquivos da execução: {0}")]
     Workspace(String),
+    #[error(
+        "O Codex não consegue ler anexos com isolamento nesta instalação. Use o Claude Code ou remova os anexos."
+    )]
+    CodexAttachmentSandboxUnavailable,
 }
 
 impl From<RunError> for AppError {
@@ -347,8 +341,7 @@ impl Workdir {
         // (scoped to it) can't list or cite them. Holds the RemNote token and Claude's
         // role instructions.
         let claude_files = spec.agent == Agent::Claude
-            && (!spec.instructions.is_empty()
-                || matches!(spec.remnote, Some(RemNoteAccess::Server { .. })));
+            && (!spec.instructions.is_empty() || spec.remnote.is_some());
         let config_dir = if claude_files {
             Some(
                 tempfile::Builder::new()
@@ -362,7 +355,7 @@ impl Workdir {
         let mut mcp_config = None;
         let mut instructions = None;
         if let Some(folder) = &config_dir {
-            if let (Agent::Claude, Some(RemNoteAccess::Server { url, token, .. })) =
+            if let (Agent::Claude, Some(RemNoteAccess { url, token, .. })) =
                 (&spec.agent, &spec.remnote)
             {
                 let path = folder.path().join("mcp.json");
@@ -424,6 +417,7 @@ fn sanitize(name: &str) -> String {
 
 /// Arguments and environment for one spawn.
 pub(super) struct Plan {
+    pub executable: PathBuf,
     pub args: Vec<OsString>,
     pub env: Vec<(String, String)>,
 }
@@ -463,11 +457,11 @@ fn spawn(spec: &JobSpec, work: &Workdir) -> Result<(Child, Box<dyn Parser>), Run
             Box::new(claude::ClaudeParser::default()),
         ),
         Agent::Codex => (
-            codex::plan(spec, work),
+            codex::plan(spec, work)?,
             Box::new(codex::CodexParser::default()),
         ),
     };
-    let mut command = Command::new(&spec.cli);
+    let mut command = Command::new(&plan.executable);
     command
         .args(&plan.args)
         .current_dir(work.path())

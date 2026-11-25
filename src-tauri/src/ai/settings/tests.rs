@@ -131,45 +131,59 @@ fn blank_token_removes_it() {
 }
 
 #[test]
-fn remnote_access_follows_the_mode_and_agent() {
+fn disabled_remnote_grants_no_tools() {
     let secrets = Secrets::memory();
-    let mut settings = AiSettings {
-        cli_paths: CliPaths::default(),
-        roles: RoleSettings::default(),
-        remnote: RemNoteSettings::default(),
-        has_remnote_token: false,
-    };
-    assert_eq!(
-        remnote_access(&settings, &secrets, Agent::Codex).unwrap(),
-        None
-    );
+    let db = Database::open_in_memory().unwrap();
+    let settings = db.with(|conn| load(conn, &secrets)).unwrap();
+    assert_eq!(remnote_access(&settings, &secrets).unwrap(), None);
+}
 
+#[test]
+fn remnote_server_requires_a_saved_token() {
+    let secrets = Secrets::memory();
+    let db = Database::open_in_memory().unwrap();
+    let mut settings = db.with(|conn| load(conn, &secrets)).unwrap();
     settings.remnote = RemNoteSettings {
         mode: RemNoteMode::Server,
         url: "https://r.example".into(),
         tools: vec!["search".into()],
     };
-    let error = remnote_access(&settings, &secrets, Agent::Codex).unwrap_err();
+    let error = remnote_access(&settings, &secrets).unwrap_err();
     assert!(error.to_string().contains("falta o token"));
     secrets.set_remnote_token(Some("t")).unwrap();
     assert_eq!(
-        remnote_access(&settings, &secrets, Agent::Claude).unwrap(),
-        Some(RemNoteAccess::Server {
+        remnote_access(&settings, &secrets).unwrap(),
+        Some(RemNoteAccess {
             url: "https://r.example".into(),
             token: "t".into(),
             tools: vec!["search".into()],
         })
     );
+}
 
-    settings.remnote.mode = RemNoteMode::CodexConfig;
-    assert_eq!(
-        remnote_access(&settings, &secrets, Agent::Codex).unwrap(),
-        Some(RemNoteAccess::CodexConfig)
-    );
-    assert_eq!(
-        remnote_access(&settings, &secrets, Agent::Claude).unwrap(),
-        None
-    );
+#[test]
+fn retired_codex_remnote_settings_load_as_disabled() {
+    let secrets = Secrets::memory();
+    secrets.set_remnote_token(Some("previous-token")).unwrap();
+    let db = Database::open_in_memory().unwrap();
+    let settings = db
+        .with(|conn| {
+            set_setting(
+                conn,
+                KEY_REMNOTE,
+                &serde_json::json!({
+                    "mode": "codexConfig",
+                    "url": "https://previous.example/mcp",
+                    "tools": ["search"],
+                }),
+            )?;
+            load(conn, &secrets)
+        })
+        .unwrap();
+    assert_eq!(settings.remnote, RemNoteSettings::default());
+    assert_eq!(remnote_access(&settings, &secrets).unwrap(), None);
+    assert!(!remnote_test(&settings, &secrets).unwrap().ok);
+    assert!(settings.has_remnote_token);
 }
 
 #[cfg(unix)]

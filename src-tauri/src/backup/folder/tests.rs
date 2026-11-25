@@ -151,7 +151,11 @@ fn a_new_folder_that_is_a_plain_subfolder_of_the_old_one_is_not_moved_into() {
         .change_folder(&f.db, &f.paths, Some(&old.join("nested")))
         .unwrap();
 
-    assert!(service.relocate_left_behind(&f.db, &f.paths, true).is_err());
+    assert!(
+        service
+            .relocate_left_behind(&f.db, &f.paths, Relocation::Move)
+            .is_err()
+    );
     snapshot::verify(&old.join(&info.name)).unwrap();
 }
 

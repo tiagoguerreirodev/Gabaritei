@@ -16,6 +16,10 @@ const megabytes = (bytes: number) =>
   `${(bytes / (1024 * 1024)).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} MB`;
 
 /** Backups of the study data: the folder, a backup now, and restore. */
+function availableOffer(offer: LeftBehind) {
+  return offer.state === "available" ? offer : undefined;
+}
+
 export default function BackupSection(props: {
   /** Shared with the data-file section, so only one action runs at a time. */
   busy: Busy;
@@ -132,7 +136,7 @@ export default function BackupSection(props: {
         {(left) => (
           <div class="notice" role="status" data-testid="left-behind">
             <Show
-              when={!left().unavailable}
+              when={availableOffer(left())}
               fallback={
                 <p>
                   A pasta anterior (<code>{left().folder}</code>) tinha backups que ficaram para
@@ -142,39 +146,47 @@ export default function BackupSection(props: {
                 </p>
               }
             >
-              <p>
-                A pasta anterior (<code>{left().folder}</code>) ainda tem{" "}
-                {left().backups === 1
-                  ? "1 backup, que não aparece mais aqui."
-                  : `${left().backups} backups, que não aparecem mais aqui.`}
-                <Show when={left().safety > 0}>
-                  {" "}
-                  {left().backups === 1
-                    ? "Ele é uma cópia feita antes de restaurar ou importar"
-                    : left().safety === 1
-                      ? "Um deles é uma cópia feita antes de restaurar ou importar"
-                      : `${left().safety} deles são cópias feitas antes de restaurar ou importar`}
-                  ; para voltar atrás, volte para aquela pasta.
-                </Show>{" "}
-                <Show
-                  when={relocated()}
-                  fallback="Nada foi movido nem apagado. Se quiser, leve os backups para a pasta nova: cada cópia é conferida antes de qualquer original ser apagado. Os backups do outro computador, se houver, ficam onde estão."
-                >
-                  O que não foi movido continua na pasta anterior. Você pode tentar de novo. Os
-                  backups levados passam a contar no limite da pasta nova (7 diários, 7 manuais e 5
-                  de antes de restaurar).
-                </Show>
-              </p>
-              <button type="button" disabled={busy.active()} onClick={() => void relocate(false)}>
-                Copiar para a pasta nova
-              </button>{" "}
-              <button
-                type="button"
-                disabled={busy.active()}
-                onClick={() => setConfirmingMove(true)}
-              >
-                Mover para a pasta nova
-              </button>{" "}
+              {(offer) => (
+                <>
+                  <p>
+                    A pasta anterior (<code>{offer().folder}</code>) ainda tem{" "}
+                    {offer().backups === 1
+                      ? "1 backup, que não aparece mais aqui."
+                      : `${offer().backups} backups, que não aparecem mais aqui.`}
+                    <Show when={offer().safety > 0}>
+                      {" "}
+                      {offer().backups === 1
+                        ? "Ele é uma cópia feita antes de restaurar ou importar"
+                        : offer().safety === 1
+                          ? "Um deles é uma cópia feita antes de restaurar ou importar"
+                          : `${offer().safety} deles são cópias feitas antes de restaurar ou importar`}
+                      ; para voltar atrás, volte para aquela pasta.
+                    </Show>{" "}
+                    <Show
+                      when={relocated()}
+                      fallback="Nada foi movido nem apagado. Se quiser, leve os backups para a pasta nova: cada cópia é conferida antes de qualquer original ser apagado. Os backups do outro computador, se houver, ficam onde estão."
+                    >
+                      O que não foi movido continua na pasta anterior. Você pode tentar de novo. Os
+                      backups levados passam a contar no limite da pasta nova (7 diários, 7 manuais
+                      e 5 de antes de restaurar).
+                    </Show>
+                  </p>
+                  <button
+                    type="button"
+                    disabled={busy.active()}
+                    onClick={() => void relocate(false)}
+                  >
+                    Copiar para a pasta nova
+                  </button>{" "}
+                  <button
+                    type="button"
+                    disabled={busy.active()}
+                    onClick={() => setConfirmingMove(true)}
+                  >
+                    Mover para a pasta nova
+                  </button>{" "}
+                </>
+              )}
             </Show>
             <button
               type="button"

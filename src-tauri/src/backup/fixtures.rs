@@ -170,8 +170,29 @@ pub(super) fn occupied(probe: &FolderProbe) -> bool {
 pub(super) const LONG: Duration = Duration::from_secs(60);
 
 pub(super) fn service_with_long_probe() -> BackupService {
-    BackupService {
-        probe: FolderProbe::with_timeout(LONG),
-        ..BackupService::default()
+    BackupService::with_timeouts(LONG, LONG)
+}
+
+impl BackupService {
+    pub(super) fn relocate_with(
+        &self,
+        db: &Database,
+        paths: &AppPaths,
+        mode: Relocation,
+        between: &dyn Fn(),
+    ) -> AppResult<RelocateOutcome> {
+        let _running = Relocating::start(&self.relocating)?;
+        let plan = self.exclusive(|| self.plan_relocation(db, paths))?;
+        let report = plan.execute(mode, &|work| {
+            self.relocation_turn(db, paths, &plan, work);
+            between();
+        })?;
+        self.finish_relocation(db, paths, &plan, mode, report)
+    }
+}
+
+impl Default for BackupService {
+    fn default() -> Self {
+        Self::with_timeouts(LONG, LONG)
     }
 }

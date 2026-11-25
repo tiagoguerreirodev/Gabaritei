@@ -93,11 +93,10 @@ fn changing_the_folder_reports_the_backups_left_in_the_old_one() {
     );
     assert_eq!(
         status.left_behind,
-        Some(LeftBehind {
+        Some(LeftBehind::Available {
             folder: old.display().to_string(),
             backups: 2,
             safety: 1,
-            unavailable: false,
         })
     );
     // Nothing was moved or deleted.

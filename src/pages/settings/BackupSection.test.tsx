@@ -187,7 +187,7 @@ describe("BackupSection", () => {
     backend(
       {},
       {},
-      { folder: "/dados/backups", backups: 3, safety: 1, unavailable: false },
+      { folder: "/dados/backups", backups: 3, safety: 1, state: "available" },
       {
         copied: 2,
         removed: 2,
@@ -219,7 +219,7 @@ describe("BackupSection", () => {
   });
 
   it("says what a folder change leaves behind, and lets the user dismiss it", async () => {
-    backend({}, {}, { folder: "/dados/backups", backups: 3, safety: 1, unavailable: false });
+    backend({}, {}, { folder: "/dados/backups", backups: 3, safety: 1, state: "available" });
     const user = userEvent.setup();
     render(() => <BackupSection busy={createBusy()} />);
 
@@ -238,7 +238,7 @@ describe("BackupSection", () => {
 
   it("offers only to dismiss a remembered folder that can't be read now", async () => {
     const calls = backend({
-      leftBehind: { folder: "/Volumes/HD", backups: 0, safety: 0, unavailable: true },
+      leftBehind: { folder: "/Volumes/HD", state: "unavailable" },
     });
     const user = userEvent.setup();
     render(() => <BackupSection busy={createBusy()} />);
@@ -342,7 +342,7 @@ describe("BackupSection", () => {
 
   it("shows the offer the backend remembers when the page opens, and dismissing forgets it", async () => {
     const calls = backend({
-      leftBehind: { folder: "/antiga", backups: 2, safety: 0, unavailable: false },
+      leftBehind: { folder: "/antiga", backups: 2, safety: 0, state: "available" },
     });
     const user = userEvent.setup();
     render(() => <BackupSection busy={createBusy()} />);
@@ -363,7 +363,7 @@ describe("BackupSection", () => {
     const calls = backend(
       {},
       {},
-      { folder: "/dados/backups", backups: 3, safety: 1, unavailable: false },
+      { folder: "/dados/backups", backups: 3, safety: 1, state: "available" },
     );
     const user = userEvent.setup();
     render(() => (
@@ -393,7 +393,7 @@ describe("BackupSection", () => {
     const calls = backend(
       {},
       {},
-      { folder: "/dados/backups", backups: 3, safety: 1, unavailable: false },
+      { folder: "/dados/backups", backups: 3, safety: 1, state: "available" },
     );
     const user = userEvent.setup();
     render(() => <BackupSection busy={createBusy()} />);
@@ -418,7 +418,7 @@ describe("BackupSection", () => {
         folder: "/outra",
         backups: 1,
         safety: 1,
-        unavailable: false,
+        state: "available",
       },
     );
     const user = userEvent.setup();

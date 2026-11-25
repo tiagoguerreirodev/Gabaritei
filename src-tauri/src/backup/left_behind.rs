@@ -2,14 +2,13 @@ use super::*;
 
 /// The notice for the backups `left` in `old`, if there are any.
 pub(super) fn left_behind(old: &Path, left: &[&ParsedName]) -> Option<LeftBehind> {
-    (!left.is_empty()).then(|| LeftBehind {
+    (!left.is_empty()).then(|| LeftBehind::Available {
         folder: old.display().to_string(),
         backups: left.len() as u32,
         safety: left
             .iter()
             .filter(|backup| backup.kind == BackupKind::Safety)
             .count() as u32,
-        unavailable: false,
     })
 }
 
@@ -59,11 +58,8 @@ pub(super) fn pending_old_folder(
         return Ok(None);
     };
     let old = PathBuf::from(old);
-    let unavailable = || LeftBehind {
+    let unavailable = || LeftBehind::Unavailable {
         folder: old.display().to_string(),
-        backups: 0,
-        safety: 0,
-        unavailable: true,
     };
     let (notice, names) = match probe.inspect(&old, current) {
         Some(OldFolder::Current) => (None, Vec::new()),

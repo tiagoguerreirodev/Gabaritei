@@ -234,7 +234,12 @@ pub fn backup_relocate_left_behind(
     service: State<'_, BackupService>,
     remove_originals: bool,
 ) -> AppResult<RelocateOutcome> {
-    service.relocate_left_behind(&db, &paths, remove_originals)
+    let mode = if remove_originals {
+        crate::backup::Relocation::Move
+    } else {
+        crate::backup::Relocation::Copy
+    };
+    service.relocate_left_behind(&db, &paths, mode)
 }
 
 /// Forgets the offer to move backups from the old folder (the "Entendi" button). Nothing is

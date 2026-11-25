@@ -45,6 +45,7 @@ pub use folder::*;
 use left_behind::*;
 use name::*;
 use probe::*;
+pub use relocate::Relocation;
 pub use restore::*;
 use rotation::*;
 pub use service::*;
@@ -145,17 +146,17 @@ pub enum BackupListing {
 /// moved, so they no longer show in the list, and safety backups among them can no longer be
 /// used to undo an import or restore from here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(tag = "state", rename_all = "camelCase")]
 #[ts(export)]
-pub struct LeftBehind {
-    pub folder: String,
-    pub backups: u32,
-    /// How many of them are safety backups ("antes de restaurar").
-    pub safety: u32,
-    /// The old folder can't be read now (a drive that is unplugged, a share that is offline, a
-    /// folder that was deleted). The offer is kept, since the drive may come back, but there is
-    /// nothing to count or move: the user can only dismiss it.
-    pub unavailable: bool,
+pub enum LeftBehind {
+    Available {
+        folder: String,
+        backups: u32,
+        safety: u32,
+    },
+    Unavailable {
+        folder: String,
+    },
 }
 
 /// What copying or moving the backups of the old folder did, and the status afterwards.

@@ -167,7 +167,12 @@ fn show_startup_error<R: Runtime>(app: &App<R>, error: &AppError) {
 fn manage_services<R: Runtime>(app: &App<R>, database: db::Database, paths: paths::AppPaths) {
     app.manage(database);
     app.manage(paths);
-    app.manage(backup::BackupService::default());
+    const FOLDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+    const MANIFEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+    app.manage(backup::BackupService::with_timeouts(
+        FOLDER_TIMEOUT,
+        MANIFEST_TIMEOUT,
+    ));
     start_backup_schedule(app.handle().clone());
     app.manage(ai::secrets::Secrets::keychain());
     app.manage(ai::catalog::CatalogCache::new(vec![

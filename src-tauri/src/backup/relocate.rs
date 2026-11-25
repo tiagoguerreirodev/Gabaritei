@@ -19,6 +19,12 @@ use ts_rs::TS;
 use super::snapshot::{self, Manifest};
 use crate::error::{AppError, AppResult};
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Relocation {
+    Copy,
+    Move,
+}
+
 /// What a copy or move did, in backups.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -53,13 +59,13 @@ pub fn relocate(
     old: &Path,
     new: &Path,
     names: &[String],
-    remove_originals: bool,
+    mode: Relocation,
     turn: Turn<'_>,
 ) -> AppResult<RelocateReport> {
     let mut report = RelocateReport::default();
     for (index, name) in names.iter().enumerate() {
         let mut result = None;
-        turn(&mut || result = Some(relocate_one(old, new, name, remove_originals)));
+        turn(&mut || result = Some(relocate_one(old, new, name, mode)));
         let Some(result) = result else {
             // Not run: the folder changed or something else needed the turn for good.
             let skipped = (names.len() - index) as u32;
@@ -82,7 +88,11 @@ pub fn relocate(
             Err(error) => {
                 crate::log::error(format!(
                     "could not {} backup {name}: {}",
-                    if remove_originals { "move" } else { "copy" },
+                    if mode == Relocation::Move {
+                        "move"
+                    } else {
+                        "copy"
+                    },
                     error.detail()
                 ));
                 report.failed += 1;
@@ -100,7 +110,7 @@ struct Done {
     removed: bool,
 }
 
-fn relocate_one(old: &Path, new: &Path, name: &str, remove: bool) -> AppResult<Done> {
+fn relocate_one(old: &Path, new: &Path, name: &str, mode: Relocation) -> AppResult<Done> {
     let source = old.join(name);
     let target = new.join(name);
     let original = snapshot::read_manifest(&source)?;
@@ -142,12 +152,12 @@ fn relocate_one(old: &Path, new: &Path, name: &str, remove: bool) -> AppResult<D
         true
     };
     // Only reached with a verified copy in place.
-    if remove {
+    if mode == Relocation::Move {
         remove_original(old, name, &source)?;
     }
     Ok(Done {
         copied,
-        removed: remove,
+        removed: mode == Relocation::Move,
     })
 }
 

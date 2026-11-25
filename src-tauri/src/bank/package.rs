@@ -139,15 +139,20 @@ mod tests {
     }
 
     #[test]
-    fn a_valid_package_parses_and_imports() {
+    fn a_valid_package_is_assigned_the_requested_topic() {
+        let package = Package::parse(&sample().to_string()).unwrap();
+        let inputs = package.into_inputs(&topic(), &Provenance::Legacy);
+        assert_eq!(inputs[0].topics, vec![topic()]);
+    }
+
+    #[test]
+    fn a_valid_package_is_importable() {
         let package = Package::parse(&sample().to_string()).unwrap();
         let provenance = Provenance::Generated {
             draft_id: "d1".into(),
             disputed: false,
         };
         let inputs = package.into_inputs(&topic(), &provenance);
-        assert_eq!(inputs[0].topics, vec![topic()]);
-
         let db = Database::open_in_memory().unwrap();
         let outcome = db
             .transaction(|tx| import_questions(tx, inputs, "2026-11-19T00:00:00.000Z"))

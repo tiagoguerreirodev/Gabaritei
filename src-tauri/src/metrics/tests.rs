@@ -2,6 +2,7 @@ use super::*;
 use crate::bank::question::tests::multiple;
 use crate::bank::{TopicPath, import_questions};
 use crate::db::Database;
+use crate::ids::{AttemptId, CollectionId};
 use rusqlite::params;
 
 const T0: &str = "2026-11-01T10:00:00.000Z";
@@ -12,7 +13,7 @@ type Spec<'a> = (&'a str, &'a [Path]);
 /// Fixture builder: questions are `(local id, [topic paths])`; every question's key is `o0`.
 struct Fixture {
     db: Database,
-    ids: BTreeMap<String, String>,
+    ids: BTreeMap<String, QuestionId>,
 }
 
 fn fixture(questions: &[Spec]) -> Fixture {
@@ -38,7 +39,7 @@ fn fixture(questions: &[Spec]) -> Fixture {
 }
 
 impl Fixture {
-    fn id(&self, local: &str) -> String {
+    fn id(&self, local: &str) -> QuestionId {
         self.ids[local].clone()
     }
 
@@ -67,6 +68,7 @@ impl Fixture {
 
     /// A collection holding the given questions, with optional tags.
     fn collection(&self, id: &str, contest: Option<&str>, board: Option<&str>, locals: &[&str]) {
+        let id = CollectionId::from(id);
         self.db
             .transaction(|tx| {
                 tx.execute(
@@ -114,7 +116,8 @@ impl Fixture {
         responses: &[(&str, Option<&str>, &str)],
     ) {
         // Resolve option ids first: `option` takes the database lock itself.
-        let resolved: Vec<(String, Option<String>, Option<&str>)> = responses
+        let id = AttemptId::from(id);
+        let resolved: Vec<(QuestionId, Option<String>, Option<&str>)> = responses
             .iter()
             .map(|(local, choice, at)| {
                 (
@@ -283,8 +286,7 @@ fn filters_apply_before_the_latest_answer_is_picked() {
     assert_eq!(study.trend.iter().map(|w| w.answered).sum::<u32>(), 1);
 }
 
-#[test]
-fn contest_and_board_filters_use_the_collections_a_question_belongs_to() {
+fn bank_with_tagged_collections() -> Fixture {
     let f = fixture(&[("q1", &[D]), ("q2", &[D]), ("q3", &[D])]);
     f.collection("c1", Some("TRT"), Some("Cebraspe"), &["q1"]);
     f.collection("c2", Some("INSS"), Some("FGV"), &["q2", "q1"]);
@@ -295,6 +297,12 @@ fn contest_and_board_filters_use_the_collections_a_question_belongs_to() {
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0")), ("q2", Some("o1")), ("q3", Some("o0"))],
     );
+    f
+}
+
+#[test]
+fn the_contest_filter_includes_a_question_in_each_matching_collection() {
+    let f = bank_with_tagged_collections();
     let contest = |c: &str| {
         f.query(&PerformanceQuery {
             contest: Some(c.into()),
@@ -305,11 +313,21 @@ fn contest_and_board_filters_use_the_collections_a_question_belongs_to() {
     assert_eq!(contest("TRT").overall.score.evaluated, 1);
     assert_eq!(contest("INSS").overall.score.evaluated, 2);
     assert_eq!(contest("INSS").overall.available, 2);
+}
+
+#[test]
+fn the_board_filter_includes_matching_collections() {
+    let f = bank_with_tagged_collections();
     let board = f.query(&PerformanceQuery {
         board: Some("FGV".into()),
         ..Default::default()
     });
     assert_eq!(board.overall.score.evaluated, 2);
+}
+
+#[test]
+fn the_two_filters_must_match_the_same_collection() {
+    let f = bank_with_tagged_collections();
     let both = f.query(&PerformanceQuery {
         contest: Some("TRT".into()),
         board: Some("FGV".into()),
@@ -329,12 +347,22 @@ fn contest_and_board_filters_use_the_collections_a_question_belongs_to() {
         both.overall.score.evaluated, 1,
         "q3 is in a TRT collection by FGV"
     );
+}
+
+#[test]
+fn empty_tags_disable_filtering() {
+    let f = bank_with_tagged_collections();
     // Empty strings mean "no filter".
     let none = f.query(&PerformanceQuery {
         contest: Some(String::new()),
         ..Default::default()
     });
     assert_eq!(none.overall.score.evaluated, 3);
+}
+
+#[test]
+fn filter_options_list_the_collections_tags() {
+    let f = bank_with_tagged_collections();
     assert_eq!(f.all().filters.contests, ["INSS", "TRT"]);
     assert_eq!(f.all().filters.boards, ["Cebraspe", "FGV"]);
 }
@@ -405,8 +433,7 @@ fn blanks_count_as_evaluated_but_not_as_answered() {
     assert_eq!(s.coverage, Some(0.5));
 }
 
-#[test]
-fn small_samples_are_flagged_and_weakest_topics_come_first() {
+fn performance_with_strong_weak_and_unseen_groups() -> Performance {
     let strong: Vec<String> = (0..5).map(|i| format!("s{i}")).collect();
     let mut questions: Vec<Spec> = strong.iter().map(|k| (k.as_str(), &[D][..])).collect();
     questions.push(("w1", &[P]));
@@ -418,15 +445,30 @@ fn small_samples_are_flagged_and_weakest_topics_come_first() {
     responses.push(("w1", Some("o1")));
     responses.push(("w2", Some("o0")));
     f.attempt("a1", "study", Some("2026-11-02T10:00:00.000Z"), &responses);
-    let p = f.all();
+    f.all()
+}
+
+#[test]
+fn small_samples_are_flagged() {
+    let p = performance_with_strong_weak_and_unseen_groups();
+    assert!(p.areas[0].stats.small_sample, "2 answers is under 5");
+    assert!(!p.areas[1].stats.small_sample, "5 answers is enough");
+}
+
+#[test]
+fn areas_are_sorted_from_weakest_to_unseen() {
+    let p = performance_with_strong_weak_and_unseen_groups();
     let names: Vec<&str> = p.areas.iter().map(|a| a.name.as_str()).collect();
     assert_eq!(
         names,
         ["Português", "Direito", "Informática"],
         "weakest first, unseen last"
     );
-    assert!(p.areas[0].stats.small_sample, "2 answers is under 5");
-    assert!(!p.areas[1].stats.small_sample, "5 answers is enough");
+}
+
+#[test]
+fn the_weakest_topics_list_excludes_unseen_topics() {
+    let p = performance_with_strong_weak_and_unseen_groups();
     assert_eq!(p.weakest.len(), 2, "topics never answered are not weak");
     assert_eq!(p.weakest[0].topic, "Crase");
     assert_eq!(p.weakest[1].topic, "Controle");
@@ -487,8 +529,7 @@ fn weeks_cross_the_year_boundary() {
     assert_eq!(f.all().trend[0].week_start, "2025-12-29");
 }
 
-#[test]
-fn csv_is_semicolon_separated_with_bom_and_guards_formulas() {
+fn export_with_special_characters() -> String {
     let f = fixture(&[("q1", &[("=HYPERLINK(\"x\")", "Mat;éria", "-Assunto")])]);
     f.attempt(
         "a1",
@@ -496,14 +537,24 @@ fn csv_is_semicolon_separated_with_bom_and_guards_formulas() {
         Some("2026-11-02T10:00:00.000Z"),
         &[("q1", Some("o0"))],
     );
-    let csv =
-        f.db.with(|c| export_csv(c, &PerformanceQuery::default()))
-            .unwrap();
+    f.db.with(|c| export_csv(c, &PerformanceQuery::default()))
+        .unwrap()
+}
+
+#[test]
+fn csv_uses_semicolons_with_a_bom() {
+    let csv = export_with_special_characters();
     assert!(csv.starts_with('\u{feff}'));
     let lines: Vec<&str> = csv.trim_end().split("\r\n").collect();
     assert_eq!(lines.len(), 5, "header, overall, area, matter, topic");
     assert!(lines[0].starts_with("\u{feff}Nível;Área;Matéria;Assunto;"));
     assert_eq!(lines[1], "Geral;;;;1;0;0;0;1;100,0;100,0;1;100,0");
+}
+
+#[test]
+fn csv_escapes_topic_path_cells() {
+    let csv = export_with_special_characters();
+    let lines: Vec<&str> = csv.trim_end().split("\r\n").collect();
     assert!(
         lines[2].starts_with("Área;\"'=HYPERLINK(\"\"x\"\")\";"),
         "guarded with an apostrophe, then quoted because it contains quotes: {}",
@@ -514,14 +565,22 @@ fn csv_is_semicolon_separated_with_bom_and_guards_formulas() {
 }
 
 #[test]
-fn cells_are_guarded_and_quoted() {
+fn cells_guard_formula_prefixes() {
     assert_eq!(cell("normal"), "normal");
     assert_eq!(cell("=1+1"), "'=1+1");
     assert_eq!(cell("+55"), "'+55");
     assert_eq!(cell("@x"), "'@x");
     assert_eq!(cell("\tx"), "'\tx");
+}
+
+#[test]
+fn cells_quote_csv_delimiters() {
     assert_eq!(cell("a;b"), "\"a;b\"");
     assert_eq!(cell("a\"b"), "\"a\"\"b\"");
+}
+
+#[test]
+fn cells_guard_formulas_before_quoting() {
     assert_eq!(cell("=a;b"), "\"'=a;b\"");
 }
 
@@ -727,8 +786,7 @@ fn home_counts_as_held_only_the_due_reviews_that_sit_in_an_open_attempt() {
     );
 }
 
-#[test]
-fn home_summarizes_the_bank_and_what_is_waiting() {
+fn home_with_bank_activity() -> HomeSummary {
     let f = fixture(&[("q1", &[D]), ("q2", &[P])]);
     f.collection("c1", None, None, &["q1", "q2"]);
     f.attempt(
@@ -763,16 +821,32 @@ fn home_summarizes_the_bank_and_what_is_waiting() {
         Ok(())
     })
     .unwrap();
-    let home = f.db.with(|c| home(c, "2026-11-20T00:00:00.000Z")).unwrap();
-    assert_eq!(home.questions, 2);
-    assert_eq!(home.overall.score.correct, 1);
-    assert_eq!(home.areas.len(), 2);
-    assert_eq!(home.due_reviews, 1);
+    f.db.with(|c| home(c, "2026-11-20T00:00:00.000Z")).unwrap()
+}
+
+#[test]
+fn home_summarizes_the_bank() {
+    let home = home_with_bank_activity();
     assert_eq!(
-        home.due_in_open_attempt, 1,
-        "q1 is due and in the open attempt"
+        (home.questions, home.overall.score.correct, home.areas.len()),
+        (2, 1, 2)
     );
-    assert_eq!(home.drafts_waiting, 1);
+}
+
+#[test]
+fn home_summarizes_due_reviews() {
+    let home = home_with_bank_activity();
+    assert_eq!((home.due_reviews, home.due_in_open_attempt), (1, 1));
+}
+
+#[test]
+fn home_counts_drafts_waiting_for_review() {
+    assert_eq!(home_with_bank_activity().drafts_waiting, 1);
+}
+
+#[test]
+fn home_reports_active_attempts() {
+    let home = home_with_bank_activity();
     assert_eq!(home.active_attempts.len(), 1);
     let open = &home.active_attempts[0];
     assert_eq!(

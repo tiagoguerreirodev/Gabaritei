@@ -35,13 +35,13 @@ fn bank(locals: &[&str]) -> Bank {
 }
 
 impl Bank {
-    fn id(&self, local: &str) -> String {
+    fn id(&self, local: &str) -> QuestionId {
         self.db
             .with(|c| {
                 Ok(c.query_row(
                     "SELECT id FROM questions WHERE stem = ?1",
                     params![format!("Enunciado {local}")],
-                    |r| r.get::<_, String>(0),
+                    |r| r.get(0),
                 )?)
             })
             .unwrap()
@@ -73,10 +73,10 @@ impl Bank {
     }
 
     /// A finished attempt where every response was answered at `at`. Does not refresh reviews.
-    fn finished_attempt(&self, at: &str, responses: &[(&str, &str)]) -> String {
+    fn finished_attempt(&self, at: &str, responses: &[(&str, &str)]) -> AttemptId {
         let n = self.next_attempt.get() + 1;
         self.next_attempt.set(n);
-        let id = format!("a{n}");
+        let id = AttemptId::from(format!("a{n}"));
         let rows: Vec<_> = responses
             .iter()
             .map(|(l, c)| (self.id(l), self.option(l, c), *c != "blank"))
@@ -141,13 +141,13 @@ impl Bank {
             .unwrap()
     }
 
-    fn errors(&self, include_blanks: bool) -> Vec<String> {
+    fn errors(&self, include_blanks: bool) -> Vec<QuestionId> {
         self.db
             .with(|c| error_questions(c, include_blanks, 100))
             .unwrap()
     }
 
-    fn due_list(&self, now: &str) -> Vec<String> {
+    fn due_list(&self, now: &str) -> Vec<QuestionId> {
         self.db.with(|c| due_questions(c, now, 100)).unwrap()
     }
 }
@@ -175,14 +175,24 @@ fn intervals_grow_on_hits_along_the_ladder() {
 }
 
 #[test]
-fn the_first_hit_schedules_one_day_and_the_second_three() {
+fn the_first_hit_schedules_one_day() {
     let b = bank(&["q1"]);
     b.answer(D0, &[("q1", "o0")]);
-    assert_eq!(b.interval("q1"), Some(1));
-    assert_eq!(b.due("q1").as_deref(), Some(D1));
+    assert_eq!(
+        (b.interval("q1"), b.due("q1").as_deref()),
+        (Some(1), Some(D1))
+    );
+}
+
+#[test]
+fn the_second_hit_schedules_three_days() {
+    let b = bank(&["q1"]);
+    b.answer(D0, &[("q1", "o0")]);
     b.answer(D1, &[("q1", "o0")]);
-    assert_eq!(b.interval("q1"), Some(3));
-    assert_eq!(b.due("q1").as_deref(), Some(D4));
+    assert_eq!(
+        (b.interval("q1"), b.due("q1").as_deref()),
+        (Some(3), Some(D4))
+    );
 }
 
 #[test]
@@ -256,42 +266,67 @@ fn unfinished_attempts_do_not_schedule_reviews() {
              VALUES ('open', 0, ?1, '{}', ?2, ?3)",
             params![q1, key, D0],
         )?;
-        refresh_attempt(tx, "open")
+        refresh_attempt(tx, &AttemptId::from("open"))
     })
     .unwrap();
     assert_eq!(b.due("q1"), None);
     assert!(b.errors(true).is_empty());
 }
 
+fn update_annulment(b: &Bank, local: &str, annulled: bool) {
+    let id = b.id(local);
+    b.db.transaction(|tx| {
+        tx.execute(
+            "UPDATE questions SET annulled = ?2 WHERE id = ?1",
+            params![id, annulled],
+        )?;
+        refresh_question(tx, &id)
+    })
+    .unwrap();
+}
+
 #[test]
-fn an_annulled_question_drops_out_and_returns_when_restored() {
+fn annulling_a_question_removes_the_review() {
     let b = bank(&["q1"]);
     b.answer(D0, &[("q1", "o1")]);
-    assert_eq!(b.errors(false).len(), 1);
     assert!(b.due("q1").is_some());
 
-    let q1 = b.id("q1");
-    b.db.transaction(|tx| {
-        tx.execute(
-            "UPDATE questions SET annulled = 1 WHERE id = ?1",
-            params![q1],
-        )?;
-        refresh_question(tx, &q1)
-    })
-    .unwrap();
-    assert!(b.errors(false).is_empty());
-    assert_eq!(b.due("q1"), None);
+    update_annulment(&b, "q1", true);
 
-    b.db.transaction(|tx| {
-        tx.execute(
-            "UPDATE questions SET annulled = 0 WHERE id = ?1",
-            params![q1],
-        )?;
-        refresh_question(tx, &q1)
-    })
-    .unwrap();
-    assert_eq!(b.errors(false).len(), 1);
+    assert_eq!(b.due("q1"), None);
+}
+
+#[test]
+fn annulling_a_question_removes_it_from_the_error_notebook() {
+    let b = bank(&["q1"]);
+    b.answer(D0, &[("q1", "o1")]);
+    assert_eq!(b.errors(false), [b.id("q1")]);
+
+    update_annulment(&b, "q1", true);
+
+    assert!(b.errors(false).is_empty());
+}
+
+#[test]
+fn restoring_a_question_replays_the_review_history() {
+    let b = bank(&["q1"]);
+    b.answer(D0, &[("q1", "o1")]);
+    update_annulment(&b, "q1", true);
+
+    update_annulment(&b, "q1", false);
+
     assert_eq!(b.due("q1").as_deref(), Some(D1));
+}
+
+#[test]
+fn restoring_a_question_returns_it_to_the_error_notebook() {
+    let b = bank(&["q1"]);
+    b.answer(D0, &[("q1", "o1")]);
+    update_annulment(&b, "q1", true);
+
+    update_annulment(&b, "q1", false);
+
+    assert_eq!(b.errors(false), [b.id("q1")]);
 }
 
 #[test]
@@ -304,13 +339,11 @@ fn annulling_through_an_attempt_refreshes_the_review() {
     assert_eq!(b.due("q1"), None);
 }
 
-#[test]
-fn a_key_change_moves_reviews_and_errors() {
-    let b = bank(&["q1"]);
+fn change_key_after_two_answers(b: &Bank) {
     // Answered o1 while the key was o0: a miss.
     b.answer(D0, &[("q1", "o1")]);
     assert_eq!(b.interval("q1"), Some(1));
-    assert_eq!(b.errors(false), vec![b.id("q1")]);
+    assert_eq!(b.errors(false), [b.id("q1")]);
     // A hit afterwards on o0 starts a streak at the first rung.
     b.answer(D1, &[("q1", "o0")]);
     assert_eq!(b.interval("q1"), Some(1));
@@ -326,20 +359,42 @@ fn a_key_change_moves_reviews_and_errors() {
         refresh_question(tx, &q1)
     })
     .unwrap();
-    // Latest answer (o0) is now wrong: error, interval 1, due the day after it.
-    assert_eq!(b.errors(false), vec![q1.clone()]);
-    assert_eq!(b.interval("q1"), Some(1));
-    assert_eq!(b.due("q1").as_deref(), Some("2026-11-03T10:00:00.000Z"));
 }
 
 #[test]
-fn the_error_notebook_follows_the_latest_result_and_key_corrections() {
+fn a_key_change_replays_the_review_history() {
+    let b = bank(&["q1"]);
+    change_key_after_two_answers(&b);
+    // The latest answer (o0) is now wrong, with an interval of one day.
+    assert_eq!(
+        (b.interval("q1"), b.due("q1").as_deref()),
+        (Some(1), Some("2026-11-03T10:00:00.000Z"))
+    );
+}
+
+#[test]
+fn a_key_change_updates_the_error_notebook() {
+    let b = bank(&["q1"]);
+    change_key_after_two_answers(&b);
+    assert_eq!(b.errors(false), [b.id("q1")]);
+}
+
+#[test]
+fn the_error_notebook_uses_the_latest_answer() {
     let b = bank(&["q1", "q2"]);
     b.answer(D0, &[("q1", "o1"), ("q2", "o1")]);
     assert_eq!(b.errors(false).len(), 2);
     // A later hit on q1 removes it; q2 stays.
     b.answer(D1, &[("q1", "o0")]);
     assert_eq!(b.errors(false), vec![b.id("q2")]);
+}
+
+#[test]
+fn the_error_notebook_uses_a_corrected_key_without_refresh() {
+    let b = bank(&["q2"]);
+    b.answer(D0, &[("q2", "o1")]);
+    assert_eq!(b.errors(false), [b.id("q2")]);
+
     // Correcting q2's key to what was answered clears it, with no refresh needed.
     let q2 = b.id("q2");
     let o1 = b.option("q2", "o1").unwrap();
@@ -393,27 +448,52 @@ fn a_hit_after_a_wrong_answer_leaves_the_notebook() {
     assert!(b.errors(false).is_empty());
 }
 
-#[test]
-fn errors_come_newest_first_and_are_capped() {
+fn error_bank() -> Bank {
     let b = bank(&["q1", "q2", "q3"]);
     b.answer(D0, &[("q1", "o1")]);
     b.answer(D4, &[("q3", "o1")]);
     b.answer(D1, &[("q2", "o1")]);
-    assert_eq!(b.errors(false), vec![b.id("q3"), b.id("q2"), b.id("q1")]);
-    let capped = b.db.with(|c| error_questions(c, false, 2)).unwrap();
-    assert_eq!(capped, vec![b.id("q3"), b.id("q2")]);
+    b
 }
 
 #[test]
-fn due_reviews_come_most_overdue_first_and_exclude_upcoming() {
+fn errors_come_newest_first() {
+    let b = error_bank();
+    assert_eq!(b.errors(false), [b.id("q3"), b.id("q2"), b.id("q1")]);
+}
+
+#[test]
+fn error_questions_respect_the_limit() {
+    let b = error_bank();
+    let capped = b.db.with(|c| error_questions(c, false, 2)).unwrap();
+    assert_eq!(capped, [b.id("q3"), b.id("q2")]);
+}
+
+fn review_bank() -> Bank {
     let b = bank(&["q1", "q2", "q3"]);
     b.answer(D0, &[("q1", "o1")]); // due D1
     b.answer(D1, &[("q2", "o1")]); // due D1 + 1 day
-    b.answer(D25, &[("q3", "o0")]); // due in 1 day from D25: not yet
-    assert_eq!(b.due_list(D25), vec![b.id("q1"), b.id("q2")]);
-    assert_eq!(b.due_list(D0), Vec::<String>::new());
+    b.answer(D25, &[("q3", "o0")]); // due in 1 day from D25
+    b
+}
+
+#[test]
+fn due_reviews_come_most_overdue_first() {
+    let b = review_bank();
+    assert_eq!(b.due_list(D25), [b.id("q1"), b.id("q2")]);
+}
+
+#[test]
+fn upcoming_reviews_are_excluded_from_the_due_list() {
+    let b = review_bank();
+    assert!(b.due_list(D0).is_empty());
+}
+
+#[test]
+fn due_reviews_respect_the_limit() {
+    let b = review_bank();
     let capped = b.db.with(|c| due_questions(c, D25, 1)).unwrap();
-    assert_eq!(capped, vec![b.id("q1")]);
+    assert_eq!(capped, [b.id("q1")]);
 }
 
 #[test]
@@ -478,23 +558,49 @@ fn finishing_an_attempt_schedules_reviews() {
     assert_eq!(b.errors(false), vec![b.id("q1")]);
 }
 
-#[test]
-fn the_overview_counts_due_upcoming_and_errors_and_shows_no_answers() {
+fn overview_bank() -> Bank {
     let b = bank(&["q1", "q2", "q3"]);
     b.answer(D0, &[("q1", "o1")]); // due D1, error
-    b.answer(D1, &[("q2", "o0")]); // due D1+1d = D1 + 1, hit
+    b.answer(D1, &[("q2", "o0")]); // due after D1, hit
     b.answer(D4, &[("q3", "o0")]); // due D5
+    b
+}
+
+#[test]
+fn the_overview_counts_reviews_by_due_date() {
+    let b = overview_bank();
     let overview = b.db.with(|c| overview(c, D1, false)).unwrap();
-    assert_eq!(overview.due, 1);
-    assert_eq!(overview.upcoming, 2);
+    assert_eq!((overview.due, overview.upcoming), (1, 2));
+}
+
+#[test]
+fn the_overview_counts_errors() {
+    let b = overview_bank();
+    let overview = b.db.with(|c| overview(c, D1, false)).unwrap();
     assert_eq!(overview.errors, 1);
+}
+
+#[test]
+fn the_overview_lists_the_due_review_first() {
+    let b = overview_bank();
+    let overview = b.db.with(|c| overview(c, D1, false)).unwrap();
     assert_eq!(overview.items.len(), 3);
     let first = &overview.items[0];
-    assert_eq!(first.question_id, b.id("q1"));
-    assert!(first.is_error);
-    assert_eq!(first.due_at.as_deref(), Some(D1));
-    assert!(first.last_attempt_id.starts_with('a'));
+    assert_eq!(
+        (
+            &first.question_id,
+            first.is_error,
+            first.due_at.as_deref(),
+            &first.last_attempt_id
+        ),
+        (&b.id("q1"), true, Some(D1), &AttemptId::from("a1"))
+    );
+}
 
+#[test]
+fn the_overview_serializes_without_answers() {
+    let b = overview_bank();
+    let overview = b.db.with(|c| overview(c, D1, false)).unwrap();
     let json = serde_json::to_string(&overview).unwrap();
     for forbidden in ["answer", "explanation", "stem", "options"] {
         assert!(!json.contains(forbidden), "{forbidden} leaked: {json}");
@@ -645,7 +751,7 @@ impl Bank {
             .unwrap()
     }
 
-    fn start(&self, source: SessionSource, at: &str) -> AppResult<Vec<String>> {
+    fn start(&self, source: SessionSource, at: &str) -> AppResult<Vec<QuestionId>> {
         let view = self.db.transaction(|tx| {
             attempts::start(
                 tx,

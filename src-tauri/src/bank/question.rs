@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::identity::{fingerprint, js_trim, option_id};
+use crate::ids::{DraftId, QuestionId};
 
 /// Number of options in a multiple-choice question.
 pub const MULTIPLE_OPTIONS: usize = 5;
@@ -107,7 +108,7 @@ pub enum Provenance {
     Legacy,
     /// Written by the AI generator and approved from a draft.
     Generated {
-        draft_id: String,
+        draft_id: DraftId,
         /// The blind check still disagreed with the key when the package was imported. The
         /// Resolver shows a badge after the user answers.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -136,7 +137,7 @@ pub struct QuestionInput {
 /// A canonical, stored question. `id` is the content fingerprint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Question {
-    pub id: String,
+    pub id: QuestionId,
     pub kind: QuestionType,
     pub stem: String,
     pub options: Vec<QuestionOption>,
@@ -454,10 +455,14 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn boolean_needs_exactly_certo_and_errado() {
+    fn boolean_requires_the_standard_option_texts() {
         let mut q = boolean("q", "Enunciado", true);
         q.options[1].text = "Falso".into();
         assert_rejected(q, "\"Certo\" e \"Errado\"");
+    }
+
+    #[test]
+    fn boolean_refuses_a_third_option() {
         let mut q = boolean("q", "Enunciado", true);
         q.options.push(QuestionOption {
             id: "x".into(),
@@ -467,10 +472,14 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn option_ids_and_texts_must_be_distinct() {
+    fn option_ids_must_be_distinct() {
         let mut q = multiple("q", "Enunciado", 0);
         q.options[1].id = "o0".into();
         assert_rejected(q, "Identificador de alternativa repetido");
+    }
+
+    #[test]
+    fn option_texts_must_be_distinct() {
         let mut q = multiple("q", "Enunciado", 0);
         q.options[1].text = "  ALFA ".into();
         assert_rejected(q, "Alternativas com o mesmo texto");
@@ -484,21 +493,41 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn blank_and_oversized_texts_are_rejected() {
+    fn the_stem_cannot_be_blank() {
         assert_rejected(multiple("q", " \n ", 0), "O enunciado está vazio");
+    }
+
+    #[test]
+    fn the_stem_has_a_length_limit() {
         assert_rejected(
             multiple("q", &"x".repeat(MAX_STEM + 1), 0),
             "O enunciado tem mais de",
         );
+    }
+
+    #[test]
+    fn an_option_needs_text() {
         let mut q = multiple("q", "Enunciado", 0);
         q.options[3].text = "\u{a0}".into();
         assert_rejected(q, "alternativa sem texto");
+    }
+
+    #[test]
+    fn an_option_has_a_length_limit() {
         let mut q = multiple("q", "Enunciado", 0);
         q.options[3].text = "y".repeat(MAX_OPTION_TEXT + 1);
         assert_rejected(q, "Uma alternativa tem mais de");
+    }
+
+    #[test]
+    fn the_explanation_has_a_length_limit() {
         let mut q = multiple("q", "Enunciado", 0);
         q.explanation = "z".repeat(MAX_EXPLANATION + 1);
         assert_rejected(q, "O comentário tem mais de");
+    }
+
+    #[test]
+    fn a_local_id_must_be_present() {
         assert_rejected(multiple("", "Enunciado", 0), "Identificador inválido");
     }
 
@@ -534,7 +563,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn images_need_a_valid_name_and_alt_text() {
+    fn image_names_have_a_fixed_format() {
         assert!(is_valid_image_name("0123456789abcdef01234567.png"));
         assert!(is_valid_image_name(&format!("{}.webp", "a".repeat(64))));
         for bad in [
@@ -547,25 +576,41 @@ pub(crate) mod tests {
         ] {
             assert!(!is_valid_image_name(bad), "{bad}");
         }
+    }
 
+    #[test]
+    fn an_invalid_image_name_is_rejected() {
         let mut q = multiple("q", "Enunciado", 0);
         q.image = Some("../segredo.png".into());
         q.image_alt = Some("Figura".into());
         assert_rejected(q, "Nome de imagem inválido");
+    }
+
+    #[test]
+    fn an_image_requires_alt_text() {
         let mut q = multiple("q", "Enunciado", 0);
         q.image = Some("0123456789abcdef0123456789abcdef.png".into());
         assert_rejected(q, "precisa de uma descrição");
+    }
+
+    #[test]
+    fn alt_text_requires_an_image() {
         let mut q = multiple("q", "Enunciado", 0);
         q.image_alt = Some("Figura".into());
         assert_rejected(q, "nenhuma imagem");
     }
 
     #[test]
-    fn canonicalize_derives_option_ids_answer_and_fingerprint() {
+    fn canonicalize_replaces_local_option_ids_including_the_answer() {
         let question = canonicalize(multiple("q", "Enunciado", 2)).unwrap();
         assert_eq!(question.options[2].id, option_id("Gama"));
         assert_eq!(question.answer_id, option_id("Gama"));
         assert_eq!(question.answer_text(), Some("Gama"));
+    }
+
+    #[test]
+    fn canonicalize_uses_the_content_fingerprint_as_the_question_id() {
+        let question = canonicalize(multiple("q", "Enunciado", 2)).unwrap();
         assert_eq!(
             question.id,
             fingerprint(
@@ -578,20 +623,29 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn canonicalize_trims_topics_and_drops_duplicate_topics_and_refs() {
+    fn canonicalize_trims_topics() {
         let mut q = multiple("q", "Enunciado", 0);
-        q.topics = vec![
-            topic(),
-            TopicPath::new(
-                " Direito",
-                "Constitucional ",
-                "Controle de constitucionalidade",
-            ),
-        ];
+        q.topics[0].area.insert(0, ' ');
+        q.topics[0].matter.push(' ');
+        assert_eq!(canonicalize(q).unwrap().topics, vec![topic()]);
+    }
+
+    #[test]
+    fn canonicalize_deduplicates_topics_after_trimming() {
+        let mut q = multiple("q", "Enunciado", 0);
+        q.topics.push(TopicPath::new(
+            " Direito",
+            "Constitucional ",
+            "Controle de constitucionalidade",
+        ));
+        assert_eq!(canonicalize(q).unwrap().topics, vec![topic()]);
+    }
+
+    #[test]
+    fn canonicalize_deduplicates_references() {
+        let mut q = multiple("q", "Enunciado", 0);
         q.refs = vec!["CF/88, art. 102".into(), "CF/88, art. 102".into()];
-        let question = canonicalize(q).unwrap();
-        assert_eq!(question.topics, vec![topic()]);
-        assert_eq!(question.refs, vec!["CF/88, art. 102".to_owned()]);
+        assert_eq!(canonicalize(q).unwrap().refs, ["CF/88, art. 102"]);
     }
 
     #[test]

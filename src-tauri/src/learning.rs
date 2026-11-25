@@ -25,6 +25,7 @@ use ts_rs::TS;
 use crate::attempts::RESPONSE_TIME_SQL;
 use crate::bank::TopicPath;
 use crate::error::AppResult;
+use crate::ids::{AttemptId, QuestionId};
 
 /// Review intervals in days.
 const LADDER: [u32; 6] = [1, 3, 7, 14, 30, 60];
@@ -49,7 +50,7 @@ struct ReviewState {
 /// skipped by the callers), because replaying history row by row in Rust would be slower. The
 /// test `scoring_in_sql_agrees_with_attempts_outcome` keeps the two together.
 /// A response without an answer time (a blank) is dated by when its attempt finished.
-fn history(conn: &Connection, question_id: &str) -> AppResult<Vec<(String, bool)>> {
+fn history(conn: &Connection, question_id: &QuestionId) -> AppResult<Vec<(String, bool)>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {RESPONSE_TIME_SQL} AS at,
                 r.choice IS NOT NULL AND r.choice = q.answer_id
@@ -68,7 +69,7 @@ fn history(conn: &Connection, question_id: &str) -> AppResult<Vec<(String, bool)
 /// Recomputes one question's review from its whole history. Call it whenever something that
 /// feeds the schedule changes: an attempt finishes, a key is corrected, a question is
 /// annulled or restored.
-pub fn refresh_question(conn: &Connection, question_id: &str) -> AppResult<()> {
+pub fn refresh_question(conn: &Connection, question_id: &QuestionId) -> AppResult<()> {
     let annulled: Option<bool> = conn
         .query_row(
             "SELECT annulled FROM questions WHERE id = ?1",
@@ -106,11 +107,11 @@ pub fn refresh_question(conn: &Connection, question_id: &str) -> AppResult<()> {
 }
 
 /// Refreshes every question of an attempt. Call it when the attempt finishes.
-pub fn refresh_attempt(conn: &Connection, attempt_id: &str) -> AppResult<()> {
+pub fn refresh_attempt(conn: &Connection, attempt_id: &AttemptId) -> AppResult<()> {
     let mut stmt =
         conn.prepare("SELECT DISTINCT question_id FROM responses WHERE attempt_id = ?1")?;
     let ids = stmt
-        .query_map(params![attempt_id], |r| r.get::<_, String>(0))?
+        .query_map(params![attempt_id], |r| r.get::<_, QuestionId>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     for id in ids {
         refresh_question(conn, &id)?;
@@ -123,7 +124,7 @@ pub fn refresh_attempt(conn: &Connection, attempt_id: &str) -> AppResult<()> {
 pub fn refresh_all(conn: &Connection) -> AppResult<()> {
     let mut stmt = conn.prepare("SELECT DISTINCT question_id FROM responses")?;
     let ids = stmt
-        .query_map([], |r| r.get::<_, String>(0))?
+        .query_map([], |r| r.get::<_, QuestionId>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     for id in ids {
         refresh_question(conn, &id)?;
@@ -139,9 +140,9 @@ pub fn refresh_all(conn: &Connection) -> AppResult<()> {
 
 /// A question's latest result (and latest answered response) in finished attempts.
 struct Latest {
-    question_id: String,
+    question_id: QuestionId,
     at: String,
-    attempt_id: String,
+    attempt_id: AttemptId,
     blank: bool,
     wrong: bool,
 }
@@ -207,10 +208,10 @@ impl Latest {
 const OPEN_ATTEMPT_QUESTIONS_SQL: &str = "SELECT DISTINCT r.question_id FROM responses r
      JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NULL";
 
-fn open_attempt_questions(conn: &Connection) -> AppResult<HashSet<String>> {
+fn open_attempt_questions(conn: &Connection) -> AppResult<HashSet<QuestionId>> {
     let ids = conn
         .prepare(OPEN_ATTEMPT_QUESTIONS_SQL)?
-        .query_map([], |r| r.get::<_, String>(0))?
+        .query_map([], |r| r.get::<_, QuestionId>(0))?
         .collect::<Result<_, _>>()?;
     Ok(ids)
 }
@@ -234,7 +235,7 @@ pub fn error_questions(
     conn: &Connection,
     include_blanks: bool,
     limit: u32,
-) -> AppResult<Vec<String>> {
+) -> AppResult<Vec<QuestionId>> {
     let in_open_attempt = open_attempt_questions(conn)?;
     Ok(latest_results(conn)?
         .into_iter()
@@ -246,7 +247,7 @@ pub fn error_questions(
 
 /// The questions of a reviews session: due reviews first (most overdue first), then the most
 /// recent errors that aren't due yet, up to `limit`.
-pub fn review_session(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<String>> {
+pub fn review_session(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<QuestionId>> {
     let mut ids = due_questions(conn, now, limit)?;
     for id in error_questions(conn, false, limit)? {
         if ids.len() >= limit as usize {
@@ -261,14 +262,14 @@ pub fn review_session(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec
 
 /// Questions whose review is due at `now`, the most overdue first, without the ones already
 /// in an unfinished attempt.
-pub fn due_questions(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<String>> {
+pub fn due_questions(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<QuestionId>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT question_id FROM review_state
          WHERE due_at <= ?1 AND question_id NOT IN ({OPEN_ATTEMPT_QUESTIONS_SQL})
          ORDER BY due_at, question_id LIMIT ?2"
     ))?;
     let ids = stmt
-        .query_map(params![now, limit], |r| r.get::<_, String>(0))?
+        .query_map(params![now, limit], |r| r.get::<_, QuestionId>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ids)
 }
@@ -281,7 +282,7 @@ pub fn due_questions(conn: &Connection, now: &str, limit: u32) -> AppResult<Vec<
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct LearningItem {
-    pub question_id: String,
+    pub question_id: QuestionId,
     pub topics: Vec<TopicPath>,
     /// When the next review is due. `None` for an error with no review (never the case for
     /// a finished attempt, but kept honest).
@@ -290,7 +291,7 @@ pub struct LearningItem {
     /// included).
     pub is_error: bool,
     /// The attempt holding the question's latest result.
-    pub last_attempt_id: String,
+    pub last_attempt_id: AttemptId,
     pub last_answered_at: String,
 }
 
@@ -319,11 +320,11 @@ pub struct LearningOverview {
 
 /// Counts and list for the page at `now`.
 pub fn overview(conn: &Connection, now: &str, include_blanks: bool) -> AppResult<LearningOverview> {
-    let due_dates: HashMap<String, String> = conn
+    let due_dates: HashMap<QuestionId, String> = conn
         .prepare("SELECT question_id, due_at FROM review_state")?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<Result<_, _>>()?;
-    let mut topics: HashMap<String, Vec<TopicPath>> = HashMap::new();
+    let mut topics: HashMap<QuestionId, Vec<TopicPath>> = HashMap::new();
     let mut stmt = conn.prepare(
         "SELECT qt.question_id, t.area, t.matter, t.topic
          FROM question_topics qt JOIN topics t ON t.id = qt.topic_id
@@ -331,7 +332,7 @@ pub fn overview(conn: &Connection, now: &str, include_blanks: bool) -> AppResult
     )?;
     for row in stmt.query_map([], |r| {
         Ok((
-            r.get::<_, String>(0)?,
+            r.get::<_, QuestionId>(0)?,
             TopicPath {
                 area: r.get(1)?,
                 matter: r.get(2)?,

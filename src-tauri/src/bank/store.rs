@@ -13,6 +13,7 @@ use super::question::{
     Provenance, Question, QuestionInput, QuestionOption, QuestionType, TopicPath, canonicalize,
 };
 use crate::error::{AppError, AppResult};
+use crate::ids::{QuestionId, TopicId};
 
 /// One canonical question of a planned import.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,7 +35,7 @@ pub struct ImportPlan {
 
 impl ImportPlan {
     /// Canonical question ID for each input's local ID.
-    pub fn ids_by_local_id(&self) -> HashMap<String, String> {
+    pub fn ids_by_local_id(&self) -> HashMap<String, QuestionId> {
         self.questions
             .iter()
             .flat_map(|p| {
@@ -56,7 +57,7 @@ pub struct ImportOutcome {
     pub inserted: usize,
     pub merged: usize,
     /// Canonical question ID for each input's local ID.
-    pub ids_by_local_id: HashMap<String, String>,
+    pub ids_by_local_id: HashMap<String, QuestionId>,
 }
 
 fn excerpt(text: &str) -> String {
@@ -94,7 +95,7 @@ fn merge_into(kept: &mut Question, incoming: &Question) {
 /// question against the bank. Writes nothing.
 pub fn plan_import(conn: &Connection, inputs: Vec<QuestionInput>) -> AppResult<ImportPlan> {
     let mut plan = ImportPlan::default();
-    let mut index_by_id: HashMap<String, usize> = HashMap::new();
+    let mut index_by_id: HashMap<QuestionId, usize> = HashMap::new();
     let mut seen_local_ids: HashMap<String, ()> = HashMap::new();
 
     for input in inputs {
@@ -225,7 +226,7 @@ pub fn topic_stems(conn: &Connection, path: &TopicPath) -> AppResult<Vec<String>
 }
 
 /// Returns the topic's ID, creating it if needed.
-pub fn upsert_topic(conn: &Connection, path: &TopicPath) -> AppResult<i64> {
+pub fn upsert_topic(conn: &Connection, path: &TopicPath) -> AppResult<TopicId> {
     conn.execute(
         "INSERT INTO topics (area, matter, topic) VALUES (?1, ?2, ?3)
          ON CONFLICT (area, matter, topic) DO NOTHING",
@@ -292,7 +293,7 @@ fn update_question(conn: &Connection, q: &Question, now: &str) -> AppResult<()> 
 }
 
 /// Loads a question with its topics (in topic ID order).
-pub fn load_question(conn: &Connection, id: &str) -> AppResult<Option<Question>> {
+pub fn load_question(conn: &Connection, id: &QuestionId) -> AppResult<Option<Question>> {
     let row = conn
         .query_row(
             "SELECT type, stem, options, answer_id, explanation, refs, image, image_alt,
@@ -461,39 +462,60 @@ mod tests {
         .unwrap();
     }
 
-    #[test]
-    fn duplicates_merge_explanations_refs_and_topics() {
+    fn merge_duplicate(original: QuestionInput, copy: QuestionInput) -> Question {
         let db = Database::open_in_memory().unwrap();
-        let mut original = multiple("q1", "Primeira", 0);
-        original.refs = vec!["CF/88".into()];
-        let mut again = multiple("q2", "Primeira", 0);
-        again.explanation = "Porque sim.".into();
-        again.refs = vec!["CF/88".into(), "STF, ADI 4.277".into()];
-        again.topics = vec![TopicPath::new(
-            "Direito",
-            "Constitucional",
-            "Direitos fundamentais",
-        )];
-
+        let copy_id = copy.local_id.clone();
         db.transaction(|tx| {
             import_questions(tx, vec![original], NOW)?;
-            let outcome = import_questions(tx, vec![again], LATER)?;
-            let stored = load_question(tx, &outcome.ids_by_local_id["q2"])?.unwrap();
-            assert_eq!(stored.explanation, "Porque sim.");
-            assert_eq!(stored.refs, ["CF/88", "STF, ADI 4.277"]);
-            assert_eq!(stored.topics.len(), 2);
-
-            let mut later = multiple("q3", "Primeira", 0);
-            later.explanation = "Outra explicação.".into();
-            import_questions(tx, vec![later], LATER)?;
-            let stored = load_question(tx, &outcome.ids_by_local_id["q2"])?.unwrap();
-            assert_eq!(
-                stored.explanation, "Porque sim.",
-                "an existing explanation is kept"
-            );
-            Ok(())
+            let outcome = import_questions(tx, vec![copy], LATER)?;
+            Ok(load_question(tx, &outcome.ids_by_local_id[&copy_id])?.unwrap())
         })
-        .unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn a_duplicate_fills_a_missing_explanation() {
+        let original = multiple("q1", "Primeira", 0);
+        let mut copy = multiple("q2", "Primeira", 0);
+        copy.explanation = "Porque sim.".into();
+
+        assert_eq!(merge_duplicate(original, copy).explanation, "Porque sim.");
+    }
+
+    #[test]
+    fn a_duplicate_keeps_an_existing_explanation() {
+        let mut original = multiple("q1", "Primeira", 0);
+        original.explanation = "Porque sim.".into();
+        let mut copy = multiple("q2", "Primeira", 0);
+        copy.explanation = "Outra explicação.".into();
+
+        assert_eq!(merge_duplicate(original, copy).explanation, "Porque sim.");
+    }
+
+    #[test]
+    fn a_duplicate_merges_references() {
+        let mut original = multiple("q1", "Primeira", 0);
+        original.refs = vec!["CF/88".into()];
+        let mut copy = multiple("q2", "Primeira", 0);
+        copy.refs = vec!["CF/88".into(), "STF, ADI 4.277".into()];
+
+        assert_eq!(
+            merge_duplicate(original, copy).refs,
+            ["CF/88", "STF, ADI 4.277"]
+        );
+    }
+
+    #[test]
+    fn a_duplicate_merges_topics() {
+        let original = multiple("q1", "Primeira", 0);
+        let mut copy = multiple("q2", "Primeira", 0);
+        let another_topic = TopicPath::new("Direito", "Constitucional", "Direitos fundamentais");
+        copy.topics = vec![another_topic.clone()];
+
+        assert_eq!(
+            merge_duplicate(original, copy).topics,
+            [topic(), another_topic]
+        );
     }
 
     #[test]
@@ -548,12 +570,12 @@ mod tests {
     }
 
     #[test]
-    fn invalid_questions_are_reported_with_their_local_id_and_nothing_is_written() {
+    fn an_invalid_question_is_reported_with_its_local_id() {
         let db = Database::open_in_memory().unwrap();
         let mut broken = multiple("q7", "Enunciado", 0);
         broken.options.truncate(3);
         let plan = db
-            .with(|conn| plan_import(conn, vec![multiple("ok", "Válida", 0), broken.clone()]))
+            .with(|conn| plan_import(conn, vec![multiple("ok", "Válida", 0), broken]))
             .unwrap();
         assert!(
             plan.problems.iter().all(|p| p.starts_with("Questão q7:")),
@@ -561,6 +583,13 @@ mod tests {
             plan.problems
         );
         assert_eq!(plan.questions.len(), 1);
+    }
+
+    #[test]
+    fn an_invalid_question_blocks_the_import() {
+        let db = Database::open_in_memory().unwrap();
+        let mut broken = multiple("q7", "Enunciado", 0);
+        broken.options.truncate(3);
 
         let error = db
             .transaction(|tx| import_questions(tx, vec![multiple("ok", "Válida", 0), broken], NOW))

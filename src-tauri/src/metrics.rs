@@ -26,6 +26,7 @@ use crate::attempts::{
 };
 use crate::bank::catalog::cmp_pt;
 use crate::error::AppResult;
+use crate::ids::{QuestionId, TopicId};
 
 /// Groups with fewer answers than this carry the small-sample warning.
 pub const SMALL_SAMPLE: u32 = 5;
@@ -68,7 +69,7 @@ pub struct GroupStats {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct TopicStats {
-    pub topic_id: i64,
+    pub topic_id: TopicId,
     pub name: String,
     pub stats: GroupStats,
 }
@@ -96,7 +97,7 @@ pub struct AreaStats {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct WeakTopic {
-    pub topic_id: i64,
+    pub topic_id: TopicId,
     pub area: String,
     pub matter: String,
     pub topic: String,
@@ -144,7 +145,7 @@ pub struct Performance {
 
 #[derive(Default)]
 struct Acc {
-    seen: HashSet<String>,
+    seen: HashSet<QuestionId>,
     outcomes: Vec<Outcome>,
     answered: u32,
     available: u32,
@@ -152,7 +153,7 @@ struct Acc {
 
 impl Acc {
     /// Adds a question unless this group already has it.
-    fn add(&mut self, question_id: &str, row: &Row) {
+    fn add(&mut self, question_id: &QuestionId, row: &Row) {
         if !self.seen.insert(question_id.to_owned()) {
             return;
         }
@@ -266,12 +267,12 @@ fn strength(conn: &Connection, query: &PerformanceQuery) -> AppResult<Strength> 
 
     let mut overall = Acc::default();
     let mut groups: BTreeMap<Vec<String>, Acc> = BTreeMap::new();
-    let mut topic_ids: BTreeMap<Vec<String>, i64> = BTreeMap::new();
+    let mut topic_ids: BTreeMap<Vec<String>, TopicId> = BTreeMap::new();
     while let Some(r) = rows.next()? {
-        let question_id: String = r.get(0)?;
+        let question_id: QuestionId = r.get(0)?;
         let answer_id: String = r.get(1)?;
         let annulled: bool = r.get(2)?;
-        let topic_id: i64 = r.get(3)?;
+        let topic_id: TopicId = r.get(3)?;
         let path = vec![
             r.get::<_, String>(4)?,
             r.get::<_, String>(5)?,
@@ -353,7 +354,7 @@ fn strength(conn: &Connection, query: &PerformanceQuery) -> AppResult<Strength> 
 
 /// *Acerto entre respondidas* per topic id for the Banco tree, over all finished attempts.
 /// Topics without an answer are absent.
-pub fn topic_accuracy(conn: &Connection) -> AppResult<HashMap<i64, f64>> {
+pub fn topic_accuracy(conn: &Connection) -> AppResult<HashMap<TopicId, f64>> {
     let (_, areas, _) = strength(conn, &PerformanceQuery::default())?;
     Ok(areas
         .iter()

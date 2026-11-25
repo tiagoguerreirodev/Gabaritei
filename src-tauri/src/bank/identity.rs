@@ -9,6 +9,7 @@ use std::cmp::Ordering;
 use sha2::{Digest, Sha256};
 
 use super::question::QuestionType;
+use crate::ids::QuestionId;
 
 /// Lowercase hex SHA-256.
 pub fn sha256_hex(data: &[u8]) -> String {
@@ -56,12 +57,12 @@ pub fn fingerprint<'a>(
     stem: &str,
     option_texts: impl IntoIterator<Item = &'a str>,
     image: Option<&str>,
-) -> String {
+) -> QuestionId {
     let mut texts: Vec<&str> = option_texts.into_iter().map(js_trim).collect();
     texts.sort_by(|a, b| cmp_utf16(a, b));
     let payload = serde_json::json!([kind.as_str(), js_trim(stem), texts, image.unwrap_or("")]);
     let json = serde_json::to_string(&payload).expect("strings always serialize");
-    sha256_hex(json.as_bytes())
+    sha256_hex(json.as_bytes()).into()
 }
 
 #[cfg(test)]
@@ -129,7 +130,8 @@ mod tests {
                 TRICKY_STEM,
                 TRICKY_OPTIONS,
                 Some("0123456789abcdef0123456789abcdef.png"),
-            ),
+            )
+            .as_str(),
             "17d77978b89d84a07fa461c1649cef28643f9c4c889a50524e84851598d15799"
         );
         assert_eq!(
@@ -138,27 +140,43 @@ mod tests {
                 "O STF é o órgão de cúpula do Judiciário.",
                 ["Certo", "Errado"],
                 None,
-            ),
+            )
+            .as_str(),
             "40aa8aba41819ac52b678f4e9168e31e94bf304dd643c4c678c4dc964845cc98"
         );
     }
 
     #[test]
-    fn fingerprint_ignores_option_order_and_outer_whitespace() {
-        let a = fingerprint(QuestionType::Boolean, "Pergunta", ["Certo", "Errado"], None);
-        let b = fingerprint(
-            QuestionType::Boolean,
-            "  Pergunta\n",
-            [" Errado", "Certo "],
-            None,
+    fn fingerprint_ignores_option_order() {
+        assert_eq!(
+            fingerprint(QuestionType::Boolean, "Pergunta", ["Certo", "Errado"], None),
+            fingerprint(QuestionType::Boolean, "Pergunta", ["Errado", "Certo"], None)
         );
-        assert_eq!(a, b);
-        let other_type = fingerprint(
-            QuestionType::Multiple,
-            "Pergunta",
-            ["Certo", "Errado"],
-            None,
+    }
+
+    #[test]
+    fn fingerprint_ignores_outer_whitespace() {
+        assert_eq!(
+            fingerprint(QuestionType::Boolean, "Pergunta", ["Certo", "Errado"], None),
+            fingerprint(
+                QuestionType::Boolean,
+                "  Pergunta\n",
+                [" Certo ", " Errado"],
+                None
+            )
         );
-        assert_ne!(a, other_type);
+    }
+
+    #[test]
+    fn fingerprint_includes_question_type() {
+        assert_ne!(
+            fingerprint(QuestionType::Boolean, "Pergunta", ["Certo", "Errado"], None),
+            fingerprint(
+                QuestionType::Multiple,
+                "Pergunta",
+                ["Certo", "Errado"],
+                None
+            )
+        );
     }
 }

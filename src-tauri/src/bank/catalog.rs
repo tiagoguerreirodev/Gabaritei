@@ -13,6 +13,7 @@ use unicode_normalization::char::is_combining_mark;
 
 use crate::attempts::FeedbackMode;
 use crate::error::{AppError, AppResult};
+use crate::ids::{AttemptId, CollectionId, TopicId};
 
 /// Default and maximum page sizes for the collections list.
 pub const DEFAULT_PAGE_SIZE: u32 = 20;
@@ -66,7 +67,7 @@ pub struct MatterNode {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct TopicNode {
-    pub id: i64,
+    pub id: TopicId,
     pub name: String,
     pub questions: u32,
     /// *Acerto entre respondidas* over the latest answers; `None` until the topic is answered.
@@ -116,7 +117,7 @@ pub fn topic_tree(conn: &Connection) -> AppResult<TopicTree> {
         )?
         .query_map([], |r| {
             Ok((
-                r.get::<_, i64>(0)?,
+                r.get::<_, TopicId>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, String>(3)?,
@@ -212,7 +213,7 @@ pub struct CollectionQuery {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct CollectionSummary {
-    pub id: String,
+    pub id: CollectionId,
     pub title: String,
     pub kind: CollectionKind,
     pub contest: Option<String>,
@@ -252,7 +253,7 @@ fn all_collections(conn: &Connection) -> AppResult<Vec<CollectionSummary>> {
     )?;
     let rows = stmt.query_map([], |r| {
         Ok((
-            r.get::<_, String>(0)?,
+            r.get::<_, CollectionId>(0)?,
             r.get::<_, String>(1)?,
             r.get::<_, String>(2)?,
             r.get::<_, Option<String>>(3)?,
@@ -334,7 +335,7 @@ pub fn collections(conn: &Connection, query: &CollectionQuery) -> AppResult<Coll
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct AttemptListItem {
-    pub id: String,
+    pub id: AttemptId,
     pub feedback_mode: FeedbackMode,
     pub started_at: String,
     pub finished_at: Option<String>,
@@ -347,7 +348,7 @@ pub struct AttemptListItem {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct CollectionDetail {
-    pub id: String,
+    pub id: CollectionId,
     pub title: String,
     pub kind: CollectionKind,
     pub contest: Option<String>,
@@ -359,7 +360,7 @@ pub struct CollectionDetail {
 }
 
 /// One collection with its attempts.
-pub fn collection(conn: &Connection, id: &str) -> AppResult<CollectionDetail> {
+pub fn collection(conn: &Connection, id: &CollectionId) -> AppResult<CollectionDetail> {
     let row = conn
         .query_row(
             "SELECT c.title, c.kind, c.contest, c.board, c.created_at,
@@ -393,7 +394,7 @@ pub fn collection(conn: &Connection, id: &str) -> AppResult<CollectionDetail> {
     let attempts = stmt
         .query_map(params![id], |r| {
             Ok((
-                r.get::<_, String>(0)?,
+                r.get::<_, AttemptId>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, Option<String>>(3)?,
@@ -432,11 +433,12 @@ mod tests {
     use crate::bank::question::tests::multiple;
     use crate::bank::{TopicPath, import_questions};
     use crate::db::Database;
+    use crate::ids::QuestionId;
 
     const NOW: &str = "2026-11-19T12:00:00.000Z";
 
     /// Three questions: q1 in two topics of the same matter, q2 and q3 elsewhere.
-    fn bank() -> (Database, Vec<String>) {
+    fn bank() -> (Database, Vec<QuestionId>) {
         let db = Database::open_in_memory().unwrap();
         let mut q1 = multiple("q1", "Um", 0);
         q1.topics = vec![
@@ -464,8 +466,9 @@ mod tests {
         title: &str,
         contest: Option<&str>,
         board: Option<&str>,
-        questions: &[String],
+        questions: &[QuestionId],
     ) {
+        let id = CollectionId::from(id);
         db.transaction(|tx| {
             tx.execute(
                 "INSERT INTO collections (id, title, kind, contest, board, created_at)
@@ -485,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn fold_removes_case_and_accents() {
+    fn fold_normalizes_text_for_search() {
         assert_eq!(
             fold("Administração Pública ÇÃO"),
             "administracao publica cao"
@@ -567,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn collections_are_ordered_by_contest_then_title_with_filter_options() {
+    fn collections_are_ordered_by_contest_then_title() {
         let db = sample_collections();
         let page = db
             .with(|c| collections(c, &CollectionQuery::default()))
@@ -580,16 +583,49 @@ mod tests {
                 "Informática › SQL"
             ]
         );
-        assert_eq!(page.total, 3);
-        assert_eq!(page.page_size, DEFAULT_PAGE_SIZE);
-        assert_eq!(page.contests, ["ALEPA", "Perito"]);
-        assert_eq!(page.boards, ["Cebraspe", "FGV"]);
-        assert_eq!(page.items[1].questions, 2);
-        assert!(!page.items[1].in_progress);
     }
 
     #[test]
-    fn search_ignores_case_and_accents() {
+    fn collections_report_the_default_page_size() {
+        let db = sample_collections();
+        let page = db
+            .with(|c| collections(c, &CollectionQuery::default()))
+            .unwrap();
+        assert_eq!((page.total, page.page_size), (3, DEFAULT_PAGE_SIZE));
+    }
+
+    #[test]
+    fn collections_list_filter_options() {
+        let db = sample_collections();
+        let page = db
+            .with(|c| collections(c, &CollectionQuery::default()))
+            .unwrap();
+        assert_eq!(page.contests, ["ALEPA", "Perito"]);
+        assert_eq!(page.boards, ["Cebraspe", "FGV"]);
+    }
+
+    #[test]
+    fn collections_count_their_questions() {
+        let db = sample_collections();
+        let page = db
+            .with(|c| collections(c, &CollectionQuery::default()))
+            .unwrap();
+        let summary = page.items.iter().find(|c| c.id.as_str() == "c1").unwrap();
+        assert_eq!(summary.questions, 2);
+    }
+
+    #[test]
+    fn collections_report_when_no_attempt_is_in_progress() {
+        let db = sample_collections();
+        let page = db
+            .with(|c| collections(c, &CollectionQuery::default()))
+            .unwrap();
+        let summary = page.items.iter().find(|c| c.id.as_str() == "c1").unwrap();
+        assert!(!summary.in_progress);
+    }
+
+    #[test]
+    fn search_matches_normalized_titles() {
         let db = sample_collections();
         let query = |search: &str| CollectionQuery {
             search: search.into(),
@@ -609,7 +645,7 @@ mod tests {
     }
 
     #[test]
-    fn contest_and_board_filters_combine() {
+    fn the_two_filters_match_one_collection() {
         let db = sample_collections();
         let page = db
             .with(|c| {
@@ -647,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn pagination_slices_and_reports_the_total() {
+    fn pagination_slices_items() {
         let db = sample_collections();
         let page = |n: u32| {
             db.with(|c| {
@@ -665,7 +701,23 @@ mod tests {
         assert_eq!(titles(&page(0)).len(), 2);
         assert_eq!(titles(&page(1)), ["Informática › SQL"]);
         assert!(page(2).items.is_empty());
-        assert_eq!(page(1).total, 3);
+    }
+
+    #[test]
+    fn pagination_reports_the_total_across_pages() {
+        let db = sample_collections();
+        let query = CollectionQuery {
+            page: 1,
+            page_size: 2,
+            ..Default::default()
+        };
+        let page = db.with(|c| collections(c, &query)).unwrap();
+        assert_eq!(page.total, 3);
+    }
+
+    #[test]
+    fn pagination_caps_the_page_size() {
+        let db = sample_collections();
         let huge = db
             .with(|c| {
                 collections(
@@ -694,7 +746,9 @@ mod tests {
         })
         .unwrap();
 
-        let detail = db.with(|c| collection(c, "c1")).unwrap();
+        let detail = db
+            .with(|c| collection(c, &CollectionId::from("c1")))
+            .unwrap();
         assert_eq!(detail.questions, 2);
         assert_eq!(detail.contest.as_deref(), Some("ALEPA"));
         let attempts: Vec<(&str, FeedbackMode, bool)> = detail
@@ -713,7 +767,7 @@ mod tests {
         let page = db
             .with(|c| collections(c, &CollectionQuery::default()))
             .unwrap();
-        let c1 = page.items.iter().find(|c| c.id == "c1").unwrap();
+        let c1 = page.items.iter().find(|c| c.id.as_str() == "c1").unwrap();
         assert!(c1.in_progress);
         assert_eq!(
             c1.last_finished_at.as_deref(),
@@ -770,7 +824,9 @@ mod tests {
     #[test]
     fn unknown_collection_is_a_pt_br_error() {
         let db = Database::open_in_memory().unwrap();
-        let error = db.with(|c| collection(c, "nope")).unwrap_err();
+        let error = db
+            .with(|c| collection(c, &CollectionId::from("nope")))
+            .unwrap_err();
         assert_eq!(error.to_string(), "Caderno não encontrado.");
     }
 }

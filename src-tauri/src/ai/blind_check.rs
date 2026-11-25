@@ -2,12 +2,13 @@
 //! disagreements go back to the generator once; what still disagrees is flagged `disputed`.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::draft::{self, Draft, DraftStatus, GenerationInfo};
+use super::draft::{self, DraftRequest, DraftStatus, GenerationInfo};
 use super::draft_files;
 use super::generate::{GenerateRequest, GenerationRuntime};
 use super::jobs::GenerationStage;
@@ -105,28 +106,83 @@ pub struct Verdict {
     pub objected: bool,
 }
 
-/// The stored result of the blind check of a draft.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// The result of the blind check of a draft.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(from = "BlindCheckRecord<Vec<Verdict>, String, GenerationInfo>")]
+pub enum BlindCheck {
+    Pending,
+    Failed(String),
+    Done {
+        verdicts: Vec<Verdict>,
+        /// Old checks can have verdicts without provenance.
+        info: Option<GenerationInfo>,
+    },
+}
+
+impl BlindCheck {
+    pub(super) fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending)
+    }
+
+    pub(super) fn verdicts(&self) -> &[Verdict] {
+        match self {
+            Self::Done { verdicts, .. } => verdicts,
+            Self::Pending | Self::Failed(_) => &[],
+        }
+    }
+
+    pub(super) fn failure(&self) -> Option<&str> {
+        match self {
+            Self::Failed(message) => Some(message),
+            Self::Pending | Self::Done { .. } => None,
+        }
+    }
+}
+
+/// Preserve the original draft JSON shape, including the pending flag read during recovery.
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BlindCheck {
-    pub verdicts: Vec<Verdict>,
-    /// Set when the check couldn't be completed; there are no verdicts then.
-    pub failed: Option<String>,
-    pub info: Option<GenerationInfo>,
-    /// The check is running now. The draft cannot be imported or discarded until it ends.
+struct BlindCheckRecord<V, F, I> {
+    verdicts: V,
+    failed: Option<F>,
+    info: Option<I>,
     #[serde(default)]
-    pub pending: bool,
+    pending: bool,
+}
+
+impl From<BlindCheckRecord<Vec<Verdict>, String, GenerationInfo>> for BlindCheck {
+    fn from(record: BlindCheckRecord<Vec<Verdict>, String, GenerationInfo>) -> Self {
+        if record.pending {
+            Self::Pending
+        } else if let Some(message) = record.failed {
+            Self::Failed(message)
+        } else {
+            Self::Done {
+                verdicts: record.verdicts,
+                info: record.info,
+            }
+        }
+    }
+}
+
+impl Serialize for BlindCheck {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        BlindCheckRecord {
+            verdicts: self.verdicts(),
+            failed: self.failure(),
+            info: match self {
+                Self::Done { info, .. } => info.as_ref(),
+                Self::Pending | Self::Failed(_) => None,
+            },
+            pending: self.is_pending(),
+        }
+        .serialize(serializer)
+    }
 }
 
 /// The record a draft carries while its blind check runs.
-pub fn pending_record() -> serde_json::Value {
-    serde_json::to_value(BlindCheck {
-        verdicts: Vec::new(),
-        failed: None,
-        info: None,
-        pending: true,
-    })
-    .expect("a blind check serializes")
+pub fn pending_record() -> BlindCheck {
+    BlindCheck::Pending
 }
 
 use super::invalid;
@@ -178,9 +234,7 @@ fn check_questions(
         }
     }
     if by_id.len() != questions.len() {
-        return Err(invalid(
-            "A conferência não respondeu todas as questões. Tente conferir de novo.",
-        ));
+        return Err(missing_checker_answer());
     }
     Ok((by_id, output))
 }
@@ -214,122 +268,194 @@ fn revisions(
         .collect()
 }
 
-/// The pipeline's blind-check stage on a saved draft. Saves the verdicts (and any revised
-/// questions) into the draft and returns them.
+/// The pipeline's blind-check stage on a saved draft. Saves the verdicts and any revisions.
 pub fn run(
     db: &Database,
     secrets: &Secrets,
     runtime: &GenerationRuntime<'_>,
     draft_id: &DraftId,
-    attachments: &[std::path::PathBuf],
+    attachments: &[PathBuf],
     cancel: &CancelToken,
     progress: &mut dyn FnMut(Progress),
 ) -> AppResult<BlindCheck> {
     let (settings, draft) =
         db.with(|conn| Ok((settings::load(conn, secrets)?, draft::load(conn, draft_id)?)))?;
-    let checker = draft.request.checker.clone();
-    let generator = draft.request.generator.clone();
-    let request: &GenerateRequest = &draft.request.request;
     let started_at = (runtime.now)();
     let began = (runtime.monotonic_time)();
-    let mut package = draft.package.clone();
+    let mut package = draft.package;
+    let mut check = CheckRun {
+        settings: &settings,
+        secrets,
+        clis: runtime.clis,
+        request: &draft.request,
+        attachments,
+        cancel,
+        progress,
+    };
 
-    progress(Progress::starting(
+    (check.progress)(Progress::starting(
         GenerationStage::Checking,
         ProgressKind::Started,
         "Conferindo às cegas…",
     ));
-    let all: Vec<&PackageQuestion> = package.questions.iter().collect();
-    let (first, first_output) = check_questions(
-        &settings,
-        secrets,
-        runtime.clis,
-        &checker,
-        &all,
-        cancel,
-        progress,
-    )?;
-    let mut cost = first_output.cost_usd;
+    let all: Vec<_> = package.questions.iter().collect();
+    let (first, output) = check.ask_checker(&all)?;
+    let objections = objections(&package.questions, &first)?;
+    let mut round = check.resolve(&objections, output.cost_usd)?;
+    let verdicts = verdicts(&package.questions, &first, &round)?;
 
-    let objections: Vec<&PackageQuestion> = package
-        .questions
-        .iter()
-        .filter(|q| first[&q.id].choice != q.answer_id)
-        .collect();
-    let objected: HashSet<&str> = objections.iter().map(|q| q.id.as_str()).collect();
+    for question in &mut package.questions {
+        if let Some(revised) = round.revisions.remove(&question.id) {
+            *question = revised;
+        }
+    }
+    let elapsed = (runtime.monotonic_time)().saturating_sub(began);
+    let result = BlindCheck::Done {
+        verdicts,
+        info: Some(GenerationInfo {
+            agent: draft.request.checker.agent,
+            model: draft.request.checker.model,
+            effort: draft.request.checker.effort,
+            started_at,
+            duration_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+            cost_usd: round.cost,
+        }),
+    };
+    db.transaction(|tx| {
+        draft::set_package(tx, draft_id, &package)?;
+        draft::set_blind_check(tx, draft_id, &result)
+    })?;
+    Ok(result)
+}
 
-    // Round two: the generator fixes or defends, then the checker re-checks what was revised.
-    let mut revised_by_id: HashMap<String, PackageQuestion> = HashMap::new();
-    let mut second: HashMap<String, CheckerAnswer> = HashMap::new();
-    if !objections.is_empty() {
-        progress(Progress::starting(
+struct CheckRun<'a> {
+    settings: &'a AiSettings,
+    secrets: &'a Secrets,
+    clis: &'a ResolvedClis,
+    request: &'a DraftRequest,
+    attachments: &'a [PathBuf],
+    cancel: &'a CancelToken,
+    progress: &'a mut dyn FnMut(Progress),
+}
+
+#[derive(Default)]
+struct DisputeRound {
+    revisions: HashMap<String, PackageQuestion>,
+    answers: HashMap<String, CheckerAnswer>,
+    cost: Option<f64>,
+}
+
+impl CheckRun<'_> {
+    fn ask_checker(
+        &mut self,
+        questions: &[&PackageQuestion],
+    ) -> AppResult<(HashMap<String, CheckerAnswer>, super::runner::JobOutput)> {
+        check_questions(
+            self.settings,
+            self.secrets,
+            self.clis,
+            &self.request.checker,
+            questions,
+            self.cancel,
+            self.progress,
+        )
+    }
+
+    fn resolve(
+        &mut self,
+        objections: &[Objection<'_>],
+        cost: Option<f64>,
+    ) -> AppResult<DisputeRound> {
+        if objections.is_empty() {
+            return Ok(DisputeRound {
+                cost,
+                ..DisputeRound::default()
+            });
+        }
+        (self.progress)(Progress::starting(
             GenerationStage::Resolving,
             ProgressKind::Thinking,
             "Resolvendo as contestações…",
         ));
-        let items: Vec<Objection<'_>> = objections
-            .iter()
-            .map(|question| Objection {
-                question,
-                checker_choice: &first[&question.id].choice,
-                checker_reason: &first[&question.id].reason,
-            })
-            .collect();
         let (resolutions, output): (DisputeResolutions, _) = ask(
-            &settings,
-            secrets,
-            runtime.clis,
-            &generator,
+            self.settings,
+            self.secrets,
+            self.clis,
+            &self.request.generator,
             Task {
                 schema: schema_of::<DisputeResolutions>(),
                 sources: Sources {
-                    remnote: request.sources.remnote,
-                    web: request.sources.web,
+                    remnote: self.request.request.sources.remnote,
+                    web: self.request.request.sources.web,
                 },
                 instructions: prompts::dispute_instructions(),
-                prompt: prompts::dispute_prompt(&items),
+                prompt: prompts::dispute_prompt(objections),
                 // The generator answers the objections with the files it wrote from.
-                attachments: attachments.to_vec(),
+                attachments: self.attachments.to_vec(),
             },
-            cancel,
-            progress,
+            self.cancel,
+            self.progress,
         )?;
-        cost = sum_cost(cost, output.cost_usd);
-        revised_by_id = revisions(resolutions, &objected);
-        if !revised_by_id.is_empty() {
-            progress(Progress::starting(
+        let objected = objections
+            .iter()
+            .map(|item| item.question.id.as_str())
+            .collect();
+        let revisions = revisions(resolutions, &objected);
+        let mut round = DisputeRound {
+            revisions,
+            cost: sum_cost(cost, output.cost_usd),
+            ..DisputeRound::default()
+        };
+        if !round.revisions.is_empty() {
+            (self.progress)(Progress::starting(
                 GenerationStage::Resolving,
                 ProgressKind::Thinking,
                 "Reconferindo as questões revisadas…",
             ));
-            let mut ids: Vec<&String> = revised_by_id.keys().collect();
-            ids.sort();
-            let revised: Vec<&PackageQuestion> = ids.iter().map(|id| &revised_by_id[*id]).collect();
-            let (answers, output) = check_questions(
-                &settings,
-                secrets,
-                runtime.clis,
-                &checker,
-                &revised,
-                cancel,
-                progress,
-            )?;
-            cost = sum_cost(cost, output.cost_usd);
-            second = answers;
+            let mut questions: Vec<_> = round.revisions.values().collect();
+            questions.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+            let (answers, output) = self.ask_checker(&questions)?;
+            round.answers = answers;
+            round.cost = sum_cost(round.cost, output.cost_usd);
+        }
+        Ok(round)
+    }
+}
+
+fn objections<'a>(
+    questions: &'a [PackageQuestion],
+    first: &'a HashMap<String, CheckerAnswer>,
+) -> AppResult<Vec<Objection<'a>>> {
+    let mut result = Vec::new();
+    for question in questions {
+        let answer = first.get(&question.id).ok_or_else(missing_checker_answer)?;
+        if answer.choice != question.answer_id {
+            result.push(Objection {
+                question,
+                checker_choice: &answer.choice,
+                checker_reason: &answer.reason,
+            });
         }
     }
+    Ok(result)
+}
 
-    let verdicts: Vec<Verdict> = package
-        .questions
+fn verdicts(
+    questions: &[PackageQuestion],
+    first: &HashMap<String, CheckerAnswer>,
+    round: &DisputeRound,
+) -> AppResult<Vec<Verdict>> {
+    questions
         .iter()
         .map(|question| {
-            let first = &first[&question.id];
-            let objected = objected.contains(question.id.as_str());
+            let first = first.get(&question.id).ok_or_else(missing_checker_answer)?;
+            let objected = first.choice != question.answer_id;
             let (state, last) = if !objected {
                 (VerdictState::Agreed, first)
-            } else if let (Some(revised), Some(again)) =
-                (revised_by_id.get(&question.id), second.get(&question.id))
-            {
+            } else if let (Some(revised), Some(again)) = (
+                round.revisions.get(&question.id),
+                round.answers.get(&question.id),
+            ) {
                 let state = if again.choice == revised.answer_id {
                     VerdictState::Fixed
                 } else {
@@ -339,7 +465,7 @@ pub fn run(
             } else {
                 (VerdictState::Disputed, first)
             };
-            Verdict {
+            Ok(Verdict {
                 question_id: question.id.clone(),
                 state,
                 first_choice: first.choice.clone(),
@@ -347,54 +473,19 @@ pub fn run(
                 confidence: last.confidence,
                 reason: last.reason.clone(),
                 objected,
-            }
+            })
         })
-        .collect();
+        .collect()
+}
 
-    for question in &mut package.questions {
-        if let Some(revised) = revised_by_id.remove(&question.id) {
-            *question = revised;
-        }
-    }
-    let elapsed = (runtime.monotonic_time)().saturating_sub(began);
-    let result = BlindCheck {
-        verdicts,
-        failed: None,
-        pending: false,
-        info: Some(GenerationInfo {
-            agent: checker.agent,
-            model: checker.model.clone(),
-            effort: checker.effort,
-            started_at,
-            duration_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
-            cost_usd: cost,
-        }),
-    };
-    db.transaction(|tx| {
-        draft::set_package(tx, draft_id, &package)?;
-        draft::set_blind_check(tx, draft_id, &serde_json::to_value(&result)?)
-    })?;
-    Ok(result)
+fn missing_checker_answer() -> AppError {
+    invalid("A conferência não respondeu todas as questões. Tente conferir de novo.")
 }
 
 /// Records that the check couldn't be completed, so the preview can say so.
 pub fn record_failure(db: &Database, draft_id: &DraftId, message: &str) -> AppResult<()> {
-    let failed = BlindCheck {
-        verdicts: Vec::new(),
-        failed: Some(message.to_owned()),
-        info: None,
-        pending: false,
-    };
-    db.with(|conn| draft::set_blind_check(conn, draft_id, &serde_json::to_value(failed)?))
-}
-
-/// The stored blind check of a draft, if it has one.
-pub fn stored(draft: &Draft) -> AppResult<Option<BlindCheck>> {
-    draft
-        .blind_check
-        .as_ref()
-        .map(|value| serde_json::from_value(value.clone()).map_err(AppError::from))
-        .transpose()
+    let failed = BlindCheck::Failed(message.to_owned());
+    db.with(|conn| draft::set_blind_check(conn, draft_id, &failed))
 }
 
 /// The whole pipeline: generate, validate, blind-check, resolve disputes once, save the draft.
@@ -404,7 +495,7 @@ pub fn generate_and_check(
     db: &Database,
     secrets: &Secrets,
     runtime: &GenerationRuntime<'_>,
-    files_dir: &std::path::Path,
+    files_dir: &Path,
     request: GenerateRequest,
     cancel: &CancelToken,
     progress: &mut dyn FnMut(Progress),
@@ -414,11 +505,11 @@ pub fn generate_and_check(
         ProgressKind::Started,
         "Gerando as questões…",
     ));
-    let originals: Vec<std::path::PathBuf> = request
+    let originals: Vec<PathBuf> = request
         .sources
         .attachments
         .iter()
-        .map(std::path::PathBuf::from)
+        .map(PathBuf::from)
         .collect();
     let draft = super::generate::generate_draft(db, secrets, runtime, request, cancel, progress)?;
     // From here a cancel discards the draft, so say so before anything else happens.
@@ -430,7 +521,7 @@ pub fn generate_and_check(
     // Keep copies for the life of the draft so a retry can give the generator the same files.
     // If copying fails (the file moved meanwhile), this run still uses the originals.
     let attachments = draft_files::keep(files_dir, &draft.id, &originals).unwrap_or(originals);
-    match run(
+    let result = run(
         db,
         secrets,
         runtime,
@@ -438,18 +529,15 @@ pub fn generate_and_check(
         &attachments,
         cancel,
         progress,
-    ) {
-        Ok(_) => Ok(draft.id),
-        Err(_) if cancel.is_cancelled() => {
-            draft_files::remove(files_dir, &draft.id);
-            db.with(|conn| draft::set_status(conn, &draft.id, DraftStatus::Discarded))?;
-            Err(invalid("A execução foi cancelada."))
-        }
-        Err(error) => {
-            record_failure(db, &draft.id, &error.to_string())?;
-            Ok(draft.id)
-        }
-    }
+    );
+    finish_check(
+        db,
+        files_dir,
+        &draft.id,
+        result,
+        cancel,
+        CheckCancellation::DiscardDraft,
+    )
 }
 
 /// Re-runs the blind check of a draft that has none or whose check failed. The dispute round
@@ -459,7 +547,7 @@ pub fn recheck_draft(
     db: &Database,
     secrets: &Secrets,
     runtime: &GenerationRuntime<'_>,
-    files_dir: &std::path::Path,
+    files_dir: &Path,
     draft_id: &DraftId,
     cancel: &CancelToken,
     progress: &mut dyn FnMut(Progress),
@@ -469,7 +557,11 @@ pub fn recheck_draft(
         if draft.status != DraftStatus::Review {
             return Err(invalid("Este pacote já foi importado ou descartado."));
         }
-        if stored(&draft)?.is_some_and(|check| check.pending) {
+        if draft
+            .blind_check
+            .as_ref()
+            .is_some_and(BlindCheck::is_pending)
+        {
             return Err(invalid("A conferência deste pacote já está em andamento."));
         }
         draft::set_blind_check(tx, draft_id, &pending_record())?;
@@ -483,7 +575,7 @@ pub fn recheck_draft(
             "Os anexos originais não estão mais guardados; a contestação segue sem eles.",
         ));
     }
-    match run(
+    let result = run(
         db,
         secrets,
         runtime,
@@ -491,15 +583,47 @@ pub fn recheck_draft(
         &attachments,
         cancel,
         progress,
-    ) {
-        Ok(_) => Ok(draft_id.to_owned()),
+    );
+    finish_check(
+        db,
+        files_dir,
+        draft_id,
+        result,
+        cancel,
+        CheckCancellation::KeepDraft,
+    )
+}
+
+enum CheckCancellation {
+    DiscardDraft,
+    KeepDraft,
+}
+
+fn finish_check(
+    db: &Database,
+    files_dir: &Path,
+    id: &DraftId,
+    result: AppResult<BlindCheck>,
+    cancel: &CancelToken,
+    cancellation: CheckCancellation,
+) -> AppResult<DraftId> {
+    match result {
+        Ok(_) => Ok(id.to_owned()),
         Err(_) if cancel.is_cancelled() => {
-            record_failure(db, draft_id, "A conferência foi cancelada.")?;
+            match cancellation {
+                CheckCancellation::DiscardDraft => {
+                    draft_files::remove(files_dir, id);
+                    db.with(|conn| draft::set_status(conn, id, DraftStatus::Discarded))?;
+                }
+                CheckCancellation::KeepDraft => {
+                    record_failure(db, id, "A conferência foi cancelada.")?;
+                }
+            }
             Err(invalid("A execução foi cancelada."))
         }
         Err(error) => {
-            record_failure(db, draft_id, &error.to_string())?;
-            Ok(draft_id.to_owned())
+            record_failure(db, id, &error.to_string())?;
+            Ok(id.to_owned())
         }
     }
 }
@@ -507,12 +631,9 @@ pub fn recheck_draft(
 /// After a restart, a check that was running can never finish: mark it as interrupted so the
 /// draft can be imported, discarded or checked again.
 pub fn recover_interrupted(conn: &rusqlite::Connection) -> AppResult<()> {
-    let failed = serde_json::to_string(&BlindCheck {
-        verdicts: Vec::new(),
-        failed: Some("A conferência foi interrompida antes de terminar.".into()),
-        info: None,
-        pending: false,
-    })?;
+    let failed = serde_json::to_string(&BlindCheck::Failed(
+        "A conferência foi interrompida antes de terminar.".into(),
+    ))?;
     conn.execute(
         "UPDATE drafts SET blind_check = ?1
          WHERE status = ?2 AND json_extract(blind_check, '$.pending') = 1",

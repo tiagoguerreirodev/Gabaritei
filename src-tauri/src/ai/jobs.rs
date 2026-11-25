@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use ts_rs::TS;
 
+pub use super::runner::GenerationStage;
 use super::runner::{CancelToken, Progress};
 use crate::error::{AppError, AppResult};
 use crate::ids::DraftId;
@@ -41,18 +42,6 @@ pub enum GenerationKind {
     Generate,
     /// Only the blind check (and dispute round) of a saved draft.
     Recheck,
-}
-
-/// The pipeline stage a run is in. `Preparing` until the first stage starts.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub enum GenerationStage {
-    #[default]
-    Preparing,
-    Generating,
-    Checking,
-    Resolving,
 }
 
 /// What the frontend shows about the generation, on any page.

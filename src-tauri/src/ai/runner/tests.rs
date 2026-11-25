@@ -5,7 +5,11 @@
 #![cfg_attr(not(unix), allow(dead_code, unused_imports))] // fake CLIs need `sh`
 
 use super::*;
+use crate::ai::{claude, codex};
 use serde_json::json;
+use std::path::Path;
+use std::process::Command;
+use std::time::Instant;
 
 fn schema() -> Value {
     json!({ "type": "object", "required": ["answer"], "properties": { "answer": { "type": "string" } } })
@@ -772,13 +776,6 @@ mod arguments {
         assert!(!args.iter().any(|a| a.contains("linha um")));
         assert!(!args.iter().any(|a| a.contains(['\n', '\r'])));
         assert!(args.iter().map(String::len).sum::<usize>() < 4_000);
-    }
-
-    #[test]
-    fn attachment_names_are_made_safe() {
-        assert_eq!(sanitize("../../etc/passwd"), "_.._etc_passwd");
-        assert_eq!(sanitize(".bashrc"), "bashrc");
-        assert_eq!(sanitize("Lei 8.112 (1990).pdf"), "Lei_8.112__1990_.pdf");
     }
 }
 

@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import tokens from "../../docs/design-system/tokens.json";
-import { renderTokensCss, type DesignTokens } from "../../scripts/tokens.ts";
+import { renderTokensCss } from "../../scripts/tokens.ts";
 
 const rendered = renderTokensCss(tokens);
 

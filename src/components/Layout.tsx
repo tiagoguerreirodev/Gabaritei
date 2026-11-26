@@ -94,7 +94,7 @@ export default function Layout(props: ParentProps) {
           <span class="brand-name">Gabaritei</span>
           <button
             type="button"
-            class="sidebar-toggle"
+            class="btn btn-ghost sidebar-toggle"
             title={collapsed() ? "Expandir menu" : "Recolher menu"}
             aria-expanded={!collapsed()}
             aria-controls="sidebar-menu"

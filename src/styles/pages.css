@@ -489,7 +489,7 @@
   color: var(--accent);
 }
 
-.today-card .primary {
+.today-card .btn-primary {
   margin-top: var(--space-2);
 }
 

@@ -65,7 +65,7 @@ export default function Home() {
                           </span>
                           <button
                             type="button"
-                            class="secondary"
+                            class="btn"
                             aria-label={`Retomar ${attempt.title}`}
                             onClick={() => openAttempt(attempt.id)}
                           >

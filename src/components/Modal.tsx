@@ -46,7 +46,7 @@ export default function Modal(props: {
             <h2 id={titleId}>{props.title}</h2>
             <button
               type="button"
-              class="icon-button"
+              class="btn btn-ghost"
               aria-label="Fechar"
               onClick={() => props.onClose()}
             >

@@ -154,7 +154,7 @@ function Outcome() {
       {(outcome) => (
         <section class="card" aria-label="Resultado da última geração">
           {outcomeContent(outcome())}
-          <button type="button" class="secondary" onClick={() => void dismissGeneration()}>
+          <button type="button" class="btn" onClick={() => void dismissGeneration()}>
             Dispensar
           </button>
         </section>
@@ -376,7 +376,7 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
       </FieldError>
       <button
         type="submit"
-        class="primary"
+        class="btn btn-primary"
         disabled={submitting() || changingRole() || problems().length > 0}
       >
         {submitting() ? "Iniciando…" : "Gerar"}

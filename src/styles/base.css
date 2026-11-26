@@ -1,21 +1,5 @@
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  font-family: var(--font-ui);
-}
-
-a {
-  color: var(--accent);
-}
-
-/* ---- Focus: one visible ring for everything a keyboard can reach ---- */
-
-:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 2px;
+button {
+  font: inherit;
 }
 
 /* Targets that take focus from code only (route change, dialogs): no ring. */

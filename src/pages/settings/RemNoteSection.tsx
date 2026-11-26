@@ -106,14 +106,14 @@ export default function RemNoteSection(props: {
           />
           <button
             type="button"
-            class="secondary"
+            class="btn"
             disabled={token().trim() === ""}
             onClick={() => void saveToken(token())}
           >
             Guardar token
           </button>
           <Show when={props.hasToken}>
-            <button type="button" class="secondary" onClick={() => void saveToken(null)}>
+            <button type="button" class="btn" onClick={() => void saveToken(null)}>
               Remover token
             </button>
           </Show>
@@ -122,7 +122,7 @@ export default function RemNoteSection(props: {
       </Show>
 
       <Show when={props.remnote.mode === "server"}>
-        <button type="button" class="secondary" disabled={testing()} onClick={() => void test()}>
+        <button type="button" class="btn" disabled={testing()} onClick={() => void test()}>
           {testing() ? "Testando…" : "Testar conexão"}
         </button>
         <Show when={result()}>

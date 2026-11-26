@@ -86,7 +86,7 @@ function RunStatus() {
             {(notice) => (
               <p class="generation-banner" role="status">
                 {notice()}
-                <button type="button" class="secondary" onClick={() => void dismissGeneration()}>
+                <button type="button" class="btn" onClick={() => void dismissGeneration()}>
                   Dispensar
                 </button>
               </p>

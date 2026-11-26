@@ -108,7 +108,7 @@ export default function QuestionCard(props: {
         </span>
         <button
           type="button"
-          class="flag-button"
+          class="btn btn-ghost flag-button"
           aria-pressed={props.question.flagged}
           disabled={finished()}
           onClick={() => props.onFlag()}
@@ -176,7 +176,7 @@ export default function QuestionCard(props: {
                 </button>
                 <button
                   type="button"
-                  class="icon-button option-eliminate"
+                  class="btn btn-ghost option-eliminate"
                   aria-label={`${eliminated() ? "Restaurar" : "Eliminar"} alternativa ${letter()}`}
                   aria-pressed={eliminated()}
                   disabled={locked()}
@@ -193,7 +193,7 @@ export default function QuestionCard(props: {
         <div class="confirm-row">
           <button
             type="button"
-            class="primary"
+            class="btn btn-primary"
             disabled={props.pending === null}
             onClick={() => props.onConfirm()}
           >
@@ -228,14 +228,14 @@ export default function QuestionCard(props: {
                   <p class="muted">Esta questão não tem explicação.</p>
                   <button
                     type="button"
-                    class="secondary"
+                    class="btn"
                     disabled={explaining()}
                     onClick={() => void explain()}
                   >
                     {explaining() ? "Escrevendo a explicação…" : "Explicar"}
                   </button>
                   <Show when={explaining()}>
-                    <button type="button" class="secondary" onClick={() => props.onAiCancel()}>
+                    <button type="button" class="btn" onClick={() => props.onAiCancel()}>
                       Cancelar
                     </button>
                   </Show>
@@ -261,7 +261,7 @@ export default function QuestionCard(props: {
             <div class="reveal-actions">
               <button
                 type="button"
-                class="secondary"
+                class="btn"
                 onClick={() => (revealed().annulled ? props.onUnannul() : props.onAnnul())}
               >
                 {revealed().annulled ? "Desfazer anulação" : "Anular questão"}

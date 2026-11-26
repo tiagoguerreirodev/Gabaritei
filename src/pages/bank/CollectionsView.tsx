@@ -101,7 +101,7 @@ export default function CollectionsView() {
             <nav class="pager" aria-label="Páginas">
               <button
                 type="button"
-                class="secondary"
+                class="btn"
                 disabled={page() === 0}
                 onClick={() => setPage(page() - 1)}
               >
@@ -112,7 +112,7 @@ export default function CollectionsView() {
               </span>
               <button
                 type="button"
-                class="secondary"
+                class="btn"
                 disabled={page() + 1 >= pages()}
                 onClick={() => setPage(page() + 1)}
               >

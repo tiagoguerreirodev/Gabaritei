@@ -1,6 +1,6 @@
 /* ---- Resolver ---- */
 
-.modal-footer .primary:only-child {
+.modal-footer .btn-primary:only-child {
   margin-left: auto;
 }
 
@@ -320,18 +320,6 @@
   align-items: center;
 }
 
-.flag-button {
-  border: none;
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.flag-button[aria-pressed="true"] {
-  color: var(--flag);
-  font-weight: 600;
-}
-
 .question-stem {
   display: block;
   max-width: var(--measure);
@@ -507,7 +495,6 @@
 .option-eliminate {
   min-width: 3rem;
   padding: 0 var(--space-3);
-  color: var(--muted);
 }
 
 .option-eliminate[aria-pressed="true"] {

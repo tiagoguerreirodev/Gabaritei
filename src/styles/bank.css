@@ -72,11 +72,6 @@
   width: auto;
 }
 
-.tree-leaf .primary {
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--text-sm);
-}
-
 .count {
   color: var(--muted);
   font-size: var(--text-sm);
@@ -104,7 +99,7 @@
 }
 
 /* An action in the filter row (Exportar CSV) sits on the inputs' baseline, not the labels'. */
-.filters > .secondary {
+.filters > .btn {
   align-self: flex-end;
 }
 
@@ -165,7 +160,7 @@
   color: var(--muted);
 }
 
-.collection-card .primary {
+.collection-card .btn-primary {
   flex-shrink: 0;
 }
 

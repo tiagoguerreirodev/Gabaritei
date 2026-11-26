@@ -267,7 +267,7 @@ function Content(props: {
           {" "}
           <span class="muted">(padrão)</span>
         </Show>{" "}
-        <button type="button" class="secondary" onClick={() => void openFolder("backups")}>
+        <button type="button" class="btn" onClick={() => void openFolder("backups")}>
           Abrir pasta dos backups
         </button>
       </p>
@@ -275,17 +275,12 @@ function Content(props: {
         {(message) => <InlineError>O último backup falhou: {message()}</InlineError>}
       </Show>
       <p class="actions">
-        <button
-          type="button"
-          class="secondary"
-          disabled={props.busy}
-          onClick={() => props.onBackupNow()}
-        >
+        <button type="button" class="btn" disabled={props.busy} onClick={() => props.onBackupNow()}>
           Fazer backup agora
         </button>
         <button
           type="button"
-          class="secondary"
+          class="btn"
           disabled={props.busy}
           onClick={() => props.onChooseFolder()}
         >
@@ -294,7 +289,7 @@ function Content(props: {
         <Show when={!props.status.isDefaultFolder}>
           <button
             type="button"
-            class="secondary"
+            class="btn"
             disabled={props.busy}
             onClick={() => props.onUseDefaultFolder()}
           >
@@ -308,7 +303,7 @@ function Content(props: {
             {current().text}{" "}
             <button
               type="button"
-              class="secondary"
+              class="btn"
               disabled={props.busy || props.refreshing}
               onClick={() => props.onRefresh()}
             >
@@ -346,7 +341,7 @@ function Content(props: {
                 </span>
                 <button
                   type="button"
-                  class="secondary"
+                  class="btn"
                   disabled={props.busy}
                   aria-label={`Restaurar o backup de ${formatDateTime(backup.createdAt)}`}
                   onClick={() => props.onRestore(backup)}

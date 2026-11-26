@@ -44,7 +44,7 @@ export default function QuestionLines(props: { summary: DraftSummary }) {
             />{" "}
             Mostrar só as sinaladas ({formatNumber(flagged().length)})
           </label>
-          <button type="button" class="secondary" onClick={() => setAll(!allExpanded())}>
+          <button type="button" class="btn" onClick={() => setAll(!allExpanded())}>
             {allExpanded() ? "Recolher todas" : "Expandir todas"}
           </button>
         </div>

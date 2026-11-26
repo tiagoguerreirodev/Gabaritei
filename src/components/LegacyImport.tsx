@@ -72,7 +72,7 @@ export default function LegacyImport(props: {
             repositório Simulados-Concursos neste computador. Os arquivos são conferidos antes de
             qualquer alteração, e a importação acontece uma única vez.
           </p>
-          <button type="button" class="secondary" disabled={blocked()} onClick={() => void start()}>
+          <button type="button" class="btn" disabled={blocked()} onClick={() => void start()}>
             {importing() ? "Importando…" : "Escolher pasta e importar"}
           </button>
         </Match>

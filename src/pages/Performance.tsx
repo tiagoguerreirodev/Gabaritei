@@ -92,7 +92,7 @@ export default function Performance() {
         </label>
         <button
           type="button"
-          class="secondary"
+          class="btn"
           disabled={exporting.active()}
           onClick={() => void exportCsv()}
         >

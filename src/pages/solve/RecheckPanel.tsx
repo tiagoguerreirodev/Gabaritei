@@ -72,14 +72,14 @@ export default function RecheckPanel(props: {
     <div class="ai-panel">
       <Switch>
         <Match when={state().step === "idle" || state().step === "error"}>
-          <button type="button" class="secondary" onClick={() => void ask()}>
+          <button type="button" class="btn" onClick={() => void ask()}>
             Pedir revisão à IA
           </button>
           <Show when={error()}>{(message) => <InlineError>{message()}</InlineError>}</Show>
         </Match>
         <Match when={state().step === "asking"}>
           <p role="status">Consultando a IA… isto pode levar alguns minutos.</p>
-          <button type="button" class="secondary" onClick={() => props.onCancel()}>
+          <button type="button" class="btn" onClick={() => props.onCancel()}>
             Cancelar
           </button>
         </Match>
@@ -112,7 +112,7 @@ export default function RecheckPanel(props: {
                     </Show>
                     <button
                       type="button"
-                      class="secondary"
+                      class="btn"
                       onClick={() => {
                         props.onDismiss();
                         setState({ step: "idle" });
@@ -127,7 +127,7 @@ export default function RecheckPanel(props: {
                   <div class="reveal-actions">
                     <button
                       type="button"
-                      class="primary"
+                      class="btn btn-primary"
                       onClick={() => {
                         props.onApply();
                         setState({ step: "idle" });
@@ -137,7 +137,7 @@ export default function RecheckPanel(props: {
                     </button>
                     <button
                       type="button"
-                      class="secondary"
+                      class="btn"
                       onClick={() => {
                         props.onDismiss();
                         setState({ step: "idle" });

@@ -2,8 +2,9 @@
 @import "./styles/tokens.css";
 @import "./styles/legacy-aliases.css";
 @import "./styles/theme.css";
+@import "./styles/ds/base.css";
+@import "./styles/ds/button.css";
 @import "./styles/base.css";
-@import "./styles/buttons.css";
 @import "./styles/shell.css";
 @import "./styles/bank.css";
 @import "./styles/reading.css";

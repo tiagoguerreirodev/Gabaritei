@@ -47,7 +47,7 @@ export default function SourcesFields(props: {
           />{" "}
           Pesquisar na web
         </label>
-        <button type="button" class="secondary" onClick={() => void attach()}>
+        <button type="button" class="btn" onClick={() => void attach()}>
           Anexar arquivos
         </button>
         <AttachmentList

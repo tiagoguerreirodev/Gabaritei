@@ -51,7 +51,7 @@ export default function AgentsSection(props: {
               />
               <button
                 type="button"
-                class="secondary"
+                class="btn"
                 disabled={testing() !== null}
                 onClick={() => void test(agent)}
               >

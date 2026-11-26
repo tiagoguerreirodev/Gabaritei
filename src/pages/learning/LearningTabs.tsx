@@ -54,7 +54,7 @@ export default function LearningTabs(props: {
       <div class="learning-actions">
         <button
           type="button"
-          class="primary"
+          class="btn btn-primary"
           disabled={props.data.practice === 0}
           onClick={() =>
             props.onPractice({ title: "Praticar revisões", source: { kind: "reviews" } })
@@ -90,7 +90,7 @@ export default function LearningTabs(props: {
           <div class="learning-actions">
             <button
               type="button"
-              class="secondary"
+              class="btn"
               disabled={props.data.practiceErrors === 0}
               onClick={() =>
                 props.onPractice({

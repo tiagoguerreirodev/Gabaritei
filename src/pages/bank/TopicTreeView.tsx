@@ -68,7 +68,7 @@ export default function TopicTreeView() {
                                         <NodeSummary name={topic.name} stats={topic.stats} />
                                         <button
                                           type="button"
-                                          class="primary"
+                                          class="btn btn-primary"
                                           aria-label={`Resolver ${topic.name}`}
                                           onClick={() =>
                                             setSolving({

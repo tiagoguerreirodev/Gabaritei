@@ -55,7 +55,7 @@ export function Toaster() {
             <span>{toast.message}</span>
             <button
               type="button"
-              class="icon-button"
+              class="btn btn-ghost"
               aria-label="Dispensar aviso"
               onClick={() => dismissToast(toast.id)}
             >

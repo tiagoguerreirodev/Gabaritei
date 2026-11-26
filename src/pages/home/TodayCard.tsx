@@ -27,7 +27,7 @@ export default function TodayCard(props: { action: TodayAction }) {
               </p>
               <button
                 type="button"
-                class="primary"
+                class="btn btn-primary"
                 aria-label={`Retomar ${attempt.title}`}
                 onClick={() => openAttempt(attempt.id)}
               >
@@ -44,7 +44,7 @@ export default function TodayCard(props: { action: TodayAction }) {
                 {due === 1 ? "1 revisão pendente" : `${formatNumber(due)} revisões pendentes`}
               </h2>
               <p class="muted">Revise agora para fixar o que você já estudou.</p>
-              <button type="button" class="primary" onClick={() => setStarting("reviews")}>
+              <button type="button" class="btn btn-primary" onClick={() => setStarting("reviews")}>
                 Fazer revisões
               </button>
             </>
@@ -59,7 +59,7 @@ export default function TodayCard(props: { action: TodayAction }) {
                 {topic.area} › {topic.matter} · aproveitamento de{" "}
                 {formatPercent(topic.stats.score.achievement)}
               </p>
-              <button type="button" class="primary" onClick={() => setStarting(topic)}>
+              <button type="button" class="btn btn-primary" onClick={() => setStarting(topic)}>
                 Treinar assunto
               </button>
             </>
@@ -69,7 +69,7 @@ export default function TodayCard(props: { action: TodayAction }) {
           <p class="today-kicker">Comece por aqui</p>
           <h2 id="today-title">Você ainda não finalizou nenhuma tentativa.</h2>
           <p class="muted">Comece um caderno ou um assunto no Banco.</p>
-          <A class="primary" href="/banco">
+          <A class="btn btn-primary" href="/banco">
             Ir para o Banco
           </A>
         </Match>

@@ -55,7 +55,7 @@ export default function CollectionCard(props: {
         fallback={
           <button
             type="button"
-            class="primary"
+            class="btn btn-primary"
             aria-label={`Resolver ${collection().title}`}
             disabled={collection().questions === 0}
             onClick={() => props.onStart()}
@@ -67,7 +67,7 @@ export default function CollectionCard(props: {
         {(attemptId) => (
           <button
             type="button"
-            class="primary"
+            class="btn btn-primary"
             aria-label={`Continuar ${collection().title}`}
             onClick={() => openAttempt(attemptId())}
           >

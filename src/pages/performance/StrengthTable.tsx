@@ -129,7 +129,7 @@ export default function StrengthTable(props: { areas: AreaStats[] }) {
                       <th scope="row">
                         <button
                           type="button"
-                          class="link-button"
+                          class="btn btn-link is-inline"
                           aria-expanded={open().has(areaKey)}
                           onClick={() => toggle(areaKey)}
                         >
@@ -151,7 +151,7 @@ export default function StrengthTable(props: { areas: AreaStats[] }) {
                                 <th scope="row">
                                   <button
                                     type="button"
-                                    class="link-button"
+                                    class="btn btn-link is-inline"
                                     aria-expanded={open().has(matterKey)}
                                     onClick={() => toggle(matterKey)}
                                   >
@@ -177,7 +177,7 @@ export default function StrengthTable(props: { areas: AreaStats[] }) {
                                       <td>
                                         <button
                                           type="button"
-                                          class="link-button"
+                                          class="btn btn-link is-inline"
                                           aria-label={`Treinar este assunto: ${topic.name}`}
                                           disabled={topic.stats.available === 0}
                                           onClick={() =>

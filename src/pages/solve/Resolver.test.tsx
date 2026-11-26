@@ -381,7 +381,7 @@ describe("Resolver", () => {
     ["exam", "Finalizar"],
   ] as const)("keeps one primary button in %s mode", async (mode, name) => {
     await open(mode);
-    const primaries = document.querySelectorAll(".primary");
+    const primaries = document.querySelectorAll(".btn-primary");
     expect([...primaries].map((button) => button.textContent)).toEqual([name]);
   });
 

@@ -13,7 +13,7 @@ export default function ShortcutHelp(props: {
     <div class="shortcuts" ref={props.panelRef}>
       <button
         type="button"
-        class="secondary"
+        class="btn"
         ref={props.toggleRef}
         aria-expanded={props.open}
         aria-controls="shortcuts-help"

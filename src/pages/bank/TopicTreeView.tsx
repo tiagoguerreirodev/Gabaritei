@@ -1,11 +1,78 @@
 import { A } from "@solidjs/router";
 import { For, Show, createResource, createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import { api } from "../../api";
 import { EmptyState, Loading, ResourceView } from "../../components/states";
+import { showError, showToast } from "../../components/toasts";
+import type { TopicPath } from "../../bindings/TopicPath";
 import type { TopicStats } from "../../bindings/TopicStats";
+import type { TopicTree } from "../../bindings/TopicTree";
 import { questionCount } from "../../format";
 import StartSessionModal from "../solve/StartSessionModal";
 import NodeSummary from "./NodeSummary";
+
+/** Creates a topic (and the area and matter above it, if new) so Gerar can offer it. */
+function NewTopicForm(props: { tree?: TopicTree; onCreated: () => void }) {
+  const [path, setPath] = createStore<TopicPath>({ area: "", matter: "", topic: "" });
+  const [saving, setSaving] = createSignal(false);
+  const matters = () => props.tree?.areas.find((area) => area.name === path.area.trim())?.matters;
+
+  const submit = async (event: SubmitEvent) => {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      const created = await api.createTopic({ ...path });
+      showToast(`Assunto criado: ${created.area} › ${created.matter} › ${created.topic}.`);
+      setPath("topic", "");
+      props.onCreated();
+    } catch (error) {
+      showError(error);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form
+      class="topic-path"
+      aria-label="Cadastro de assunto"
+      onSubmit={(event) => void submit(event)}
+    >
+      <input
+        type="text"
+        aria-label="Nova área"
+        placeholder="Área (ex.: Direito)"
+        list="new-topic-areas"
+        value={path.area}
+        onInput={(event) => setPath("area", event.currentTarget.value)}
+      />
+      <datalist id="new-topic-areas">
+        <For each={props.tree?.areas}>{(area) => <option value={area.name} />}</For>
+      </datalist>
+      <input
+        type="text"
+        aria-label="Nova matéria"
+        placeholder="Matéria (ex.: Constitucional)"
+        list="new-topic-matters"
+        value={path.matter}
+        onInput={(event) => setPath("matter", event.currentTarget.value)}
+      />
+      <datalist id="new-topic-matters">
+        <For each={matters()}>{(matter) => <option value={matter.name} />}</For>
+      </datalist>
+      <input
+        type="text"
+        aria-label="Novo assunto"
+        placeholder="Assunto (ex.: Controle de constitucionalidade)"
+        value={path.topic}
+        onInput={(event) => setPath("topic", event.currentTarget.value)}
+      />
+      <button type="submit" class="secondary" disabled={saving()}>
+        Criar assunto
+      </button>
+    </form>
+  );
+}
 
 /**
  * Area › matter › topic, each with its question count, coverage and achievement bar, and a
@@ -27,6 +94,10 @@ export default function TopicTreeView() {
           />
         )}
       </Show>
+      <NewTopicForm
+        tree={tree.state === "ready" ? tree() : undefined}
+        onCreated={() => void refetch()}
+      />
       <ResourceView
         value={tree()?.areas.length ? tree() : undefined}
         error={() => tree.error}
@@ -43,7 +114,10 @@ export default function TopicTreeView() {
               </A>
             }
           >
-            <p class="muted">Importe o banco do Caderno Local em Início ou em Configurações.</p>
+            <p class="muted">
+              Crie um assunto acima ou importe o banco do Caderno Local em Início ou em
+              Configurações.
+            </p>
           </EmptyState>
         }
       >
@@ -74,19 +148,21 @@ export default function TopicTreeView() {
                                     {(topic) => (
                                       <li class="tree-leaf">
                                         <NodeSummary name={topic.name} stats={topic.stats} />
-                                        <button
-                                          type="button"
-                                          class="primary"
-                                          aria-label={`Resolver ${topic.name}`}
-                                          onClick={() =>
-                                            setSolving({
-                                              topic,
-                                              path: `${area.name} › ${matter.name} › ${topic.name}`,
-                                            })
-                                          }
-                                        >
-                                          Resolver
-                                        </button>
+                                        <Show when={topic.stats.questions > 0}>
+                                          <button
+                                            type="button"
+                                            class="primary"
+                                            aria-label={`Resolver ${topic.name}`}
+                                            onClick={() =>
+                                              setSolving({
+                                                topic,
+                                                path: `${area.name} › ${matter.name} › ${topic.name}`,
+                                              })
+                                            }
+                                          >
+                                            Resolver
+                                          </button>
+                                        </Show>
                                       </li>
                                     )}
                                   </For>

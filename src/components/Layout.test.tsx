@@ -83,6 +83,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // jsdom has no matchMedia of its own.
+  Reflect.deleteProperty(window, "matchMedia");
   vi.restoreAllMocks();
 });
 
@@ -122,7 +124,7 @@ describe("Sidebar", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(document.querySelector(".shell")).toHaveClass("sidebar-collapsed");
+    expect(document.querySelector(".shell")).toHaveAttribute("data-nav", "collapsed");
   });
 
   it("names the review link with its count, expanded and collapsed", async () => {
@@ -131,7 +133,7 @@ describe("Sidebar", () => {
     renderAt("/");
     const link = await screen.findByRole("link", { name: "Revisar pacote, 2 esperando" });
     expect(link).not.toHaveAttribute("title");
-    expect(link.querySelector(".menu-label-extra")).toHaveTextContent(", 2 esperando");
+    expect(link.querySelector(".nav-label-extra")).toHaveTextContent(", 2 esperando");
     await user.click(screen.getByRole("button", { name: "Menu lateral" }));
     expect(screen.getByRole("link", { name: "Revisar pacote, 2 esperando" })).toBeInTheDocument();
   });
@@ -146,14 +148,27 @@ describe("Sidebar", () => {
 
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(document.querySelector(".shell")).toHaveClass("sidebar-collapsed");
+    expect(document.querySelector(".shell")).toHaveAttribute("data-nav", "collapsed");
     expect(localStorage.getItem("gabaritei.sidebarCollapsed")).toBe("1");
     // Labels stay available to assistive technology while collapsed.
     expect(screen.getByRole("link", { name: "Banco" })).toBeInTheDocument();
 
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(document.querySelector(".shell")).not.toHaveClass("sidebar-collapsed");
+    expect(document.querySelector(".shell")).not.toHaveAttribute("data-nav", "collapsed");
+  });
+
+  it("collapses the nav and hides the toggle when the window is narrower than 60rem", () => {
+    const matchMedia = vi.fn().mockReturnValue({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    renderAt("/");
+    expect(window.matchMedia).toHaveBeenCalledWith("(max-width: 60rem)");
+    expect(document.querySelector(".shell")).toHaveAttribute("data-nav", "collapsed");
+    expect(screen.queryByRole("button", { name: "Menu lateral" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Banco" })).toBeInTheDocument();
   });
 
   it("starts collapsed when that was the saved choice", () => {
@@ -182,7 +197,7 @@ describe("Sidebar", () => {
 });
 
 describe("Focus mode", () => {
-  const sidebar = () => document.querySelector("aside.sidebar");
+  const sidebar = () => document.querySelector("aside.nav");
 
   it("hides the sidebar while an attempt is open, until Modo foco is turned off", async () => {
     const user = userEvent.setup();

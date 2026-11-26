@@ -73,7 +73,7 @@ input[type="radio"] {
     outline-color: Highlight;
   }
 
-  .menu-link.active,
+  .nav-item[aria-current="page"],
   .option.selected,
   .navigator .current,
   .tab[aria-selected="true"] {

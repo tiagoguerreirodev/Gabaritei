@@ -1,0 +1,50 @@
+/* ---- Navigator rail: the answer grid beside the sheet ---- */
+.rail {
+  position: sticky;
+  top: var(--space-6);
+  display: grid;
+  gap: var(--space-4);
+  width: var(--rail-width);
+}
+.rail-progress {
+  display: grid;
+  gap: var(--space-2);
+}
+.rail-progress .meter-track {
+  display: block;
+}
+.rail-group {
+  display: grid;
+  gap: var(--space-2);
+}
+.rail-grid {
+  display: grid;
+  grid-template-columns: repeat(5, var(--bubble-size-lg));
+  gap: var(--space-2);
+}
+.rail-legend {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-3) 0 0;
+  border-top: 1px solid var(--rule);
+  list-style: none;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+@media (max-width: 60rem) {
+  .solve-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rail {
+    position: static;
+    width: auto;
+    order: -1;
+  }
+  .rail-grid {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    overflow-x: auto;
+    padding: var(--space-1);
+  }
+}

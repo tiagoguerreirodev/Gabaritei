@@ -225,6 +225,58 @@ pub fn topic_stems(conn: &Connection, path: &TopicPath) -> AppResult<Vec<String>
     Ok(stems)
 }
 
+/// Creates a topic ahead of any question, so it can be picked when generating. Names that
+/// match an existing area or matter ignoring case and accents reuse its spelling.
+pub fn create_topic(conn: &Connection, typed: &TopicPath) -> AppResult<TopicPath> {
+    let typed = typed.trimmed();
+    if [&typed.area, &typed.matter, &typed.topic]
+        .iter()
+        .any(|name| name.is_empty())
+    {
+        return Err(AppError::Invalid(
+            "Informe a área, a matéria e o assunto.".into(),
+        ));
+    }
+    let area = existing_name(conn, "SELECT DISTINCT area FROM topics", &[], &typed.area)?;
+    let matter = existing_name(
+        conn,
+        "SELECT DISTINCT matter FROM topics WHERE area = ?1",
+        &[&area],
+        &typed.matter,
+    )?;
+    let topic = existing_name(
+        conn,
+        "SELECT topic FROM topics WHERE area = ?1 AND matter = ?2",
+        &[&area, &matter],
+        &typed.topic,
+    )?;
+    let path = TopicPath::new(&area, &matter, &topic);
+    let inserted = conn.execute(
+        "INSERT INTO topics (area, matter, topic) VALUES (?1, ?2, ?3)
+         ON CONFLICT (area, matter, topic) DO NOTHING",
+        params![path.area, path.matter, path.topic],
+    )?;
+    if inserted == 0 {
+        return Err(AppError::Invalid("Este assunto já existe.".into()));
+    }
+    Ok(path)
+}
+
+/// The stored spelling of `typed` among the names the query returns, or `typed` itself.
+fn existing_name(conn: &Connection, sql: &str, args: &[&str], typed: &str) -> AppResult<String> {
+    let names = conn
+        .prepare(sql)?
+        .query_map(rusqlite::params_from_iter(args), |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let key = crate::ordering::fold(typed);
+    Ok(names
+        .into_iter()
+        .find(|name| crate::ordering::fold(name) == key)
+        .unwrap_or_else(|| typed.to_owned()))
+}
+
 /// Returns the topic's ID, creating it if needed.
 fn upsert_topic(conn: &Connection, path: &TopicPath) -> AppResult<TopicId> {
     conn.execute(
@@ -373,6 +425,48 @@ mod tests {
     fn count(conn: &Connection, table: &str) -> i64 {
         conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
             .unwrap()
+    }
+
+    #[test]
+    fn created_topics_reuse_existing_spelling_and_start_empty() {
+        let db = Database::open_in_memory().unwrap();
+        db.with(|conn| {
+            create_topic(
+                conn,
+                &TopicPath::new("Direito", "Constitucional", "Poderes"),
+            )?;
+            let created = create_topic(
+                conn,
+                &TopicPath::new(" direito ", "CONSTITUCIONAL", " Direitos fundamentais "),
+            )?;
+            assert_eq!(
+                created,
+                TopicPath::new("Direito", "Constitucional", "Direitos fundamentais")
+            );
+            assert_eq!(count(conn, "topics"), 2);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn creating_an_existing_or_blank_topic_is_refused() {
+        let db = Database::open_in_memory().unwrap();
+        db.with(|conn| {
+            let path = TopicPath::new("Direito", "Constitucional", "Poderes");
+            create_topic(conn, &path)?;
+            assert!(
+                create_topic(
+                    conn,
+                    &TopicPath::new("direito", "constitucional", "PODERES")
+                )
+                .is_err()
+            );
+            assert!(create_topic(conn, &TopicPath::new("Direito", " ", "Poderes")).is_err());
+            assert_eq!(count(conn, "topics"), 1);
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]

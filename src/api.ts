@@ -91,6 +91,8 @@ export const api = {
   questionCountLimits: (context: CountContext) =>
     call<CountLimits>("question_count_limits", { context }),
   topicChoices: (path: TopicPath) => call<TopicChoices>("topic_choices", { path }),
+  /** Creates a topic ahead of time; returns it with the spelling it was stored under. */
+  createTopic: (path: TopicPath) => call<TopicPath>("create_topic", { path }),
   topicsTree: () => call<TopicTree>("topics_tree"),
   /** One page of collections matching the search and filters. */
   collections: (query: CollectionQuery) => call<CollectionPage>("collections", { query }),

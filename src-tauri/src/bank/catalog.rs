@@ -61,7 +61,8 @@ pub struct TopicNode {
     pub accuracy: Option<f64>,
 }
 
-/// Area › matter › topic with distinct question counts at every level. A question filed
+/// Area › matter › topic with distinct question counts at every level, including topics
+/// created ahead of time that have no questions yet. A question filed
 /// under two topics of the same matter counts once for that matter.
 pub fn topic_tree(conn: &Connection) -> AppResult<TopicTree> {
     let area_counts = area_counts(conn)?;
@@ -149,7 +150,7 @@ type ByAreaAndMatter<T> = BTreeMap<String, BTreeMap<String, T>>;
 fn area_counts(conn: &Connection) -> AppResult<BTreeMap<String, u32>> {
     let mut statement = conn.prepare(
         "SELECT t.area, COUNT(DISTINCT qt.question_id)
-         FROM topics t JOIN question_topics qt ON qt.topic_id = t.id GROUP BY t.area",
+         FROM topics t LEFT JOIN question_topics qt ON qt.topic_id = t.id GROUP BY t.area",
     )?;
     let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
     Ok(rows.collect::<Result<_, _>>()?)
@@ -158,7 +159,7 @@ fn area_counts(conn: &Connection) -> AppResult<BTreeMap<String, u32>> {
 fn matter_counts(conn: &Connection) -> AppResult<ByAreaAndMatter<u32>> {
     let mut statement = conn.prepare(
         "SELECT t.area, t.matter, COUNT(DISTINCT qt.question_id)
-         FROM topics t JOIN question_topics qt ON qt.topic_id = t.id
+         FROM topics t LEFT JOIN question_topics qt ON qt.topic_id = t.id
          GROUP BY t.area, t.matter",
     )?;
     let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
@@ -175,7 +176,7 @@ fn topic_groups(conn: &Connection) -> AppResult<ByAreaAndMatter<Vec<TopicNode>>>
     let mut groups = ByAreaAndMatter::<Vec<TopicNode>>::new();
     let mut statement = conn.prepare(
         "SELECT t.id, t.area, t.matter, t.topic, COUNT(qt.question_id)
-         FROM topics t JOIN question_topics qt ON qt.topic_id = t.id
+         FROM topics t LEFT JOIN question_topics qt ON qt.topic_id = t.id
          GROUP BY t.id",
     )?;
     let rows = statement.query_map([], |row| {
@@ -504,6 +505,21 @@ mod tests {
             })
             .unwrap();
         (db, ids)
+    }
+
+    #[test]
+    fn the_tree_lists_topics_created_ahead_with_zero_questions() {
+        let (db, _) = bank();
+        db.with(|conn| {
+            crate::bank::create_topic(conn, &TopicPath::new("História", "Brasil", "Império"))?;
+            let tree = topic_tree(conn)?;
+            let area = tree.areas.iter().find(|a| a.name == "História").unwrap();
+            assert_eq!(area.questions, 0);
+            assert_eq!(area.matters[0].topics[0].name, "Império");
+            assert_eq!(area.matters[0].topics[0].questions, 0);
+            Ok(())
+        })
+        .unwrap();
     }
 
     fn add_collection(

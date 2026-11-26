@@ -71,6 +71,7 @@ function backend(
 ) {
   const queries: CollectionQuery[] = [];
   const started: unknown[] = [];
+  const created: unknown[] = [];
   mockIPC((command, args) => {
     if (command === "session_start") {
       started.push((args as { request: unknown }).request);
@@ -79,6 +80,10 @@ function backend(
     if (command === "question_count_limits") {
       const { available } = (args as { context: { available: number } }).context;
       return { min: 1, max: Math.min(200, available), initial: Math.min(10, available) };
+    }
+    if (command === "create_topic") {
+      created.push((args as { path: unknown }).path);
+      return (args as { path: unknown }).path;
     }
     if (command === "topics_tree") return options.tree ?? tree;
     if (command === "collections") {
@@ -122,7 +127,7 @@ function backend(
     }
     throw new Error(`Unexpected command: ${command}`);
   });
-  return Object.assign(queries, { started });
+  return Object.assign(queries, { started, created });
 }
 
 const listedTitles = () =>
@@ -156,6 +161,22 @@ describe("Banco", () => {
       const leaf = within(treeList).getByText("Direitos fundamentais").closest("li")!;
       expect(leaf).toHaveTextContent("1 questão");
       expect(within(treeList).getByText("Controle de constitucionalidade")).toBeVisible();
+    });
+
+    it("creates a topic ahead of time", async () => {
+      const user = userEvent.setup();
+      const calls = backend();
+      render(() => <Bank />);
+
+      await user.type(await screen.findByLabelText("Nova área"), "Direito");
+      await user.type(screen.getByLabelText("Nova matéria"), "Penal");
+      await user.type(screen.getByLabelText("Novo assunto"), "Dolo");
+      await user.click(screen.getByRole("button", { name: "Criar assunto" }));
+
+      await waitFor(() =>
+        expect(calls.created).toEqual([{ area: "Direito", matter: "Penal", topic: "Dolo" }]),
+      );
+      await waitFor(() => expect(screen.getByLabelText("Novo assunto")).toHaveValue(""));
     });
 
     it("shows each answered topic's accuracy", async () => {

@@ -112,6 +112,15 @@ pub fn topic_choices(
     db.with(|conn| catalog::topic_choices(conn, &path))
 }
 
+/// Creates a topic ahead of time and returns it with the spelling it was stored under.
+#[tauri::command(async)]
+pub fn create_topic(
+    db: State<'_, Database>,
+    path: crate::bank::TopicPath,
+) -> AppResult<crate::bank::TopicPath> {
+    db.with(|conn| crate::bank::create_topic(conn, &path))
+}
+
 /// Area › matter › topic with question counts.
 #[tauri::command(async)]
 pub fn topics_tree(db: State<'_, Database>) -> AppResult<TopicTree> {

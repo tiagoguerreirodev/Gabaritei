@@ -25,6 +25,7 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_initial.sql"),
     include_str!("../migrations/0002_tags_on_collections_and_image_alt.sql"),
+    include_str!("../migrations/0003_filter_attempts.sql"),
 ];
 
 /// Schema version this build of the app expects.
@@ -104,17 +105,43 @@ pub(crate) fn prepare_connection(conn: &mut Connection) -> AppResult<()> {
 
 /// Brings the schema up to `migrations.len()`. Each migration runs in its own transaction
 /// together with the `user_version` bump, so a failure leaves the previous version intact.
+///
+/// Foreign keys are off while migrating: with them on, rebuilding a table (`DROP TABLE`)
+/// deletes its rows and cascades to the tables that reference it. Each migration must leave
+/// the foreign keys consistent, or it is rolled back.
 fn migrate(conn: &mut Connection, migrations: &[&str]) -> AppResult<()> {
     let current = user_version(conn)?;
     let target = migrations.len() as u32;
     if current > target {
         return Err(AppError::Invalid(NEWER_SCHEMA_MESSAGE.into()));
     }
+    if current == target {
+        return Ok(());
+    }
+    conn.pragma_update(None, "foreign_keys", false)?;
+    let applied = apply_migrations(conn, migrations, current);
+    let restored = conn.pragma_update(None, "foreign_keys", true);
+    applied?;
+    Ok(restored?)
+}
+
+fn apply_migrations(conn: &mut Connection, migrations: &[&str], current: u32) -> AppResult<()> {
     for (index, sql) in migrations.iter().enumerate().skip(current as usize) {
         let tx = conn.transaction()?;
         tx.execute_batch(sql)?;
+        ensure_foreign_keys_hold(&tx)?;
         tx.pragma_update(None, "user_version", index as u32 + 1)?;
         tx.commit()?;
+    }
+    Ok(())
+}
+
+fn ensure_foreign_keys_hold(conn: &Connection) -> AppResult<()> {
+    let mut check = conn.prepare("PRAGMA foreign_key_check")?;
+    if check.exists([])? {
+        return Err(AppError::Internal(
+            "a migration left rows that break a foreign key".into(),
+        ));
     }
     Ok(())
 }
@@ -456,6 +483,64 @@ mod tests {
             })
             .unwrap();
         assert_eq!(stem, "Enunciado");
+    }
+
+    #[test]
+    fn migration_3_keeps_attempts_and_responses() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        migrate(&mut conn, &MIGRATIONS[..2]).unwrap();
+        insert_question(&conn, "q1").unwrap();
+        insert_question(&conn, "q2").unwrap();
+        conn.execute_batch(
+            "INSERT INTO attempts (id, source_kind, feedback_mode, started_at, finished_at)
+             VALUES ('a1', 'topic', 'exam', '2026-11-19T00:00:00Z', '2026-11-19T01:00:00Z');
+             INSERT INTO responses (attempt_id, position, question_id, snapshot)
+             VALUES ('a1', 0, 'q1', '{}'), ('a1', 1, 'q2', '{}');",
+        )
+        .unwrap();
+
+        migrate(&mut conn, MIGRATIONS).unwrap();
+
+        assert_eq!(user_version(&conn).unwrap(), 3);
+        let responses: i64 = conn
+            .query_row("SELECT COUNT(*) FROM responses", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(responses, 2);
+        let violations = conn
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .exists([])
+            .unwrap();
+        assert!(!violations);
+        let foreign_keys: i64 = conn
+            .pragma_query_value(None, "foreign_keys", |r| r.get(0))
+            .unwrap();
+        assert_eq!(foreign_keys, 1);
+        conn.execute(
+            "INSERT INTO attempts (id, source_kind, feedback_mode, started_at)
+             VALUES ('a2', 'filter', 'study', '2026-11-19T02:00:00Z')",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_migration_that_breaks_a_foreign_key_is_rolled_back() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        configure(&conn).unwrap();
+        let migrations = [
+            "CREATE TABLE parent (id INTEGER PRIMARY KEY) STRICT;
+             CREATE TABLE child (parent INTEGER REFERENCES parent (id)) STRICT;",
+            "INSERT INTO child (parent) VALUES (7);",
+        ];
+
+        assert!(migrate(&mut conn, &migrations).is_err());
+        assert_eq!(user_version(&conn).unwrap(), 1);
+        let foreign_keys: i64 = conn
+            .pragma_query_value(None, "foreign_keys", |r| r.get(0))
+            .unwrap();
+        assert_eq!(foreign_keys, 1);
     }
 
     #[test]

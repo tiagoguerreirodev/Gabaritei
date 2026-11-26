@@ -2,6 +2,7 @@ use super::*;
 use crate::bank::question::tests::{boolean, multiple};
 use crate::bank::{TopicPath, import_questions};
 use crate::db::Database;
+use crate::selection::{QuestionFilter, SessionOrder, StudyStatus};
 use rand::SeedableRng;
 
 const T0: &str = "2026-11-20T10:00:00.000Z";
@@ -930,5 +931,122 @@ fn progress_counts_use_the_saved_choice() {
             Ok(())
         })
         .unwrap();
+    }
+}
+
+fn start_filter(db: &Database, filter: QuestionFilter, count: u32) -> AppResult<AttemptView> {
+    db.transaction(|tx| {
+        start(
+            tx,
+            &SessionStart {
+                source: SessionSource::Filter {
+                    filter,
+                    count,
+                    order: SessionOrder::Random,
+                },
+                feedback_mode: FeedbackMode::Study,
+            },
+            T0,
+            &mut rand::rngs::StdRng::seed_from_u64(0),
+        )
+    })
+}
+
+#[test]
+fn a_filter_session_stores_its_filter() {
+    let (db, _) = bank();
+    let filter = QuestionFilter {
+        collection_id: Some("c1".into()),
+        statuses: vec![StudyStatus::Unseen],
+        ..QuestionFilter::default()
+    };
+
+    let started = start_filter(&db, filter.clone(), 3).unwrap();
+    let loaded = db.with(|conn| load(conn, &started.id)).unwrap();
+
+    assert_eq!(loaded.source_kind, SourceKind::Filter);
+    assert_eq!(loaded.source_ref, Some(SourceRef::Filter(filter)));
+    assert_eq!(loaded.questions.len(), 3);
+}
+
+#[test]
+fn a_filter_session_is_titled_from_its_filter() {
+    let (db, _) = bank();
+    let topic_id: TopicId = db
+        .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
+        .unwrap();
+    let title_of = |filter| {
+        let view = start_filter(&db, filter, 1)?;
+        db.transaction(|tx| abandon(tx, &view.id))?;
+        Ok::<_, AppError>(view.title)
+    };
+    let everything = QuestionFilter::default;
+
+    assert_eq!(title_of(everything()).unwrap(), "Banco");
+    assert_eq!(
+        title_of(QuestionFilter {
+            statuses: vec![StudyStatus::Unseen, StudyStatus::Wrong],
+            ..everything()
+        })
+        .unwrap(),
+        "Banco · Nunca resolvidas, Erradas"
+    );
+    assert_eq!(
+        title_of(QuestionFilter {
+            topic_ids: vec![topic_id],
+            ..everything()
+        })
+        .unwrap(),
+        "Controle de constitucionalidade"
+    );
+    assert_eq!(
+        title_of(QuestionFilter {
+            collection_id: Some("c1".into()),
+            ..everything()
+        })
+        .unwrap(),
+        "Caderno de teste"
+    );
+}
+
+#[test]
+fn a_redo_session_is_titled_after_its_attempt() {
+    let (db, _) = bank();
+    let first = start_collection(&db, FeedbackMode::Study);
+    db.with(|conn| Ok(conn.execute("UPDATE attempts SET finished_at = ?1", params![T1])?))
+        .unwrap();
+    let redo = QuestionFilter {
+        attempt_id: Some(first.id.clone()),
+        ..QuestionFilter::default()
+    };
+
+    let view = start_filter(&db, redo, 2).unwrap();
+
+    assert_eq!(view.title, "Refazer: Caderno de teste");
+}
+
+#[test]
+fn a_filter_whose_questions_are_all_held_is_refused() {
+    let (db, _) = bank();
+    start_collection(&db, FeedbackMode::Study);
+
+    let refused = start_filter(&db, QuestionFilter::default(), 5);
+
+    assert_eq!(
+        refused.unwrap_err().detail(),
+        "Não há questões disponíveis para esta sessão."
+    );
+}
+
+#[test]
+fn a_filter_count_outside_one_to_200_is_refused() {
+    let (db, _) = bank();
+
+    for count in [0, 201] {
+        let refused = start_filter(&db, QuestionFilter::default(), count);
+        assert_eq!(
+            refused.unwrap_err().detail(),
+            "Escolha de 1 a 200 questões."
+        );
     }
 }

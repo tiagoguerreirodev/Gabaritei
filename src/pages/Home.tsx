@@ -51,7 +51,7 @@ export default function Home() {
               </Show>
 
               <Show when={otherAttempts().length > 0}>
-                <section class="card wide" aria-labelledby="active-title">
+                <section class="card card-wide" aria-labelledby="active-title">
                   <h2 id="active-title">Outras tentativas em andamento</h2>
                   <ul class="attempt-list">
                     <For each={otherAttempts()}>
@@ -65,7 +65,7 @@ export default function Home() {
                           </span>
                           <button
                             type="button"
-                            class="secondary"
+                            class="btn"
                             aria-label={`Retomar ${attempt.title}`}
                             onClick={() => openAttempt(attempt.id)}
                           >
@@ -79,7 +79,7 @@ export default function Home() {
               </Show>
 
               <Show when={summary().dueReviews > 0 || summary().draftsWaiting > 0}>
-                <section class="card wide" aria-labelledby="waiting-title">
+                <section class="card card-wide" aria-labelledby="waiting-title">
                   <h2 id="waiting-title">Aguardando você</h2>
                   <ul class="waiting-list">
                     <Show when={summary().dueReviews > 0}>
@@ -105,7 +105,7 @@ export default function Home() {
               </Show>
 
               <Show when={evaluated()}>
-                <section class="card wide" aria-labelledby="areas-title">
+                <section class="card card-wide" aria-labelledby="areas-title">
                   <h2 id="areas-title">Aproveitamento por área</h2>
                   <ul class="area-list">
                     <For each={summary().areas.filter((a) => a.stats.score.evaluated > 0)}>

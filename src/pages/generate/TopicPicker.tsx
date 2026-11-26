@@ -38,6 +38,7 @@ export default function TopicPicker(props: {
         }
       >
         <select
+          class="input"
           id="gen-topic-area"
           aria-label="Área"
           aria-required="true"
@@ -54,6 +55,7 @@ export default function TopicPicker(props: {
           </For>
         </select>
         <select
+          class="input"
           id="gen-topic-matter"
           aria-label="Matéria"
           aria-required="true"
@@ -71,6 +73,7 @@ export default function TopicPicker(props: {
           </For>
         </select>
         <select
+          class="input"
           id="gen-topic-topic"
           aria-label="Assunto"
           aria-required="true"

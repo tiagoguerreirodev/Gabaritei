@@ -46,7 +46,7 @@ export default function NavigatorDrawer(props: {
       <button
         ref={toggle}
         type="button"
-        class="secondary navigator-toggle"
+        class="btn navigator-toggle"
         aria-expanded={open()}
         aria-controls={PANEL_ID}
         onClick={() => setOpen(!open())}

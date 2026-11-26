@@ -1,4 +1,4 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, createSignal } from "solid-js";
 import { errorMessage } from "./states";
 
 export type ToastTone = "info" | "success" | "error";
@@ -47,15 +47,13 @@ export function Toaster() {
             class={`toast toast-${toast.tone}`}
             role={toast.tone === "error" ? "alert" : "status"}
           >
-            <Show when={toast.tone === "success"}>
-              <span class="toast-glyph" aria-hidden="true">
-                ✓
-              </span>
-            </Show>
-            <span>{toast.message}</span>
+            <span class="toast-mark" aria-hidden="true">
+              {toast.tone === "error" ? "!" : "✓"}
+            </span>
+            <span class="toast-text">{toast.message}</span>
             <button
               type="button"
-              class="icon-button"
+              class="btn btn-ghost"
               aria-label="Dispensar aviso"
               onClick={() => dismissToast(toast.id)}
             >

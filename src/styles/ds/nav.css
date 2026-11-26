@@ -1,0 +1,144 @@
+/* ---- Nav (sidebar) ---- */
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  width: var(--sidebar-width);
+  padding: var(--space-5) var(--space-3);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+.nav-brand {
+  padding: 0 var(--space-3) var(--space-4);
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  text-decoration: none;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.nav-item:hover {
+  background: var(--bg);
+}
+.nav-item[aria-current="page"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.nav-item .badge-count {
+  margin-left: auto;
+}
+.icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+
+/* The shell around the nav items: brand row, menu groups, footer, and the icon-only form. */
+.nav[hidden] {
+  display: none;
+}
+.nav-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.nav-menu {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.nav-menu nav,
+.nav-footer nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+.nav-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.nav-version {
+  margin: 0;
+  padding: 0 var(--space-3);
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.nav-item {
+  position: relative;
+}
+/* The count in the review link's tooltip; the badge already shows it when labels are visible. */
+.nav-label-extra {
+  display: none;
+}
+
+/*
+ * Icon-only: collapsed by choice, and always on narrow windows (Layout sets data-nav). The label
+ * stays in the accessibility tree (clipped, not removed) and shows as a tooltip on hover or
+ * keyboard focus. The nav does not clip, so the tooltip can reach into the page.
+ */
+.shell[data-nav="collapsed"] {
+  --sidebar-width: var(--sidebar-width-collapsed);
+}
+.shell[data-nav="collapsed"] .nav-brand {
+  flex-direction: column;
+  padding: 0;
+}
+.shell[data-nav="collapsed"] .nav-brand-name,
+.shell[data-nav="collapsed"] .nav-version {
+  display: none;
+}
+.shell[data-nav="collapsed"] .nav-item {
+  justify-content: center;
+  padding-inline: var(--space-2);
+}
+.shell[data-nav="collapsed"] .nav-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.shell[data-nav="collapsed"] .nav-item .badge-count {
+  position: absolute;
+  top: calc(-1 * var(--space-1));
+  right: calc(-1 * var(--space-1));
+  margin: 0;
+  padding: 0 var(--space-1);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.shell[data-nav="collapsed"] .nav-item:hover .nav-label,
+.shell[data-nav="collapsed"] .nav-item:focus-visible .nav-label {
+  top: 50%;
+  left: calc(100% + var(--space-2));
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
+  transform: translateY(-50%);
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-raised);
+  font-size: 0.875rem;
+  font-weight: 400;
+  z-index: 30;
+  pointer-events: none;
+}
+.shell[data-nav="collapsed"] .nav-item:hover .nav-label-extra,
+.shell[data-nav="collapsed"] .nav-item:focus-visible .nav-label-extra {
+  display: inline;
+}

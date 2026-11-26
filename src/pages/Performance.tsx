@@ -84,6 +84,7 @@ export default function Performance() {
         <label>
           <span>Modo</span>
           <select
+            class="input"
             value={mode()}
             onChange={(event) => {
               const value = event.currentTarget.value;
@@ -98,7 +99,7 @@ export default function Performance() {
         </label>
         <button
           type="button"
-          class="secondary"
+          class="btn"
           disabled={exporting.active()}
           onClick={() => void exportCsv()}
         >
@@ -129,12 +130,12 @@ export default function Performance() {
               <Show
                 when={filtering()}
                 fallback={
-                  <A class="button-link primary" href="/gerar">
+                  <A class="btn btn-primary" href="/gerar">
                     Gerar questões
                   </A>
                 }
               >
-                <button type="button" class="secondary" onClick={clearFilters}>
+                <button type="button" class="btn" onClick={clearFilters}>
                   Limpar filtros
                 </button>
               </Show>
@@ -164,12 +165,12 @@ export default function Performance() {
                     <Show
                       when={filtering()}
                       fallback={
-                        <A class="button-link primary" href="/banco">
+                        <A class="btn btn-primary" href="/banco">
                           Ir para o Banco
                         </A>
                       }
                     >
-                      <button type="button" class="secondary" onClick={clearFilters}>
+                      <button type="button" class="btn" onClick={clearFilters}>
                         Limpar filtros
                       </button>
                     </Show>
@@ -181,7 +182,7 @@ export default function Performance() {
                 </EmptyState>
               }
             >
-              <section class="card wide" aria-labelledby="weakest-title">
+              <section class="card card-wide" aria-labelledby="weakest-title">
                 <h2 id="weakest-title">Assuntos mais fracos</h2>
                 <ol class="weakest-list">
                   <For each={data().weakest}>
@@ -204,12 +205,12 @@ export default function Performance() {
                 </ol>
               </section>
             </Show>
-            <section class="card wide" aria-labelledby="trend-title">
+            <section class="card card-wide" aria-labelledby="trend-title">
               <h2 id="trend-title">Evolução semanal</h2>
               <TrendChart weeks={data().trend} />
             </section>
             <Show when={data().areas.length > 0}>
-              <section class="card wide" aria-labelledby="table-title">
+              <section class="card card-wide" aria-labelledby="table-title">
                 <h2 id="table-title">Por área, matéria e assunto</h2>
                 <StrengthTable areas={data().areas} />
               </section>

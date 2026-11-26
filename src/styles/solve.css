@@ -1,6 +1,6 @@
 /* ---- Resolver ---- */
 
-.modal-footer .primary:only-child {
+.modal-footer .btn-primary:only-child {
   margin-left: auto;
 }
 
@@ -122,17 +122,10 @@
   position: sticky;
   top: 0;
   z-index: 4;
-  height: 0.3rem;
+  height: 0.4rem;
   margin-bottom: var(--space-4);
-  overflow: hidden;
-  border-radius: var(--radius-pill);
+  border: 0;
   background: var(--border);
-}
-
-.progress-fill {
-  height: 100%;
-  background: var(--accent);
-  transition: width var(--dur-base) var(--ease);
 }
 
 /* Navigator drawer: a toggle above the question and a panel that slides in from the right. */
@@ -155,7 +148,7 @@
   overflow-y: auto;
   border-left: 1px solid var(--border-strong);
   background: var(--surface);
-  box-shadow: var(--shadow-modal);
+  box-shadow: var(--shadow-overlay);
   animation: drawer-in var(--dur-base) var(--ease);
 }
 
@@ -214,13 +207,13 @@
 
 .navigator .outcome-correct {
   border-color: var(--success);
-  background: color-mix(in srgb, var(--success) 25%, var(--surface));
+  background: var(--success-soft);
   color: var(--text);
 }
 
 .navigator .outcome-wrong {
   border-color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 25%, var(--surface));
+  background: var(--danger-soft);
   color: var(--text);
 }
 
@@ -280,9 +273,9 @@
   padding: var(--space-3) var(--space-4);
   transform: translateX(-50%);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   background: var(--surface);
-  box-shadow: var(--shadow-toast);
+  box-shadow: var(--shadow-raised);
   font-size: var(--text-sm);
 }
 
@@ -311,25 +304,13 @@
   padding: var(--space-5) var(--space-6);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
 }
 
 .question-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
-
-.flag-button {
-  border: none;
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.flag-button[aria-pressed="true"] {
-  color: var(--flag);
-  font-weight: 600;
 }
 
 .question-stem {
@@ -356,7 +337,7 @@
   display: flex;
   align-items: stretch;
   border: 2px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   transition:
     background-color var(--dur-fast) var(--ease),
     border-color var(--dur-fast) var(--ease);
@@ -490,12 +471,12 @@
 
 .option.option-key {
   border-color: var(--success);
-  background: color-mix(in srgb, var(--success) 14%, var(--surface));
+  background: var(--success-soft);
 }
 
 .option.option-wrong {
   border-color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  background: var(--danger-soft);
 }
 
 .option-mark {
@@ -507,7 +488,6 @@
 .option-eliminate {
   min-width: 3rem;
   padding: 0 var(--space-3);
-  color: var(--muted);
 }
 
 .option-eliminate[aria-pressed="true"] {

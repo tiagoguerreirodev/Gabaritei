@@ -55,7 +55,7 @@ export default function LearningTabs(props: {
       <div class="learning-actions">
         <button
           type="button"
-          class="primary"
+          class="btn btn-primary"
           disabled={props.data.practice === 0}
           onClick={() =>
             props.onPractice({ title: "Praticar revisões", source: { kind: "reviews" } })
@@ -91,7 +91,7 @@ export default function LearningTabs(props: {
           <div class="learning-actions">
             <button
               type="button"
-              class="secondary"
+              class="btn"
               disabled={props.data.practiceErrors === 0}
               onClick={() =>
                 props.onPractice({
@@ -119,7 +119,7 @@ export default function LearningTabs(props: {
               title={tab().empty}
               action={
                 props.data.items.length === 0 ? (
-                  <A class="button-link primary" href="/banco">
+                  <A class="btn btn-primary" href="/banco">
                     Ir para o Banco
                   </A>
                 ) : undefined

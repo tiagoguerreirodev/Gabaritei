@@ -82,7 +82,7 @@ export default function ReviewActions(props: { summary: DraftSummary; onChanged:
       <div class="review-actions">
         <button
           type="button"
-          class="primary"
+          class="btn btn-primary"
           disabled={busy() || checking() || s().problems.length > 0}
           onClick={() => void importAll()}
         >
@@ -90,25 +90,20 @@ export default function ReviewActions(props: { summary: DraftSummary; onChanged:
         </button>
         <button
           type="button"
-          class="secondary"
+          class="btn"
           disabled={busy() || checking() || confirmed() === 0}
           onClick={() => void importConfirmed()}
         >
           Importar só as confirmadas
         </button>
         <Show when={!checking() && s().needsCheck}>
-          <button
-            type="button"
-            class="secondary"
-            disabled={busy()}
-            onClick={() => void rerunCheck()}
-          >
+          <button type="button" class="btn" disabled={busy()} onClick={() => void rerunCheck()}>
             Conferir de novo
           </button>
         </Show>
         <button
           type="button"
-          class="secondary"
+          class="btn"
           disabled={busy() || checking()}
           onClick={() => setConfirmingDiscard(true)}
         >

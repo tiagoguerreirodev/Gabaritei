@@ -31,7 +31,10 @@ function alphabetical(areas: AreaStats[]): AreaStats[] {
 export function SmallSample(props: { stats: GroupStats }) {
   return (
     <Show when={props.stats.smallSample && props.stats.score.evaluated > 0}>
-      <span class="tag" title="Menos de 5 respostas: ainda não dá para confiar nos percentuais.">
+      <span
+        class="badge badge-accent"
+        title="Menos de 5 respostas: ainda não dá para confiar nos percentuais."
+      >
         amostra pequena
       </span>
     </Show>
@@ -43,13 +46,10 @@ function MasteryBar(props: { stats: GroupStats }) {
   const achievement = () => props.stats.score.achievement;
   return (
     <span class="table-mastery">
-      <span class="mastery-bar" aria-hidden="true">
-        <span
-          class="mastery-fill"
-          style={{ width: `${Math.round((achievement() ?? 0) * 100)}%` }}
-        />
+      <span class="meter-track mastery-bar" aria-hidden="true">
+        <span class="meter-fill" style={{ width: `${Math.round((achievement() ?? 0) * 100)}%` }} />
       </span>
-      <span class="mastery-value">{formatPercent(achievement())}</span>
+      <span class="meter-value">{formatPercent(achievement())}</span>
     </span>
   );
 }
@@ -129,7 +129,7 @@ export default function StrengthTable(props: { areas: AreaStats[] }) {
                       <th scope="row">
                         <button
                           type="button"
-                          class="link-button"
+                          class="btn btn-link is-inline"
                           aria-expanded={open().has(areaKey)}
                           onClick={() => toggle(areaKey)}
                         >
@@ -151,7 +151,7 @@ export default function StrengthTable(props: { areas: AreaStats[] }) {
                                 <th scope="row">
                                   <button
                                     type="button"
-                                    class="link-button"
+                                    class="btn btn-link is-inline"
                                     aria-expanded={open().has(matterKey)}
                                     onClick={() => toggle(matterKey)}
                                   >
@@ -177,7 +177,7 @@ export default function StrengthTable(props: { areas: AreaStats[] }) {
                                       <td>
                                         <button
                                           type="button"
-                                          class="link-button"
+                                          class="btn btn-link is-inline"
                                           aria-label={`Treinar este assunto: ${topic.name}`}
                                           disabled={topic.stats.available === 0}
                                           onClick={() =>

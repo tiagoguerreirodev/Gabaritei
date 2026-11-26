@@ -172,7 +172,7 @@ function Outcome() {
       {(outcome) => (
         <section class="card" aria-label="Resultado da última geração">
           {outcomeContent(outcome())}
-          <button type="button" class="secondary" onClick={() => void dismissGeneration()}>
+          <button type="button" class="btn" onClick={() => void dismissGeneration()}>
             Dispensar
           </button>
         </section>
@@ -292,7 +292,7 @@ function Form(props: {
 
   return (
     <form
-      class="card wide generate-form"
+      class="card card-wide generate-form"
       onSubmit={(event) => void submit(event)}
       aria-label="Nova geração"
       noValidate
@@ -305,7 +305,7 @@ function Form(props: {
       </p>
 
       <div class="form-grid">
-        <span class="label" id="topic-label">
+        <span class="field-label" id="topic-label">
           Assunto <span class="required">(obrigatório)</span>
         </span>
         <TopicPicker
@@ -334,6 +334,7 @@ function Form(props: {
 
         <label for="gen-format">Formato</label>
         <select
+          class="input"
           id="gen-format"
           value={form.format ?? ""}
           onChange={(event) => {
@@ -369,6 +370,7 @@ function Form(props: {
         <div class="form-grid">
           <label for="gen-instructions">Instruções</label>
           <textarea
+            class="input"
             id="gen-instructions"
             rows="3"
             placeholder="Opcional: foco, nível, tipo de pegadinha…"
@@ -382,15 +384,15 @@ function Form(props: {
             onChange={(sources) => setForm("sources", sources)}
           />
 
-          <span class="label">Gerador</span>
+          <span class="field-label">Gerador</span>
           <RolePicker label="Gerador" editor={generatorEditor} />
-          <span class="label">Conferente</span>
+          <span class="field-label">Conferente</span>
           <RolePicker label="Conferente" editor={checkerEditor} />
         </div>
       </details>
       <CatalogNotice agents={[generator().agent, checker().agent]} />
       <Show when={problems().length > 0}>
-        <div role="alert" class="error">
+        <div role="alert" class="field-error">
           <For each={problems()}>{(problem) => <p>{problem}</p>}</For>
           <p>Corrija em “Opções avançadas”, no Gerador e no Conferente, para poder gerar.</p>
         </div>
@@ -401,7 +403,7 @@ function Form(props: {
       </FieldError>
       <button
         type="submit"
-        class="primary"
+        class="btn btn-primary"
         disabled={submitting() || changingRole() || problems().length > 0}
       >
         {submitting() ? "Iniciando…" : "Gerar"}

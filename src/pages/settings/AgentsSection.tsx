@@ -43,6 +43,7 @@ export default function AgentsSection(props: {
             <div class="settings-row">
               <label for={`cli-${agent}`}>{agentLabels[agent]}</label>
               <input
+                class="input"
                 id={`cli-${agent}`}
                 type="text"
                 placeholder="Detectar automaticamente"
@@ -51,7 +52,7 @@ export default function AgentsSection(props: {
               />
               <button
                 type="button"
-                class="secondary"
+                class="btn"
                 disabled={testing() !== null}
                 onClick={() => void test(agent)}
               >

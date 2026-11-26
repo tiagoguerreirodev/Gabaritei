@@ -1,0 +1,33 @@
+/*
+ * Page-level theme: colour scheme, base typography and the text-size setting.
+ * Token values live in tokens.css, generated from docs/design-system/tokens.json.
+ */
+:root {
+  color-scheme: light dark;
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* Text size (Configurações › Aparência). Everything is in rem, so the whole UI scales. */
+:root[data-text-size="s"] {
+  font-size: 15px;
+}
+
+:root[data-text-size="l"] {
+  font-size: 18px;
+}
+
+:root[data-text-size="xl"] {
+  font-size: 20px;
+}

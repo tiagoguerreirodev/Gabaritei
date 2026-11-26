@@ -109,7 +109,7 @@ function Form(props: { initial: AiSettings; onReload: () => void }) {
       <p>
         <button
           type="button"
-          class="primary"
+          class="btn btn-primary"
           disabled={saving.active() || changingRole()}
           onClick={() => void saveSettings()}
         >

@@ -10,6 +10,7 @@ import {
   type ParentProps,
 } from "solid-js";
 import { api } from "../api";
+import { createMediaQuery } from "../mediaQuery";
 import { focusMode } from "../focusMode";
 import { routes, type AppRoute } from "../routes";
 import { waitingDrafts, watchGeneration } from "../generation";
@@ -17,6 +18,8 @@ import GenerationBanner from "./GenerationBanner";
 import { SidebarIcon, menuIcons } from "./icons";
 import { Toaster } from "./toasts";
 
+/** Below this width the nav is always icon-only. */
+const NARROW_QUERY = "(max-width: 60rem)";
 const COLLAPSED_KEY = "gabaritei.sidebarCollapsed";
 
 function readCollapsed(): boolean {
@@ -39,22 +42,16 @@ function MenuLink(props: { route: AppRoute; count?: number }) {
   const name = () =>
     props.count ? `${props.route.label}, ${props.count} esperando` : props.route.label;
   return (
-    <A
-      href={props.route.path}
-      end
-      activeClass="active"
-      class="menu-link"
-      aria-label={props.count ? name() : undefined}
-    >
+    <A href={props.route.path} end class="nav-item" aria-label={props.count ? name() : undefined}>
       {menuIcons[props.route.path]?.()}
-      <span class="menu-label">
+      <span class="nav-label">
         {props.route.label}
         <Show when={props.count}>
-          <span class="menu-label-extra">, {props.count} esperando</span>
+          <span class="nav-label-extra">, {props.count} esperando</span>
         </Show>
       </span>
       <Show when={props.count}>
-        <span class="menu-count" aria-hidden="true">
+        <span class="badge badge-count" aria-hidden="true">
           {props.count}
         </span>
       </Show>
@@ -67,6 +64,8 @@ export default function Layout(props: ParentProps) {
   const location = useLocation();
   let main: HTMLElement | undefined;
   const [collapsed, setCollapsed] = createSignal(readCollapsed());
+  const narrow = createMediaQuery(NARROW_QUERY);
+  const iconOnly = () => collapsed() || narrow();
   const toggle = () => {
     const next = !collapsed();
     setCollapsed(next);
@@ -85,26 +84,32 @@ export default function Layout(props: ParentProps) {
   );
 
   return (
-    <div class="shell" classList={{ "sidebar-collapsed": collapsed(), "focus-mode": focusMode() }}>
+    <div
+      class="shell"
+      data-nav={iconOnly() ? "collapsed" : undefined}
+      classList={{ "focus-mode": focusMode() }}
+    >
       <button type="button" class="skip-link" onClick={() => main?.focus()}>
         Pular para o conteúdo
       </button>
-      <aside class="sidebar" hidden={focusMode()}>
-        <div class="brand">
-          <span class="brand-name">Gabaritei</span>
-          <button
-            type="button"
-            class="sidebar-toggle"
-            title={collapsed() ? "Expandir menu" : "Recolher menu"}
-            aria-expanded={!collapsed()}
-            aria-controls="sidebar-menu"
-            onClick={toggle}
-          >
-            <SidebarIcon />
-            <span class="sr-only">Menu lateral</span>
-          </button>
+      <aside class="nav" hidden={focusMode()}>
+        <div class="nav-brand">
+          <span class="nav-brand-name">Gabaritei</span>
+          <Show when={!narrow()}>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              title={collapsed() ? "Expandir menu" : "Recolher menu"}
+              aria-expanded={!collapsed()}
+              aria-controls="nav-menu"
+              onClick={toggle}
+            >
+              <SidebarIcon />
+              <span class="sr-only">Menu lateral</span>
+            </button>
+          </Show>
         </div>
-        <div id="sidebar-menu" class="sidebar-menu">
+        <div id="nav-menu" class="nav-menu">
           <nav aria-label="Menu principal">
             <For each={routes.filter((route) => route.menu === "main")}>
               {(route) => <MenuLink route={route} />}
@@ -117,7 +122,7 @@ export default function Layout(props: ParentProps) {
               )}
             </For>
           </nav>
-          <div class="sidebar-footer">
+          <div class="nav-footer">
             <nav aria-label="Menu secundário">
               <For each={routes.filter((route) => route.menu === "footer")}>
                 {(route) => <MenuLink route={route} />}
@@ -125,7 +130,7 @@ export default function Layout(props: ParentProps) {
             </nav>
             <Show when={info()}>
               {(appInfo) => (
-                <p class="version" data-testid="app-version">
+                <p class="nav-version" data-testid="app-version">
                   {appInfo().name} {appInfo().version}
                 </p>
               )}

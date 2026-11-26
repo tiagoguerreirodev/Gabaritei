@@ -1,0 +1,24 @@
+/* ---- Meter: length plus printed number, never colour alone ---- */
+.meter {
+  display: grid;
+  grid-template-columns: minmax(7rem, 1fr) minmax(6rem, 2fr) 4rem;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+.meter-track {
+  height: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+}
+.meter-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--dur-base) var(--ease);
+}
+.meter-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

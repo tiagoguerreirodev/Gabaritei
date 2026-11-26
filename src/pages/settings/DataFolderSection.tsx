@@ -24,7 +24,7 @@ export default function DataFolderSection() {
         {(path) => (
           <p class="actions">
             <code data-testid="data-folder">{path()}</code>
-            <button type="button" class="secondary" onClick={() => void openFolder("data")}>
+            <button type="button" class="btn" onClick={() => void openFolder("data")}>
               Abrir pasta de dados
             </button>
           </p>

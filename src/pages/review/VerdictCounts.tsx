@@ -78,7 +78,7 @@ export default function VerdictCounts(props: { summary: DraftSummary }) {
       }
     });
   return (
-    <section class="card wide verdict-summary" aria-labelledby="verdict-title">
+    <section class="card card-wide verdict-summary" aria-labelledby="verdict-title">
       <h2 id="verdict-title">Resumo da conferência</h2>
       <Show when={props.summary.checking}>
         <p class="muted">Conferência em andamento: os números aparecem quando ela terminar.</p>

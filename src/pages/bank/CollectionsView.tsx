@@ -51,6 +51,7 @@ export default function CollectionsView() {
         <label>
           <span>Buscar cadernos</span>
           <input
+            class="input"
             type="search"
             placeholder="Área, matéria ou assunto"
             value={search()}
@@ -87,12 +88,12 @@ export default function CollectionsView() {
               <Show
                 when={filtering()}
                 fallback={
-                  <A class="button-link primary" href="/gerar">
+                  <A class="btn btn-primary" href="/gerar">
                     Gerar questões
                   </A>
                 }
               >
-                <button type="button" class="secondary" onClick={clearFilters}>
+                <button type="button" class="btn" onClick={clearFilters}>
                   Limpar filtros
                 </button>
               </Show>
@@ -123,7 +124,7 @@ export default function CollectionsView() {
             <nav class="pager" aria-label="Páginas">
               <button
                 type="button"
-                class="secondary"
+                class="btn"
                 disabled={page() === 0}
                 onClick={() => setPage(page() - 1)}
               >
@@ -134,7 +135,7 @@ export default function CollectionsView() {
               </span>
               <button
                 type="button"
-                class="secondary"
+                class="btn"
                 disabled={page() + 1 >= pages()}
                 onClick={() => setPage(page() + 1)}
               >

@@ -1,5 +1,5 @@
 /**
- * Colour theme and text size: applied as attributes on `<html>`, which `src/styles/tokens.css`
+ * Colour theme and text size: applied as attributes on `<html>`, which `src/styles/theme.css`
  * reads. The backend keeps the saved choice; a copy in localStorage only avoids a flash of the
  * wrong theme at startup, so every use of it is optional.
  */

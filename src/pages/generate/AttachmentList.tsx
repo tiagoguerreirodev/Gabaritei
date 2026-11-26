@@ -26,7 +26,7 @@ export default function AttachmentList(props: {
               </label>{" "}
               <button
                 type="button"
-                class="link-button"
+                class="btn btn-link is-inline"
                 aria-label={`Remover ${fileName(path)}`}
                 onClick={() => props.onRemove(path)}
               >

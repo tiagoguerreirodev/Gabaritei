@@ -14,7 +14,7 @@ export default function LeftBehindNotice(props: {
   onDismiss: () => void;
 }) {
   return (
-    <div class="notice" role="status" data-testid="left-behind">
+    <div class="card card-row notice" role="status" data-testid="left-behind">
       <Show
         when={availableOffer(props.offer)}
         fallback={
@@ -47,31 +47,16 @@ export default function LeftBehindNotice(props: {
                 antes de restaurar).
               </Show>
             </p>
-            <button
-              type="button"
-              class="secondary"
-              disabled={props.busy}
-              onClick={() => props.onCopy()}
-            >
+            <button type="button" class="btn" disabled={props.busy} onClick={() => props.onCopy()}>
               Copiar para a pasta nova
             </button>{" "}
-            <button
-              type="button"
-              class="secondary"
-              disabled={props.busy}
-              onClick={() => props.onMove()}
-            >
+            <button type="button" class="btn" disabled={props.busy} onClick={() => props.onMove()}>
               Mover para a pasta nova
             </button>{" "}
           </>
         )}
       </Show>
-      <button
-        type="button"
-        class="secondary"
-        disabled={props.busy}
-        onClick={() => props.onDismiss()}
-      >
+      <button type="button" class="btn" disabled={props.busy} onClick={() => props.onDismiss()}>
         Entendi
       </button>
     </div>

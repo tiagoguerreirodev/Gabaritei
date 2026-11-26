@@ -1,18 +1,5 @@
 /* ---- Geração ---- */
 
-.generation-banner {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-4);
-  align-items: center;
-  justify-content: space-between;
-  margin: 0 0 var(--space-6);
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
 .form-grid {
   display: grid;
   grid-template-columns: 11rem 1fr;
@@ -22,7 +9,7 @@
 }
 
 .form-grid > label,
-.form-grid > .label {
+.form-grid > .field-label {
   /* Lines the label up with the text inside the input next to it (padding plus border). */
   padding-top: calc(var(--space-1) + 1px);
   font-weight: 600;
@@ -37,10 +24,9 @@
   font: inherit;
 }
 
-.form-grid .hint {
+.form-grid .field-hint {
   grid-column: 2;
   margin: calc(-1 * var(--space-1)) 0 0;
-  font-size: var(--text-sm);
 }
 
 .topic-path {
@@ -96,13 +82,7 @@
 }
 
 .disputed-badge {
-  display: inline-block;
   margin: 0 0 var(--space-2);
-  padding: var(--space-0-5) var(--space-2);
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-pill);
-  color: var(--danger);
-  font-size: var(--text-sm);
 }
 
 .learning-actions {
@@ -122,7 +102,7 @@
 .learning-list {
   margin: 0;
   padding: 0;
-  max-width: var(--width-wide);
+  max-width: var(--content-width-wide);
   list-style: none;
 }
 
@@ -148,17 +128,6 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-}
-
-.notice {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  margin: var(--space-3) 0;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
 }
 
 .notice p {
@@ -238,36 +207,12 @@
   display: block;
 }
 
-.mastery {
-  display: grid;
-  grid-template-columns: minmax(7rem, 1fr) minmax(6rem, 2fr) 4rem;
-  align-items: center;
-  gap: var(--space-1) var(--space-3);
+.meter {
   width: 100%;
 }
 
-.mastery-name {
+.meter-name {
   overflow-wrap: anywhere;
-}
-
-.mastery-track {
-  height: 0.75rem;
-  overflow: hidden;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-}
-
-.mastery-fill {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-  transition: width var(--dur-base) var(--ease);
-}
-
-.mastery-value {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
 }
 
 /*
@@ -276,11 +221,11 @@
  * below apply at any width; the media query only matters if the minimum window width is lowered.
  */
 @media (max-width: 40rem) {
-  .mastery {
+  .meter {
     grid-template-columns: 1fr 4rem;
   }
 
-  .mastery-name {
+  .meter-name {
     grid-column: 1 / -1;
   }
 
@@ -297,11 +242,11 @@
   }
 }
 
-:root[data-text-size="xl"] .mastery {
+:root[data-text-size="xl"] .meter {
   grid-template-columns: 1fr 4rem;
 }
 
-:root[data-text-size="xl"] .mastery-name {
+:root[data-text-size="xl"] .meter-name {
   grid-column: 1 / -1;
 }
 
@@ -393,7 +338,7 @@
   margin: var(--space-4) 0;
   padding: var(--space-2) var(--space-4);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
 }
 
 .advanced > summary {
@@ -402,15 +347,16 @@
   font-weight: 600;
 }
 
-.field-error {
+.form-grid .field-error {
   grid-column: 2;
   margin: 0;
-  color: var(--danger);
   font-weight: 600;
 }
 
 .generate-form > .field-error {
   margin: var(--space-2) 0;
+  white-space: pre-line;
+  font-weight: 600;
 }
 
 .banner-actions {
@@ -432,7 +378,7 @@
   min-width: 8rem;
   padding: var(--space-2) var(--space-4);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
 }
 
 .verdict-counts dt {
@@ -466,7 +412,7 @@
 
 .question-lines li.expanded {
   flex-basis: 100%;
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
 }
 
 .question-lines summary {
@@ -489,7 +435,7 @@
   color: var(--accent);
 }
 
-.today-card .primary {
+.today-card .btn-primary {
   margin-top: var(--space-2);
 }
 
@@ -497,7 +443,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2) var(--space-6);
-  max-width: var(--width-wide);
+  max-width: var(--content-width-wide);
   margin: 0 0 var(--space-4);
   padding: 0;
   list-style: none;
@@ -512,7 +458,7 @@
 .learning-group {
   display: flex;
   justify-content: space-between;
-  max-width: var(--width-wide);
+  max-width: var(--content-width-wide);
   margin: var(--space-4) 0 var(--space-2);
   font-size: var(--text-md);
 }

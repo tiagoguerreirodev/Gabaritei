@@ -33,7 +33,7 @@ function WaitingNotice() {
   const count = () => waitingDrafts().length;
   return (
     <Show when={!generationStatus()?.running && count() > 0}>
-      <p class="generation-banner" role="status">
+      <p class="card card-row" role="status">
         <span>
           {count() === 1
             ? "1 pacote esperando revisão."
@@ -62,7 +62,7 @@ function RunStatus() {
           <Match when={status().running}>
             {/* The Gerar page shows the stages and its own Cancelar while its panel is up. */}
             <Show when={!(location.pathname === "/gerar" && generationPanelShown())}>
-              <p class="generation-banner">
+              <p class="card card-row">
                 <span>
                   {/* Only the stage is announced, not every progress label. */}
                   <span role="status">
@@ -84,9 +84,9 @@ function RunStatus() {
           </Match>
           <Match when={bannerOutcome(status().outcome)}>
             {(notice) => (
-              <p class="generation-banner" role="status">
+              <p class="card card-row" role="status">
                 {notice()}
-                <button type="button" class="secondary" onClick={() => void dismissGeneration()}>
+                <button type="button" class="btn" onClick={() => void dismissGeneration()}>
                   Dispensar
                 </button>
               </p>

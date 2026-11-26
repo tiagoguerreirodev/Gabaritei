@@ -39,6 +39,7 @@ function NewTopicForm(props: { tree?: TopicTree; onCreated: () => void }) {
       onSubmit={(event) => void submit(event)}
     >
       <input
+        class="input"
         type="text"
         aria-label="Nova área"
         placeholder="Área (ex.: Direito)"
@@ -50,6 +51,7 @@ function NewTopicForm(props: { tree?: TopicTree; onCreated: () => void }) {
         <For each={props.tree?.areas}>{(area) => <option value={area.name} />}</For>
       </datalist>
       <input
+        class="input"
         type="text"
         aria-label="Nova matéria"
         placeholder="Matéria (ex.: Constitucional)"
@@ -61,13 +63,14 @@ function NewTopicForm(props: { tree?: TopicTree; onCreated: () => void }) {
         <For each={matters()}>{(matter) => <option value={matter.name} />}</For>
       </datalist>
       <input
+        class="input"
         type="text"
         aria-label="Novo assunto"
         placeholder="Assunto (ex.: Controle de constitucionalidade)"
         value={path.topic}
         onInput={(event) => setPath("topic", event.currentTarget.value)}
       />
-      <button type="submit" class="secondary" disabled={saving()}>
+      <button type="submit" class="btn" disabled={saving()}>
         Criar assunto
       </button>
     </form>
@@ -109,7 +112,7 @@ export default function TopicTreeView() {
           <EmptyState
             title="Nenhuma questão no banco ainda."
             action={
-              <A class="button-link primary" href="/gerar">
+              <A class="btn btn-primary" href="/gerar">
                 Gerar questões
               </A>
             }
@@ -151,7 +154,7 @@ export default function TopicTreeView() {
                                         <Show when={topic.stats.questions > 0}>
                                           <button
                                             type="button"
-                                            class="primary"
+                                            class="btn btn-primary"
                                             aria-label={`Resolver ${topic.name}`}
                                             onClick={() =>
                                               setSolving({

@@ -1,27 +1,23 @@
 /// <reference types="node" />
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import tokens from "../../docs/design-system/tokens.json";
 
-// Vitest does not hand out CSS as text through Vite, so read it from disk (tests run from the repo root).
-const css = readFileSync("src/styles/tokens.css", "utf8");
+type Themed = { light: string; dark: string } | string;
+const tokenValues = new Map<string, Themed>(
+  tokens.color.tokens.map((token) => [token.name, token.value]),
+);
 
-/** The declarations of the first rule whose selector line is exactly `selector`. */
-function block(selector: string, from = 0): Record<string, string> {
-  const start = css.indexOf(`${selector} {`, from);
-  if (start < 0) throw new Error(`Bloco não encontrado: ${selector}`);
-  const body = css.slice(css.indexOf("{", start) + 1, css.indexOf("}", start));
-  const tokens: Record<string, string> = {};
-  for (const [, name, value] of body.matchAll(/--([\w-]+):\s*([^;]+);/g)) {
-    if (name && value) tokens[name] = value.trim();
-  }
-  return tokens;
+function theme(mode: "light" | "dark"): Record<string, string> {
+  return Object.fromEntries(
+    [...tokenValues].map(([name, value]) => [
+      name,
+      typeof value === "string" ? value : value[mode],
+    ]),
+  );
 }
 
-const light = block(":root");
-// The dark block only overrides what differs; the rest (like --focus) inherits from :root.
-const dark = block(':root[data-theme="dark"]');
-const darkAll = { ...light, ...dark };
-const darkFromSystem = block(':root:not([data-theme="light"])', css.indexOf("@media"));
+const light = theme("light");
+const darkAll = theme("dark");
 
 function luminance(hex: string): number {
   const value = /^#([0-9a-f]{6})$/i.exec(hex)?.[1];
@@ -38,10 +34,10 @@ function contrast(a: string, b: string): number {
   return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 }
 
-/** Resolves `var(--x)` one level, as `--focus` uses. */
+/** Resolves a `{name}` alias, as `focus` uses. */
 function color(theme: Record<string, string>, name: string): string {
   const raw = theme[name] ?? "";
-  const alias = /^var\(--([\w-]+)\)$/.exec(raw)?.[1];
+  const alias = /^\{([\w-]+)\}$/.exec(raw)?.[1];
   return alias ? color(theme, alias) : raw;
 }
 
@@ -67,39 +63,20 @@ const pairs: [string, string, number][] = [
   ["border-strong", "surface", 3],
   ["focus", "bg", 3],
   ["focus", "surface", 3],
-  ["flag-bar", "surface", 3],
-  ["flag-bar", "bg", 3],
-];
-
-/** `color-mix(in srgb, fg p%, bg)` as hex, like the solve.css option and navigator backgrounds. */
-function mix(theme: Record<string, string>, fg: string, percent: number, bg: string): string {
-  const [a, b] = [color(theme, fg), color(theme, bg)].map((hex) =>
-    [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)),
-  );
-  return `#${[0, 1, 2]
-    .map((i) =>
-      Math.round((a?.[i] ?? 0) * (percent / 100) + (b?.[i] ?? 0) * (1 - percent / 100))
-        .toString(16)
-        .padStart(2, "0"),
-    )
-    .join("")}`;
-}
-
-// Foregrounds on backgrounds that are mixes: [foreground token, mix token, percent, minimum].
-const mixed: [string, string, number, number][] = [
-  ["success", "success", 14, 4.5], // .option-mark on .option-key
-  ["text", "success", 14, 4.5],
-  ["danger", "danger", 12, 4.5], // on .option-wrong
-  ["text", "danger", 12, 4.5],
-  ["flag-bar", "success", 25, 3], // .flagged on .outcome-correct
-  ["flag-bar", "danger", 25, 3], // .flagged on .outcome-wrong
-  // Percentages below are copied from solve.css (.option-key 14%, .option-wrong 12%).
-  ["flag-bar", "success", 14, 3],
-  ["flag-bar", "danger", 12, 3],
-  ["muted", "success", 14, 4.5],
-  ["muted", "danger", 12, 4.5],
-  ["text", "success", 25, 4.5],
-  ["text", "danger", 25, 4.5],
+  ["text", "success-soft", 4.5],
+  ["muted", "success-soft", 4.5],
+  ["success", "success-soft", 4.5],
+  ["text", "danger-soft", 4.5],
+  ["muted", "danger-soft", 4.5],
+  ["danger", "danger-soft", 4.5],
+  ["text", "explain-bg", 4.5],
+  ["muted", "explain-bg", 4.5],
+  ["accent", "explain-bg", 4.5],
+  ["success", "explain-bg", 4.5],
+  ["text", "accent-soft", 4.5],
+  ["muted", "accent-soft", 4.5],
+  ["flag", "success-soft", 3],
+  ["flag", "danger-soft", 3],
 ];
 
 describe.each([
@@ -109,36 +86,5 @@ describe.each([
   it.each(pairs)("%s sobre %s tem contraste de pelo menos %s:1", (fg, bg, minimum) => {
     const ratio = contrast(color(theme, fg), color(theme, bg));
     expect(ratio, `${fg} on ${bg}: ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(minimum);
-  });
-});
-
-describe.each([
-  ["claro", light],
-  ["escuro", darkAll],
-] as const)("fundos misturados, tema %s", (_name, theme) => {
-  it.each(mixed)("%s sobre mistura de %s a %s% tem pelo menos %s:1", (fg, tint, percent, min) => {
-    const bg = mix(theme, tint, percent, "surface");
-    const ratio = contrast(color(theme, fg), bg);
-    expect(ratio, `${fg} on ${tint} ${percent}%: ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(
-      min,
-    );
-  });
-
-  it("text and muted read on accent-soft, on-accent on danger", () => {
-    for (const fg of ["text", "muted"]) {
-      expect(contrast(color(theme, fg), color(theme, "accent-soft"))).toBeGreaterThanOrEqual(4.5);
-    }
-    expect(contrast(color(theme, "on-accent"), color(theme, "danger"))).toBeGreaterThanOrEqual(4.5);
-  });
-});
-
-describe("dark theme tokens", () => {
-  it("are identical for the system preference and for an explicit choice", () => {
-    for (const [name, value] of Object.entries(darkFromSystem)) {
-      if (name in dark) expect(value, name).toBe(dark[name]);
-    }
-    for (const name of Object.keys(dark)) {
-      expect(darkFromSystem[name], name).toBe(dark[name]);
-    }
   });
 });

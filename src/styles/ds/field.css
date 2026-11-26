@@ -1,0 +1,35 @@
+/* ---- Field ---- */
+.field {
+  display: grid;
+  align-content: start;
+  gap: var(--space-1);
+  max-width: 28rem;
+}
+.field-label {
+  font-weight: 600;
+}
+.field-hint {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.field-error {
+  color: var(--danger);
+  font-size: 0.875rem;
+}
+.input {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-2);
+  min-height: 2.5rem;
+  line-height: 1.5;
+}
+.input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+.input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}

@@ -46,7 +46,7 @@ export default function DataFileSection(props: {
       <p class="actions">
         <button
           type="button"
-          class="secondary"
+          class="btn"
           disabled={busy.active()}
           onClick={() => void exportData()}
         >
@@ -54,7 +54,7 @@ export default function DataFileSection(props: {
         </button>
         <button
           type="button"
-          class="secondary"
+          class="btn"
           disabled={busy.active()}
           onClick={() => setConfirming(true)}
         >

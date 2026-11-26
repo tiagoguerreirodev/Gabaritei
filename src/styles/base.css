@@ -1,41 +1,13 @@
-* {
-  box-sizing: border-box;
+button {
+  font: inherit;
 }
 
-body {
-  margin: 0;
-  font-family: var(--font-ui);
-}
-
-a {
-  color: var(--accent);
-}
-
-/* ---- Focus: one visible ring for everything a keyboard can reach ---- */
-
-:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 2px;
-}
-
-/* Targets that take focus from code only (route change, dialogs): no ring. */
-main:focus,
-.modal:focus {
+/* Targets that take focus from code only (route change): no ring. The modal does the same. */
+main:focus {
   outline: none;
 }
 
 /* ---- Controls: readable in both themes, with a border that meets 3:1 ---- */
-
-input:not([type="checkbox"], [type="radio"]),
-select,
-textarea {
-  font: inherit;
-  color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  padding: var(--space-1) var(--space-2);
-}
 
 input[type="checkbox"],
 input[type="radio"] {
@@ -56,7 +28,7 @@ input[type="radio"] {
   z-index: 100;
   padding: var(--space-2) var(--space-4);
   border: 2px solid var(--accent);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -101,7 +73,7 @@ input[type="radio"] {
     outline-color: Highlight;
   }
 
-  .menu-link.active,
+  .nav-item[aria-current="page"],
   .option.selected,
   .navigator .current,
   .tab[aria-selected="true"] {
@@ -114,7 +86,7 @@ input[type="radio"] {
     border-bottom: 4px solid Highlight;
   }
 
-  .mastery-fill {
+  .meter-fill {
     background: Highlight;
     forced-color-adjust: none;
   }

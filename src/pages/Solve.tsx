@@ -18,7 +18,7 @@ export default function Solve() {
             <EmptyState
               title="Nenhuma tentativa aberta."
               action={
-                <A class="button-link primary" href="/banco">
+                <A class="btn btn-primary" href="/banco">
                   Ir para o Banco
                 </A>
               }

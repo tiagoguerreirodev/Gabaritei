@@ -53,7 +53,7 @@ export default function TrendChart(props: { weeks: WeekPoint[] }) {
         <EmptyState
           title="Ainda não há respostas para mostrar a evolução."
           action={
-            <A class="button-link primary" href="/banco">
+            <A class="btn btn-primary" href="/banco">
               Ir para o Banco
             </A>
           }

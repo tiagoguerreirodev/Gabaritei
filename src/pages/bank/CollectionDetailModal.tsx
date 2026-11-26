@@ -48,7 +48,7 @@ export default function CollectionDetailModal(props: {
             fallback={
               <button
                 type="button"
-                class="primary"
+                class="btn btn-primary"
                 disabled={!current()?.questions}
                 onClick={() => setStarting(true)}
               >
@@ -59,7 +59,7 @@ export default function CollectionDetailModal(props: {
             {(attempt) => (
               <>
                 <span class="muted">Há uma tentativa em andamento.</span>
-                <button type="button" class="primary" onClick={() => open(attempt().id)}>
+                <button type="button" class="btn btn-primary" onClick={() => open(attempt().id)}>
                   Continuar
                 </button>
               </>
@@ -99,7 +99,11 @@ export default function CollectionDetailModal(props: {
                   <For each={loaded().attempts}>
                     {(attempt) => (
                       <li>
-                        <button type="button" class="link-button" onClick={() => open(attempt.id)}>
+                        <button
+                          type="button"
+                          class="btn btn-link is-inline"
+                          onClick={() => open(attempt.id)}
+                        >
                           {attempt.finishedAt ? "Ver resultado" : "Continuar"}
                         </button>{" "}
                         {formatDate(attempt.startedAt)} · {modeLabel[attempt.feedbackMode]} ·{" "}

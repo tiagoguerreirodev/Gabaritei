@@ -28,10 +28,10 @@ export default function CollectionCard(props: {
         <span class="collection-tags">
           <span class="chip">{questionCount(collection().questions)}</span>
           <Show when={collection().contest}>
-            <span class="tag">{collection().contest}</span>
+            <span class="badge badge-accent">{collection().contest}</span>
           </Show>
           <Show when={collection().board}>
-            <span class="tag">{collection().board}</span>
+            <span class="badge badge-accent">{collection().board}</span>
           </Show>
         </span>
         <span class="collection-meta">
@@ -55,7 +55,7 @@ export default function CollectionCard(props: {
         fallback={
           <button
             type="button"
-            class="primary"
+            class="btn btn-primary"
             aria-label={`Resolver ${collection().title}`}
             disabled={collection().questions === 0}
             onClick={() => props.onStart()}
@@ -67,7 +67,7 @@ export default function CollectionCard(props: {
         {(attemptId) => (
           <button
             type="button"
-            class="primary"
+            class="btn btn-primary"
             aria-label={`Continuar ${collection().title}`}
             onClick={() => openAttempt(attemptId())}
           >

@@ -57,12 +57,12 @@ export default function StartSessionModal(props: {
       onClose={() => props.onClose()}
       footer={
         <>
-          <button type="button" class="secondary" onClick={() => props.onClose()}>
+          <button type="button" class="btn" onClick={() => props.onClose()}>
             Cancelar
           </button>
           <button
             type="button"
-            class="primary"
+            class="btn btn-primary"
             disabled={busy() || (props.source.kind === "topic" && !countValid())}
             onClick={() => void start()}
           >
@@ -103,6 +103,7 @@ export default function StartSessionModal(props: {
             <label class="count-field">
               Quantidade de questões
               <input
+                class="input"
                 type="number"
                 min={range().min}
                 max={range().max}

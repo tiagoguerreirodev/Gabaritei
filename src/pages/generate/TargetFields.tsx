@@ -19,6 +19,7 @@ export default function TargetFields(props: {
     <>
       <label for="gen-board">Banca</label>
       <select
+        class="input"
         id="gen-board"
         value={selected()}
         onChange={(event) => {
@@ -34,6 +35,7 @@ export default function TargetFields(props: {
       <Show when={other()}>
         <label for="gen-board-other">Nome da banca</label>
         <input
+          class="input"
           id="gen-board-other"
           type="text"
           value={props.board ?? ""}
@@ -43,6 +45,7 @@ export default function TargetFields(props: {
 
       <label for="gen-contest">Concurso</label>
       <input
+        class="input"
         id="gen-contest"
         type="text"
         placeholder="Opcional: ex. TRF 1ª Região 2024"
@@ -52,6 +55,7 @@ export default function TargetFields(props: {
 
       <label for="gen-position">Cargo</label>
       <input
+        class="input"
         id="gen-position"
         type="text"
         placeholder="Opcional: ex. Analista Judiciário"

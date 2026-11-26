@@ -1,0 +1,26 @@
+/* ---- Badge ---- */
+.badge {
+  display: inline-block;
+  padding: 0.125rem 0.625rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.badge-accent {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.badge-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.badge-count {
+  padding: 0 0.45rem;
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+}

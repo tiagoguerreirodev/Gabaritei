@@ -23,12 +23,12 @@ export default function ConfirmModal(props: {
       onClose={close}
       footer={
         <>
-          <button type="button" class="secondary" disabled={props.dismissBlocked} onClick={close}>
+          <button type="button" class="btn" disabled={props.dismissBlocked} onClick={close}>
             {props.cancelLabel ?? "Cancelar"}
           </button>
           <button
             type="button"
-            class={props.danger ? "primary danger" : "primary"}
+            class={props.danger ? "btn btn-danger" : "btn btn-primary"}
             disabled={props.busy}
             onClick={() => props.onConfirm()}
           >

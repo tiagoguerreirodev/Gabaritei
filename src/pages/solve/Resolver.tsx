@@ -21,8 +21,8 @@ import useResolverShortcuts from "./useResolverShortcuts";
  * so finishing the attempt steps back to a secondary button.
  */
 const finishButtonClass: Record<FeedbackMode, string> = {
-  study: "secondary",
-  exam: "primary",
+  study: "btn",
+  exam: "btn btn-primary",
 };
 
 export default function Resolver(props: { attemptId: string; onLeave: () => void }) {
@@ -259,7 +259,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
         {(attempt) => (
           <div class="resolver">
             <div
-              class="progress-bar"
+              class="meter-track progress-bar"
               role="progressbar"
               aria-label="Progresso da tentativa"
               aria-valuemin={0}
@@ -268,7 +268,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
               aria-valuetext={`${answered()} de ${total()} respondidas`}
             >
               <div
-                class="progress-fill"
+                class="meter-fill"
                 style={{ width: `${total() === 0 ? 0 : (answered() / total()) * 100}%` }}
               />
             </div>
@@ -287,21 +287,21 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                 <Show
                   when={!finished()}
                   fallback={
-                    <button type="button" class="secondary" onClick={() => props.onLeave()}>
+                    <button type="button" class="btn" onClick={() => props.onLeave()}>
                       Voltar ao Banco
                     </button>
                   }
                 >
                   <button
                     type="button"
-                    class="secondary"
+                    class="btn"
                     aria-pressed={focusMode()}
                     title={focusMode() ? "Mostrar o menu lateral" : "Esconder o menu lateral"}
                     onClick={toggleFocusMode}
                   >
                     Modo foco
                   </button>
-                  <button type="button" class="secondary" onClick={() => setDialog("abandon")}>
+                  <button type="button" class="btn" onClick={() => setDialog("abandon")}>
                     Abandonar
                   </button>
                   <button
@@ -348,12 +348,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
               </Show>
             </div>
             <footer class="resolver-footer">
-              <button
-                type="button"
-                class="secondary"
-                disabled={index() === 0}
-                onClick={() => move(-1)}
-              >
+              <button type="button" class="btn" disabled={index() === 0} onClick={() => move(-1)}>
                 ← Anterior
               </button>
               <ShortcutHelp
@@ -365,7 +360,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
               />
               <button
                 type="button"
-                class="secondary"
+                class="btn"
                 disabled={index() >= total() - 1}
                 onClick={() => move(1)}
               >

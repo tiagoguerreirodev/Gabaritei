@@ -88,7 +88,7 @@ export function ErrorState(props: {
         {(run) => (
           <button
             type="button"
-            class="secondary"
+            class="btn"
             disabled={props.busy}
             aria-describedby={props.describedBy}
             onClick={() => void retry(run())}

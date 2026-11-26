@@ -34,28 +34,35 @@ import {
   isRecheckRun,
 } from "../generation";
 import RolePicker from "./generate/RolePicker";
+import TargetFields from "./generate/TargetFields";
 import TopicPicker from "./generate/TopicPicker";
 
-const BOARDS = [
-  "Cebraspe",
-  "FGV",
-  "FCC",
-  "Vunesp",
-  "Quadrix",
-  "IBFC",
-  "Instituto AOCP",
-  "Consulplan",
-];
+/** The boards used by existing collections. Without them the form still works ("Outra"). */
+async function collectionBoards(): Promise<string[]> {
+  try {
+    const page = await api.collections({
+      search: "",
+      contest: "",
+      board: "",
+      page: 0,
+      pageSize: 1,
+    });
+    return page.boards;
+  } catch {
+    return [];
+  }
+}
 
 /** Gerar: the generation form, and progress while it runs. */
 export default function Generate() {
   const [data, { refetch }] = createResource(async () => {
-    const [tree, settings, counts] = await Promise.all([
+    const [tree, settings, counts, boards] = await Promise.all([
       api.topicsTree(),
       api.aiSettings(),
       api.questionCountLimits({ kind: "generation" }),
+      collectionBoards(),
     ]);
-    return { tree, settings, counts };
+    return { tree, settings, counts, boards };
   });
 
   return (
@@ -77,6 +84,7 @@ export default function Generate() {
             tree={loaded().tree}
             settings={loaded().settings}
             counts={loaded().counts}
+            boards={loaded().boards}
           />
         )}
       </ResourceView>
@@ -84,7 +92,12 @@ export default function Generate() {
   );
 }
 
-function GenerateView(props: { tree: TopicTree; settings: AiSettings; counts: CountLimits }) {
+function GenerateView(props: {
+  tree: TopicTree;
+  settings: AiSettings;
+  counts: CountLimits;
+  boards: string[];
+}) {
   const status = generationStatus;
   return (
     <Switch>
@@ -102,7 +115,12 @@ function GenerateView(props: { tree: TopicTree; settings: AiSettings; counts: Co
       </Match>
       <Match when={true}>
         <Outcome />
-        <Form tree={props.tree} settings={props.settings} counts={props.counts} />
+        <Form
+          tree={props.tree}
+          settings={props.settings}
+          counts={props.counts}
+          boards={props.boards}
+        />
       </Match>
     </Switch>
   );
@@ -189,14 +207,21 @@ function outcomeContent(outcome: GenerationOutcome) {
   }
 }
 
-function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimits }) {
+function Form(props: {
+  tree: TopicTree;
+  settings: AiSettings;
+  counts: CountLimits;
+  boards: string[];
+}) {
   const [form, setForm] = createStore<GenerateRequest>({
     topic: { area: "", matter: "", topic: "" },
     count: untrack(() => props.counts.initial),
     board: null,
+    contest: null,
+    position: null,
     format: null,
     instructions: null,
-    sources: { remnote: false, web: false, attachments: [] },
+    sources: { remnote: false, web: false, attachments: [], styleReferences: [] },
     // Prefilled from the role defaults once; later changes in Configurações apply next time.
     generator: untrack(() => cloneJson(props.settings.roles.generate)),
     checker: untrack(() => cloneJson(props.settings.roles.blindCheck)),
@@ -274,7 +299,10 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
     >
       <h2>Nova geração</h2>
       <StepList states={stepStates()} />
-      <p class="muted">Campos obrigatórios: assunto e quantidade. O resto tem valores prontos.</p>
+      <p class="muted">
+        Campos obrigatórios: assunto e quantidade. Banca, concurso e cargo ajudam a imitar a prova.
+        O resto tem valores prontos.
+      </p>
 
       <div class="form-grid">
         <span class="label" id="topic-label">
@@ -313,10 +341,20 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
             setForm("format", (event.currentTarget.value || null) as QuestionType | null);
           }}
         >
-          <option value="">Deixar a IA misturar os dois</option>
+          <option value="">Seguir a prova de referência ou misturar</option>
           <option value="multiple">Só múltipla escolha</option>
           <option value="boolean">Só Certo/Errado</option>
         </select>
+
+        <TargetFields
+          boards={props.boards}
+          board={form.board}
+          contest={form.contest}
+          position={form.position}
+          onBoard={(board) => setForm("board", board)}
+          onContest={(contest) => setForm("contest", contest)}
+          onPosition={(position) => setForm("position", position)}
+        />
       </div>
 
       <details
@@ -327,21 +365,8 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
           if (event.currentTarget.open) setOptionsTouched(true);
         }}
       >
-        <summary>Opções avançadas: estilo da banca, instruções, fontes e modelos</summary>
+        <summary>Opções avançadas: instruções, fontes e modelos</summary>
         <div class="form-grid">
-          <label for="gen-board">Estilo da banca</label>
-          <input
-            id="gen-board"
-            type="text"
-            list="gen-boards"
-            placeholder="Opcional"
-            value={form.board ?? ""}
-            onInput={(event) => setForm("board", event.currentTarget.value || null)}
-          />
-          <datalist id="gen-boards">
-            <For each={BOARDS}>{(board) => <option value={board} />}</For>
-          </datalist>
-
           <label for="gen-instructions">Instruções</label>
           <textarea
             id="gen-instructions"

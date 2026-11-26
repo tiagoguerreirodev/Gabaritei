@@ -109,6 +109,15 @@ function backend(
           isNew: Boolean(path.area && path.matter && path.topic && !match),
         };
       }
+      case "collections":
+        return {
+          items: [],
+          total: 0,
+          page: 0,
+          pageSize: 1,
+          contests: [],
+          boards: ["Cebraspe", "FGV"],
+        };
       case "topics_tree":
         return tree;
       case "ai_catalog":
@@ -206,7 +215,9 @@ describe("Gerar", () => {
     await fillTopic(user);
     await user.clear(screen.getByLabelText("Quantidade"));
     await user.type(screen.getByLabelText("Quantidade"), "7");
-    await user.type(screen.getByLabelText("Estilo da banca"), "Cebraspe");
+    await user.selectOptions(screen.getByLabelText("Banca"), "Cebraspe");
+    await user.type(screen.getByLabelText("Concurso"), "TRF 1");
+    await user.type(screen.getByLabelText("Cargo"), "Analista");
     await user.selectOptions(screen.getByLabelText("Formato"), "boolean");
     await user.type(screen.getByLabelText("Instruções"), "Foque em jurisprudência");
     await user.type(screen.getByLabelText("Modelo: Conferente"), "-x");
@@ -229,9 +240,47 @@ describe("Gerar", () => {
       },
       count: 7,
       board: "Cebraspe",
+      contest: "TRF 1",
+      position: "Analista",
       format: "boolean",
       instructions: "Foque em jurisprudência",
-      sources: { remnote: false, web: false, attachments: [] },
+      sources: { remnote: false, web: false, attachments: [], styleReferences: [] },
+    });
+  });
+
+  it("lets the user type a board that is not in the list", async () => {
+    const calls = backend();
+    const user = userEvent.setup();
+    renderPage();
+    await fillTopic(user);
+    await user.selectOptions(await screen.findByLabelText("Banca"), "Outra…");
+    await user.type(screen.getByLabelText("Nome da banca"), "Instituto X");
+    await user.click(screen.getByRole("button", { name: "Gerar" }));
+    const start = await waitFor(() => {
+      const call = calls.find((c) => c.command === "generation_start");
+      expect(call).toBeDefined();
+      return call!;
+    });
+    expect((start.args.request as GenerateRequest).board).toBe("Instituto X");
+  });
+
+  it("submits attachments marked as style references", async () => {
+    const calls = backend();
+    const user = userEvent.setup();
+    renderPage();
+    await fillTopic(user);
+    await user.click(await screen.findByText(/Opções avançadas/));
+    await user.click(screen.getByRole("button", { name: "Anexar arquivos" }));
+    await user.click(await screen.findByLabelText("Referência de estilo: Lei 8.112.md"));
+    await user.click(screen.getByRole("button", { name: "Gerar" }));
+    const start = await waitFor(() => {
+      const call = calls.find((c) => c.command === "generation_start");
+      expect(call).toBeDefined();
+      return call!;
+    });
+    expect((start.args.request as GenerateRequest).sources).toMatchObject({
+      attachments: ["/tmp/Lei 8.112.md"],
+      styleReferences: ["/tmp/Lei 8.112.md"],
     });
   });
 
@@ -311,6 +360,7 @@ describe("Gerar", () => {
       remnote: true,
       web: true,
       attachments: ["/tmp/Lei 8.112.md"],
+      styleReferences: [],
     });
   });
 
@@ -441,10 +491,10 @@ describe("Gerar", () => {
     expect(details).not.toHaveAttribute("open");
     expect(screen.getByLabelText("Quantidade")).toBeVisible();
     expect(screen.getByLabelText("Quantidade")).toBeRequired();
-    expect(screen.getByLabelText("Estilo da banca")).not.toBeVisible();
+    expect(screen.getByLabelText("Instruções")).not.toBeVisible();
     await user.click(summary);
     expect(details).toHaveAttribute("open");
-    expect(screen.getByLabelText("Estilo da banca")).toBeVisible();
+    expect(screen.getByLabelText("Instruções")).toBeVisible();
   });
 
   async function submitEmptyForm() {
@@ -501,7 +551,7 @@ describe("Gerar", () => {
     backend(idle, stale, listed);
     renderPage();
     expect(await screen.findByText(/Corrija em “Opções avançadas”/)).toBeVisible();
-    expect(screen.getByLabelText("Estilo da banca")).toBeVisible();
+    expect(screen.getByLabelText("Instruções")).toBeVisible();
   });
 
   it("links to the finished package", async () => {

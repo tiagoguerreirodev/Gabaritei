@@ -52,10 +52,20 @@ export default function SourcesFields(props: {
         </button>
         <AttachmentList
           paths={props.value.attachments}
+          styleReferences={props.value.styleReferences}
+          onToggleStyle={(path, isStyle) =>
+            props.onChange({
+              ...props.value,
+              styleReferences: isStyle
+                ? [...props.value.styleReferences, path]
+                : props.value.styleReferences.filter((p) => p !== path),
+            })
+          }
           onRemove={(path) =>
             props.onChange({
               ...props.value,
               attachments: props.value.attachments.filter((p) => p !== path),
+              styleReferences: props.value.styleReferences.filter((p) => p !== path),
             })
           }
         />

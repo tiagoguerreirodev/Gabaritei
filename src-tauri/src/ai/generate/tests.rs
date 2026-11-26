@@ -77,6 +77,8 @@ fn request(count: u32) -> GenerateRequest {
         topic: topic(),
         count,
         board: None,
+        contest: None,
+        position: None,
         format: None,
         instructions: None,
         sources: GenerateSources::default(),
@@ -450,8 +452,51 @@ mod request_form {
             remnote: true,
             web: true,
             attachments: vec![file.to_string_lossy().into_owned()],
+            style_references: Vec::new(),
         };
         assert!(everything.validate().is_ok());
+    }
+
+    #[test]
+    fn style_references_must_be_attached_files() {
+        let mut stray = request(1);
+        stray.sources.style_references = vec!["prova.pdf".into()];
+        assert!(invalid(stray).contains("referência de estilo"));
+    }
+
+    #[test]
+    fn contest_and_position_are_tidied_like_the_board() {
+        let mut padded = request(1);
+        padded.contest = Some("  TRF 1ª Região  ".into());
+        padded.position = Some("   ".into());
+        padded.validate().unwrap();
+        assert_eq!(padded.contest.as_deref(), Some("TRF 1ª Região"));
+        assert_eq!(padded.position, None);
+    }
+
+    #[test]
+    fn a_blank_format_follows_a_reliable_reference_exam() {
+        let prompt = prompts::generate_prompt(&request(1), &[]);
+        assert!(prompt.contains("siga o tipo de questão dela"));
+    }
+
+    #[test]
+    fn style_instructions_prefer_the_users_target_and_fall_back_to_wider_references() {
+        let mut aimed = request(1);
+        aimed.board = Some("FGV".into());
+        aimed.contest = Some("OAB".into());
+        aimed.sources.web = true;
+        let prompt = prompts::generate_prompt(&aimed, &[]);
+        for present in [
+            "Concurso: OAB",
+            "têm prioridade",
+            "referência mais ampla",
+            "estilo geral de concursos públicos",
+            "provas oficiais do alvo",
+            "exatamente 5 alternativas",
+        ] {
+            assert!(prompt.contains(present), "{present}");
+        }
     }
 
     #[test]
@@ -529,7 +574,7 @@ mod prompt {
     fn optional_parts_appear_only_when_asked_for() {
         let plain = text(&request(1), &[]);
         for absent in [
-            "ESTILO DA BANCA",
+            "ESTILO DA PROVA",
             "INSTRUÇÕES DO USUÁRIO",
             "ARQUIVOS ANEXOS",
             "REMNOTE:",
@@ -539,16 +584,20 @@ mod prompt {
         }
         let mut full = request(1);
         full.board = Some("Cebraspe".into());
+        full.position = Some("Analista".into());
         full.format = Some(QuestionType::Boolean);
         full.instructions = Some("Foque em jurisprudência".into());
         full.sources = GenerateSources {
             remnote: true,
             web: true,
-            attachments: vec!["lei.pdf".into()],
+            attachments: vec!["lei.pdf".into(), "prova.pdf".into()],
+            style_references: vec!["prova.pdf".into()],
         };
         let prompt = text(&full, &[]);
         for present in [
-            "banca Cebraspe",
+            "Banca: Cebraspe",
+            "Cargo: Analista",
+            "começa por \"2-\"",
             "Foque em jurisprudência",
             "anexos/",
             "REMNOTE:",

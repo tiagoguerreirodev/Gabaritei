@@ -1,3 +1,4 @@
+import { HashRouter, Route } from "@solidjs/router";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -197,9 +198,17 @@ describe("Banco", () => {
 
     it("explains an empty bank", async () => {
       backend({ tree: { areas: [], questions: 0 } });
-      render(() => <Bank />);
+      render(() => (
+        <HashRouter>
+          <Route path="/" component={Bank} />
+        </HashRouter>
+      ));
 
       expect(await screen.findByText("Nenhuma questão no banco ainda.")).toBeVisible();
+      expect(screen.getByRole("link", { name: "Gerar questões" })).toHaveAttribute(
+        "href",
+        "#/gerar",
+      );
     });
   });
 

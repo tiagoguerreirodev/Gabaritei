@@ -1,3 +1,4 @@
+import { A } from "@solidjs/router";
 import { createAction } from "../actions";
 import { feedbackModes, modeLabel } from "../labels";
 import FilterSelect from "../components/FilterSelect";
@@ -39,6 +40,11 @@ export default function Performance() {
     if (loaded) setOptions(loaded.filters);
   });
   const filtering = () => contest() !== "" || board() !== "" || mode() !== "";
+  const clearFilters = () => {
+    setContest("");
+    setBoard("");
+    setMode("");
+  };
 
   const exportCsv = () => {
     const filters = query();
@@ -119,6 +125,20 @@ export default function Performance() {
                 ? "Nenhuma questão corresponde a estes filtros."
                 : "Nenhuma questão no banco ainda."
             }
+            action={
+              <Show
+                when={filtering()}
+                fallback={
+                  <A class="button-link primary" href="/gerar">
+                    Gerar questões
+                  </A>
+                }
+              >
+                <button type="button" class="secondary" onClick={clearFilters}>
+                  Limpar filtros
+                </button>
+              </Show>
+            }
           >
             <p class="muted">
               {filtering()
@@ -139,6 +159,20 @@ export default function Performance() {
                     filtering()
                       ? "Nenhuma tentativa finalizada com estes filtros."
                       : "Você ainda não finalizou nenhuma tentativa."
+                  }
+                  action={
+                    <Show
+                      when={filtering()}
+                      fallback={
+                        <A class="button-link primary" href="/banco">
+                          Ir para o Banco
+                        </A>
+                      }
+                    >
+                      <button type="button" class="secondary" onClick={clearFilters}>
+                        Limpar filtros
+                      </button>
+                    </Show>
                   }
                 >
                   <p class="muted">

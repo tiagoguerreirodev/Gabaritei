@@ -1,3 +1,4 @@
+import { HashRouter, Route } from "@solidjs/router";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -286,14 +287,24 @@ describe("Desempenho", () => {
 
   it("explains an empty bank", async () => {
     backend(emptyPerformance);
-    render(() => <Performance />);
+    render(() => (
+      <HashRouter>
+        <Route path="/" component={Performance} />
+      </HashRouter>
+    ));
     expect(await screen.findByText("Nenhuma questão no banco ainda.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Gerar questões" })).toHaveAttribute("href", "#/gerar");
   });
 
   it("explains when nothing was finished yet", async () => {
     backend({ ...emptyPerformance, overall: stats(0, 0, 0, 12) });
-    render(() => <Performance />);
+    render(() => (
+      <HashRouter>
+        <Route path="/" component={Performance} />
+      </HashRouter>
+    ));
     expect(await screen.findByText("Você ainda não finalizou nenhuma tentativa.")).toBeVisible();
+    expect(screen.getAllByRole("link", { name: "Ir para o Banco" })).toHaveLength(2);
     expect(screen.getByText("Ainda não há respostas para mostrar a evolução.")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Assuntos mais fracos" })).not.toBeInTheDocument();
   });

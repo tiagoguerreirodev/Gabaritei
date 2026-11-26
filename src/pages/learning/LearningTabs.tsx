@@ -1,3 +1,4 @@
+import { A } from "@solidjs/router";
 import { For, Show, createSignal } from "solid-js";
 import type { LearningItem } from "../../bindings/LearningItem";
 import type { LearningOverview } from "../../bindings/LearningOverview";
@@ -111,7 +112,21 @@ export default function LearningTabs(props: {
             </label>
           </div>
         </Show>
-        <Show when={itemsOf(tab()).length > 0} fallback={<EmptyState title={tab().empty} />}>
+        <Show
+          when={itemsOf(tab()).length > 0}
+          fallback={
+            <EmptyState
+              title={tab().empty}
+              action={
+                props.data.items.length === 0 ? (
+                  <A class="button-link primary" href="/banco">
+                    Ir para o Banco
+                  </A>
+                ) : undefined
+              }
+            />
+          }
+        >
           <h2 class="learning-group">
             <span>{tab().label}</span>
             <span class="muted">{formatNumber(itemsOf(tab()).length)}</span>

@@ -1,8 +1,11 @@
 # Gabaritei design system
 
-The visual language of the Gabaritei UI: tokens, components and usage rules. It is a target for
-the frontend, not yet what `src/styles/` implements; `migration.md` maps the current stylesheets
-onto it.
+The visual language of the Gabaritei UI: tokens, components and usage rules. The tokens and the
+shared families (base, Button, Card, Badge, Field, Tabs, Meter, Modal, Toast, Nav) are
+implemented in `src/styles/tokens.css` (generated from `tokens.json` with `npm run tokens`) and
+`src/styles/ds/`. The screen families (Sheet, Option, Bubble, Explanation, Rail, FormSection,
+ReviewRow and the Banco and Histórico panels) arrive with their screens; `migration.md` maps the
+remaining stylesheets onto them.
 
 | File | What |
 | --- | --- |

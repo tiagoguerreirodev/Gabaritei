@@ -64,6 +64,8 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src/actions.ts` | Shared busy state for asynchronous UI actions. |
 | `src/format.ts`, `src/labels.ts` | Shared display formatting and pt-BR labels. |
 | `src/navigation.ts` | Navigation helpers usable outside router components. |
+| `src/styles/tokens.css` | **Generated** from `docs/design-system/tokens.json` by `npm run tokens` (`scripts/tokens.ts`); never edit by hand. A test fails when the two drift. |
+| `src/styles/ds/` | Design-system component families (base, button, card, badge, field, tabs, meter, modal, toast, nav), one file each, copied from `docs/design-system/components/bundle.css`. Screen-only styles stay in the other files in `src/styles/`. |
 | `src/bindings/` | TypeScript types **generated** from Rust by `cargo test` (ts-rs). Committed; never edit by hand. |
 | `src/routes.ts`, `src/pages/` | Route table (pt-BR labels, menu placement) and one component per page. |
 | `src/pages/generate/` | Generation form fields for the topic, roles, quantity and sources. |

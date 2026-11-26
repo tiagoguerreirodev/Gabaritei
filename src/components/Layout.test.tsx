@@ -164,8 +164,9 @@ describe("Sidebar", () => {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     });
+    window.matchMedia = matchMedia;
     renderAt("/");
-    expect(window.matchMedia).toHaveBeenCalledWith("(max-width: 60rem)");
+    expect(matchMedia).toHaveBeenCalledWith("(max-width: 60rem)");
     expect(document.querySelector(".shell")).toHaveAttribute("data-nav", "collapsed");
     expect(screen.queryByRole("button", { name: "Menu lateral" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Banco" })).toBeInTheDocument();

@@ -40,6 +40,7 @@ export const emptyHome: HomeSummary = {
   questions: 0,
   overall: stats(0, 0, 0, 0),
   areas: [],
+  weakestTopic: null,
   activeAttempts: [],
   dueReviews: 0,
   dueInOpenAttempt: 0,

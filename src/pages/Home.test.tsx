@@ -2,10 +2,21 @@ import { HashRouter, Route } from "@solidjs/router";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { ActiveAttempt } from "../bindings/ActiveAttempt";
 import type { HomeSummary } from "../bindings/HomeSummary";
 import { emptyHome, stats } from "../test/fixtures";
 import Home from "./Home";
+
+const openAttempt: ActiveAttempt = {
+  id: "att-7",
+  title: "Direito › Constitucional › Controle",
+  sourceKind: "topic",
+  feedbackMode: "exam",
+  startedAt: "2026-11-19T12:00:00.000Z",
+  answered: 4,
+  total: 10,
+};
 
 const summary: HomeSummary = {
   questions: 9368,
@@ -15,25 +26,27 @@ const summary: HomeSummary = {
     { name: "Direito", stats: stats(28, 2, 10, 40) },
     { name: "Informática", stats: stats(0, 0, 0, 30) },
   ],
-  activeAttempts: [
-    {
-      id: "att-7",
-      title: "Direito › Constitucional › Controle",
-      sourceKind: "topic",
-      feedbackMode: "exam",
-      startedAt: "2026-11-19T12:00:00.000Z",
-      answered: 4,
-      total: 10,
-    },
-  ],
+  weakestTopic: {
+    topicId: 3,
+    area: "Português",
+    matter: "Gramática",
+    topic: "Crase",
+    stats: stats(1, 4, 0, 12),
+  },
+  activeAttempts: [openAttempt],
   dueReviews: 3,
   dueInOpenAttempt: 2,
   draftsWaiting: 2,
 };
 
 function backend(home: HomeSummary | { error: string }) {
-  mockIPC((command) => {
+  mockIPC((command, args) => {
     if (command === "legacy_import_status") return { report: null, bankEmpty: false };
+    if (command === "question_count_limits") return { min: 1, max: 12, initial: 10 };
+    if (command === "session_start") {
+      started.push(args);
+      return { id: "att-new" };
+    }
     if (command === "home") {
       if ("error" in home) {
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
@@ -45,17 +58,30 @@ function backend(home: HomeSummary | { error: string }) {
   });
 }
 
-describe("Início", () => {
-  it("shows the summary cards, achievement per area, attempts to resume and what waits", async () => {
-    backend(summary);
-    render(() => (
-      <HashRouter>
-        <Route path="/" component={Home} />
-      </HashRouter>
-    ));
+let started: unknown[] = [];
 
-    const cards = await screen.findByRole("list", { name: "Resumo" });
-    expect(within(cards).getByText("Aproveitamento").nextElementSibling).toHaveTextContent("60%");
+function renderHome() {
+  render(() => (
+    <HashRouter>
+      <Route path="/" component={Home} />
+    </HashRouter>
+  ));
+}
+
+describe("Início", () => {
+  beforeEach(() => {
+    started = [];
+  });
+
+  it("shows the summary strip, achievement per area and what waits", async () => {
+    backend(summary);
+    renderHome();
+
+    const strip = await screen.findByRole("list", { name: "Resumo" });
+    expect(within(strip).getByText("Aproveitamento").nextElementSibling).toHaveTextContent("60%");
+    expect(within(strip).getByText("Cobertura").parentElement).toHaveTextContent(
+      "Cobertura40%40 de 100",
+    );
     expect(screen.getByText("9.368 questões no banco.")).toBeVisible();
 
     const areas = within(
@@ -77,20 +103,85 @@ describe("Início", () => {
     ).toHaveTextContent("2");
   });
 
-  it("resumes an active attempt in the Resolver", async () => {
-    backend(summary);
+  it("puts resuming the newest open attempt first and lists the others below", async () => {
+    const older = { ...openAttempt, id: "att-5", title: "Caderno antigo" };
+    backend({ ...summary, activeAttempts: [...summary.activeAttempts, older] });
     const user = userEvent.setup();
-    render(() => (
-      <HashRouter>
-        <Route path="/" component={Home} />
-      </HashRouter>
-    ));
+    renderHome();
 
-    expect(await screen.findByText(/Simulado · 4 de 10 respondidas/)).toBeVisible();
+    const today = within(await screen.findByRole("region", { name: openAttempt.title }));
+    expect(today.getByText("Continue de onde parou")).toBeVisible();
+    expect(today.getByText(/Simulado · 4 de 10 respondidas/)).toBeVisible();
+    const others = within(screen.getByRole("region", { name: "Outras tentativas em andamento" }));
+    expect(others.getByRole("button", { name: "Retomar Caderno antigo" })).toBeVisible();
+    expect(others.queryByText(openAttempt.title)).toBeNull();
+
     await user.click(
-      screen.getByRole("button", { name: "Retomar Direito › Constitucional › Controle" }),
+      today.getByRole("button", { name: "Retomar Direito › Constitucional › Controle" }),
     );
     expect(window.location.hash).toBe("#/resolver?tentativa=att-7");
+  });
+
+  it("without an open attempt, offers the due reviews", async () => {
+    backend({ ...summary, activeAttempts: [], dueInOpenAttempt: 0 });
+    const user = userEvent.setup();
+    renderHome();
+
+    const today = within(await screen.findByRole("region", { name: "3 revisões pendentes" }));
+    expect(screen.queryByRole("region", { name: "Outras tentativas em andamento" })).toBeNull();
+    await user.click(today.getByRole("button", { name: "Fazer revisões" }));
+    await user.click(await screen.findByRole("button", { name: "Começar" }));
+
+    await waitFor(() =>
+      expect(started).toEqual([
+        { request: { source: { kind: "reviews" }, feedbackMode: "study" } },
+      ]),
+    );
+    expect(window.location.hash).toBe("#/resolver?tentativa=att-new");
+  });
+
+  it("with nothing open or due, trains the weakest topic", async () => {
+    backend({ ...summary, activeAttempts: [], dueReviews: 0, dueInOpenAttempt: 0 });
+    const user = userEvent.setup();
+    renderHome();
+
+    const today = within(await screen.findByRole("region", { name: "Crase" }));
+    expect(today.getByText("Português › Gramática · aproveitamento de 20%")).toBeVisible();
+    await user.click(today.getByRole("button", { name: "Treinar assunto" }));
+    expect(
+      await screen.findByRole("dialog", { name: "Português › Gramática › Crase" }),
+    ).toBeVisible();
+    await user.click(await screen.findByRole("button", { name: "Começar" }));
+
+    await waitFor(() =>
+      expect(started).toEqual([
+        {
+          request: {
+            source: { kind: "topic", topicId: 3, count: 10 },
+            feedbackMode: "study",
+          },
+        },
+      ]),
+    );
+  });
+
+  it("hides what waits when nothing does", async () => {
+    backend({ ...summary, dueReviews: 0, dueInOpenAttempt: 0, draftsWaiting: 0 });
+    renderHome();
+
+    await screen.findByRole("list", { name: "Resumo" });
+    expect(screen.queryByRole("heading", { name: "Aguardando você" })).toBeNull();
+  });
+
+  it("shows only the waiting items with a count", async () => {
+    backend({ ...summary, draftsWaiting: 0 });
+    renderHome();
+
+    const waiting = within(
+      (await screen.findByRole("heading", { name: "Aguardando você" })).parentElement!,
+    );
+    expect(waiting.getByRole("link", { name: "Revisões pendentes" })).toBeVisible();
+    expect(waiting.queryByRole("link", { name: "Pacotes para revisar" })).toBeNull();
   });
 
   it("refreshes after the first-run legacy import", async () => {
@@ -137,9 +228,12 @@ describe("Início", () => {
       </HashRouter>
     ));
 
-    expect(await screen.findByText("Você ainda não finalizou nenhuma tentativa.")).toBeVisible();
-    expect(screen.getByText("Nenhuma tentativa em andamento.")).toBeVisible();
+    const today = within(
+      await screen.findByRole("region", { name: "Você ainda não finalizou nenhuma tentativa." }),
+    );
+    expect(today.getByRole("link", { name: "Ir para o Banco" })).toHaveAttribute("href", "#/banco");
     expect(screen.queryByRole("list", { name: "Resumo" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Aguardando você" })).toBeNull();
   });
 
   it("shows the backend's message when loading fails", async () => {

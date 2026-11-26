@@ -70,6 +70,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src/bindings/` | TypeScript types **generated** from Rust by `cargo test` (ts-rs). Committed; never edit by hand. |
 | `src/routes.ts`, `src/pages/` | Route table (pt-BR labels, menu placement) and one component per page. |
 | `src/pages/generate/` | Generation form fields for the topic, roles, quantity and sources. |
+| `src/pages/bank/` | Banco: filter panels, caderno picker, result panel, URL state (`filterUrl.ts`) and presets. |
 | `src/pages/review/` | Package verdict counts, question preview lines and import or discard actions. |
 | `src/pages/settings/` | Settings sections, including backup controls and the backup relocation notice. |
 | `src/pages/solve/` | Attempt presentation, including the question card, navigator, score recap, keyboard shortcuts and confirmation dialogs. |

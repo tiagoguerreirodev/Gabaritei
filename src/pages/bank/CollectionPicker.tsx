@@ -1,24 +1,21 @@
 import { A } from "@solidjs/router";
-import FilterSelect from "../../components/FilterSelect";
 import { For, Show, createResource, createSignal } from "solid-js";
 import { api } from "../../api";
 import type { CollectionSummary } from "../../bindings/CollectionSummary";
+import FilterSelect from "../../components/FilterSelect";
 import { EmptyState, Loading, ResourceView } from "../../components/states";
-import CollectionDetailModal from "./CollectionDetailModal";
-import { formatNumber } from "../../format";
-import StartSessionModal from "../solve/StartSessionModal";
-import CollectionCard from "./CollectionCard";
+import { formatNumber, questionCount } from "../../format";
 
 export const PAGE_SIZE = 20;
 
-/** Collections with search, contest and board filters, and pagination. */
-export default function CollectionsView() {
+/** Collections with search, contest and board filters and pagination; a row picks one. */
+export default function CollectionPicker(props: {
+  onPick: (collection: CollectionSummary) => void;
+}) {
   const [search, setSearch] = createSignal("");
   const [contest, setContest] = createSignal("");
   const [board, setBoard] = createSignal("");
   const [page, setPage] = createSignal(0);
-  const [selected, setSelected] = createSignal<CollectionSummary>();
-  const [starting, setStarting] = createSignal<CollectionSummary>();
 
   const query = () => ({
     search: search(),
@@ -36,14 +33,14 @@ export default function CollectionsView() {
     setter(value);
     setPage(0);
   };
-
   const pages = () => Math.max(1, Math.ceil((current()?.total ?? 0) / PAGE_SIZE));
+  const filtering = () => search().trim() !== "" || contest() !== "" || board() !== "";
   const clearFilters = () => {
     setSearch("");
     setContest("");
     setBoard("");
+    setPage(0);
   };
-  const filtering = () => search().trim() !== "" || contest() !== "" || board() !== "";
 
   return (
     <>
@@ -73,7 +70,6 @@ export default function CollectionsView() {
           />
         </Show>
       </div>
-
       <ResourceView
         value={current()?.total ? current() : undefined}
         error={() => result.error}
@@ -98,11 +94,7 @@ export default function CollectionsView() {
                 </button>
               </Show>
             }
-          >
-            <Show when={filtering()}>
-              <p class="muted">Tente outra busca ou limpe os filtros.</p>
-            </Show>
-          </EmptyState>
+          />
         }
       >
         {(loaded) => (
@@ -113,11 +105,20 @@ export default function CollectionsView() {
             <ul class="collection-list" aria-label="Cadernos">
               <For each={loaded().items}>
                 {(collection) => (
-                  <CollectionCard
-                    collection={collection}
-                    onDetails={() => setSelected(collection)}
-                    onStart={() => setStarting(collection)}
-                  />
+                  <li>
+                    <button
+                      type="button"
+                      class="collection-pick"
+                      onClick={() => props.onPick(collection)}
+                    >
+                      <span class="collection-title">{collection.title}</span>
+                      <span class="muted">
+                        {[collection.contest, collection.board, questionCount(collection.questions)]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </button>
+                  </li>
                 )}
               </For>
             </ul>
@@ -145,25 +146,6 @@ export default function CollectionsView() {
           </>
         )}
       </ResourceView>
-
-      <Show when={selected()}>
-        {(collection) => (
-          <CollectionDetailModal
-            id={collection().id}
-            title={collection().title}
-            onClose={() => setSelected(undefined)}
-          />
-        )}
-      </Show>
-      <Show when={starting()}>
-        {(collection) => (
-          <StartSessionModal
-            title={collection().title}
-            source={{ kind: "collection", collectionId: collection().id }}
-            onClose={() => setStarting(undefined)}
-          />
-        )}
-      </Show>
     </>
   );
 }

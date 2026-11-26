@@ -29,3 +29,15 @@ export const optionLetters = (question: Pick<ResponseView, "type" | "options">) 
 /** pt-BR percentage, e.g. 66,7%. `—` when there is nothing to divide. */
 export const formatPercent = (ratio: number | null) =>
   ratio === null ? "—" : formatNumber(ratio, { style: "percent", maximumFractionDigits: 1 });
+
+/** Achievement at or above this reads as solid. */
+export const STRONG_ACHIEVEMENT = 0.7;
+/** Achievement below this reads as weak. */
+export const WEAK_ACHIEVEMENT = 0.5;
+
+/** The color band of an achievement chip. The printed percentage always goes with it. */
+export const achievementBand = (ratio: number) => {
+  if (ratio >= STRONG_ACHIEVEMENT) return "strong";
+  if (ratio >= WEAK_ACHIEVEMENT) return "fair";
+  return "weak";
+};

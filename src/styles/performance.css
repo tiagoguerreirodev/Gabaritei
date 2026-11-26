@@ -74,7 +74,7 @@
   border-bottom: 1px solid var(--border);
 }
 
-.attempt-list .primary {
+.attempt-list button {
   grid-row: 1 / span 2;
   grid-column: 2;
   align-self: center;
@@ -144,4 +144,93 @@
 
 .strength-table .level-topic th {
   padding-left: calc(var(--space-8) + var(--space-5));
+}
+
+.stat-card-main {
+  grid-column: span 2;
+  gap: var(--space-1);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.stat-card-main .stat-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.stat-card-main .stat-value {
+  font-size: calc(var(--text-xl) * 1.5);
+  line-height: 1.1;
+}
+
+.stat-card-main .mastery-bar {
+  width: 100%;
+  height: 0.5rem;
+}
+
+.table-mastery {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.mastery-bar {
+  display: inline-block;
+  width: 4rem;
+  height: 0.4rem;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+}
+
+.mastery-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.table-mastery .mastery-value {
+  min-width: 3.5rem;
+}
+
+.order-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  border: 0;
+}
+
+.order-choice legend {
+  float: left;
+  margin-right: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.order-choice label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.sparkline {
+  vertical-align: middle;
+}
+
+.sparkline .line {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.sparkline .dot {
+  fill: var(--accent);
+}
+
+@media (max-width: 30rem) {
+  .stat-card-main {
+    grid-column: auto;
+  }
 }

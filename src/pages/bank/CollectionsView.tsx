@@ -4,15 +4,11 @@ import { api } from "../../api";
 import type { CollectionSummary } from "../../bindings/CollectionSummary";
 import { EmptyState, Loading, ResourceView } from "../../components/states";
 import CollectionDetailModal from "./CollectionDetailModal";
-import { formatDate, formatNumber, questionCount } from "../../format";
+import { formatNumber } from "../../format";
+import StartSessionModal from "../solve/StartSessionModal";
+import CollectionCard from "./CollectionCard";
 
 export const PAGE_SIZE = 20;
-
-function status(collection: CollectionSummary) {
-  if (collection.inProgress) return "Em andamento";
-  if (collection.lastFinishedAt) return `Concluído em ${formatDate(collection.lastFinishedAt)}`;
-  return "Não iniciado";
-}
 
 /** Collections with search, contest and board filters, and pagination. */
 export default function CollectionsView() {
@@ -21,6 +17,7 @@ export default function CollectionsView() {
   const [board, setBoard] = createSignal("");
   const [page, setPage] = createSignal(0);
   const [selected, setSelected] = createSignal<CollectionSummary>();
+  const [starting, setStarting] = createSignal<CollectionSummary>();
 
   const query = () => ({
     search: search(),
@@ -93,25 +90,11 @@ export default function CollectionsView() {
             <ul class="collection-list" aria-label="Cadernos">
               <For each={loaded().items}>
                 {(collection) => (
-                  <li>
-                    <button
-                      type="button"
-                      class="collection-row"
-                      onClick={() => setSelected(collection)}
-                    >
-                      <span class="collection-title">{collection.title}</span>
-                      <span class="collection-meta">
-                        <Show when={collection.contest}>
-                          <span class="tag">{collection.contest}</span>
-                        </Show>
-                        <Show when={collection.board}>
-                          <span class="tag">{collection.board}</span>
-                        </Show>
-                        <span>{questionCount(collection.questions)}</span>
-                        <span class="muted">{status(collection)}</span>
-                      </span>
-                    </button>
-                  </li>
+                  <CollectionCard
+                    collection={collection}
+                    onDetails={() => setSelected(collection)}
+                    onStart={() => setStarting(collection)}
+                  />
                 )}
               </For>
             </ul>
@@ -146,6 +129,15 @@ export default function CollectionsView() {
             id={collection().id}
             title={collection().title}
             onClose={() => setSelected(undefined)}
+          />
+        )}
+      </Show>
+      <Show when={starting()}>
+        {(collection) => (
+          <StartSessionModal
+            title={collection().title}
+            source={{ kind: "collection", collectionId: collection().id }}
+            onClose={() => setStarting(undefined)}
           />
         )}
       </Show>

@@ -8,6 +8,7 @@ export function stats(
   wrong: number,
   blank: number,
   available: number,
+  questions = available,
 ): GroupStats {
   const evaluated = correct + wrong + blank;
   const answered = correct + wrong;
@@ -21,6 +22,7 @@ export function stats(
       achievement: evaluated ? correct / evaluated : null,
       accuracy: answered ? correct / answered : null,
     },
+    questions,
     answered,
     available,
     coverage: available ? answered / available : null,
@@ -40,6 +42,7 @@ export const emptyHome: HomeSummary = {
   questions: 0,
   overall: stats(0, 0, 0, 0),
   areas: [],
+  weakestTopic: null,
   activeAttempts: [],
   dueReviews: 0,
   dueInOpenAttempt: 0,

@@ -51,9 +51,10 @@ All UI text is in Portuguese. There are no accounts and no server.
 ## 3. Feature set
 
 ### 3.1 Bank and taxonomy
-- **Topic tree:** area › matter › topic. Browse it with counts of questions, answered questions and accuracy.
+- **Topic tree:** area › matter › topic. Every level shows its question count, coverage and an achievement bar, computed like topic strength (§3.4). Each topic has a *Resolver* button that opens the session dialog.
 - **Question fields:** `type` (`multiple` or `boolean`), stem, options (5 for multiple choice, Certo/Errado for boolean), answer key, explanation, references, topics (one or more paths), image (migrated only) with alt text, `annulled`, provenance (agent, model, date, blind-check verdict). Questions carry no contest or board of their own; see Collections below.
 - **Collections** are fixed question lists with optional contest and board tags: the 352 migrated *cadernos*, plus one collection per approved package.
+- **Collection cards** show the tags, the question count, the date and achievement of the latest finished attempt (scored with the current keys), and one button: *Resolver* to start a session or *Continuar* for the attempt in progress.
 - **Deduplication** works as today (`N-C5`): canonical option IDs plus a content fingerprint. An answer-key conflict blocks import.
 - **Dropped:** `difficulty`, generic `tags`, `objectives`, the versions table, syllabus, taxonomy merges and aliases (`U-C1`, `U-C2`, `U-C6`, `O-C3`).
 
@@ -101,7 +102,8 @@ All UI text is in Portuguese. There are no accounts and no server.
 ### 3.4 Performance (*Desempenho*)
 - **Scoring:** correct, wrong, blank or annulled (§3.4 of the analysis, without essays or pending grades).
 - **Topic strength** uses the latest *answered* response per question, ranked by when it was answered, the same ordering as the error notebook (a later blank never hides an earlier answer; a never-answered question counts as blank). Coverage counts questions answered at least once. It reports achievement, accuracy and coverage by area › matter › topic. Weakest topics come first, with a small-sample warning.
-- **Trend:** weekly accuracy from all answers.
+- **Trend:** weekly accuracy from all answers. Each topic also gets a mini trend: the same weekly accuracy over its latest 8 weeks with answers.
+- **Topic table:** area › matter › topic expands in place, weakest first or in alphabetical order, with an achievement bar per row, the topic's mini trend and a "Treinar" action that opens the topic session dialog. Achievement leads the summary cards.
 - **Filters:** contest tag, board tag (both from the collections a question belongs to), feedback mode.
 - **Other views:** history per collection and per session, a home dashboard, and CSV export.
 - **All attempts are kept** (drops `U-E1`).
@@ -111,6 +113,8 @@ All UI text is in Portuguese. There are no accounts and no server.
 - **Spaced repetition:** a full hit moves the interval along 1 → 3 → 7 → 14 → 30 → 60 days (the first hit is 1 day, as in the legacy app). A miss resets it to 1. A blank answer counts as a miss. Only finished attempts count, and annulled questions have no review.
 - **Derived state:** a review is recomputed from the question's answers against its current key, so key corrections and annulments apply to it, and it is rebuilt at startup.
 - **Practice sessions** are built from errors and due reviews: the reviews session takes due reviews first, then recent errors (1–100 questions). Questions that sit in an unfinished attempt are left out of a new errors or reviews session, so a new errors or reviews session never repeats a question already in progress. The "due now" count (Learning page and Home) still includes them, with a note saying how many are in an open attempt.
+
+- **Page layout:** tabs with counts (*Para hoje*, *Atrasadas*, *Próximas*, *Caderno de erros*) over one list, with *Revisar tudo de hoje* on top. A row shows the topic, its matter, a chip with the review interval, the last answer date and a chip with the question's accuracy (green from 75%, amber from 50%, red below, always with the number). Its one action opens the past attempt; rows carry no stem, key or explanation.
 
 ### 3.6 Data
 - **Storage:** SQLite in the OS app-data folder.

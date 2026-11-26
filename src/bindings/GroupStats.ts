@@ -10,6 +10,10 @@ export type GroupStats = {
  */
 score: Score, 
 /**
+ * Distinct questions in the group, annulled ones included.
+ */
+questions: number, 
+/**
  * Questions answered (correct + wrong) under the current key.
  */
 answered: number, 

@@ -20,7 +20,7 @@ const data: PerformanceData = {
         {
           name: "Gramática",
           stats: crase,
-          topics: [{ topicId: 3, name: "Crase", stats: crase }],
+          topics: [{ topicId: 3, name: "Crase", stats: crase, trend: [] }],
         },
       ],
     },
@@ -31,7 +31,17 @@ const data: PerformanceData = {
         {
           name: "Constitucional",
           stats: direito,
-          topics: [{ topicId: 1, name: "Controle", stats: direito }],
+          topics: [
+            {
+              topicId: 1,
+              name: "Controle",
+              stats: direito,
+              trend: [
+                { weekStart: "2026-11-09", answered: 5, correct: 3, accuracy: 0.6 },
+                { weekStart: "2026-11-16", answered: 5, correct: 4, accuracy: 0.8 },
+              ],
+            },
+          ],
         },
       ],
     },
@@ -51,7 +61,13 @@ function backend(result: PerformanceData | { error: string }, exported = true) {
   const failures = { next: false };
   const queries: PerformanceQuery[] = [];
   const exports: PerformanceQuery[] = [];
+  const started: unknown[] = [];
   mockIPC((command, args) => {
+    if (command === "question_count_limits") return { min: 1, max: 20, initial: 10 };
+    if (command === "session_start") {
+      started.push(args);
+      return new Promise(() => {});
+    }
     const query = (args as { query: PerformanceQuery }).query;
     if (command === "performance") {
       queries.push(query);
@@ -69,7 +85,7 @@ function backend(result: PerformanceData | { error: string }, exported = true) {
     }
     throw new Error(`Unexpected command: ${command}`);
   });
-  return { queries, exports, failures };
+  return { queries, exports, failures, started };
 }
 
 /** Toasts live in module state; forget the ones earlier tests raised. */
@@ -126,6 +142,54 @@ describe("Desempenho", () => {
     ]);
     const topicRow = within(table).getByRole("row", { name: /Controle/ });
     expect(topicRow).toHaveTextContent("80%");
+  });
+
+  it("sorts the table alphabetically on request", async () => {
+    backend(data);
+    const user = userEvent.setup();
+    render(() => <Performance />);
+    const table = await screen.findByRole("table", { name: /Desempenho por área/ });
+    const areaNames = () =>
+      within(table)
+        .getAllByRole("button", { expanded: false })
+        .map((button) => button.textContent);
+    expect(areaNames()).toEqual(["Português", "Direito"]);
+
+    await user.click(screen.getByRole("radio", { name: "Ordem alfabética" }));
+    expect(areaNames()).toEqual(["Direito", "Português"]);
+
+    await user.click(screen.getByRole("radio", { name: "Mais fraco primeiro" }));
+    expect(areaNames()).toEqual(["Português", "Direito"]);
+  });
+
+  it("shows a mini trend for each topic and trains it from the table", async () => {
+    const { started } = backend(data);
+    const user = userEvent.setup();
+    render(() => <Performance />);
+    const table = await screen.findByRole("table", { name: /Desempenho por área/ });
+    await user.click(within(table).getByRole("button", { name: "Direito" }));
+    await user.click(within(table).getByRole("button", { name: "Constitucional" }));
+
+    expect(
+      within(table).getByRole("img", {
+        name: "Acerto de 60% a 80% nas últimas 2 semanas com respostas",
+      }),
+    ).toBeInTheDocument();
+
+    await user.click(within(table).getByRole("button", { name: "Treinar este assunto: Controle" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Direito › Constitucional › Controle",
+    });
+    expect(await within(dialog).findByLabelText(/Quantidade de questões/)).toHaveValue(10);
+    await user.click(within(dialog).getByRole("button", { name: "Começar" }));
+    expect(started).toEqual([
+      {
+        request: {
+          source: { kind: "topic", topicId: 1, count: 10 },
+          feedbackMode: "study",
+        },
+      },
+    ]);
   });
 
   it("sends the filters and the time zone offset to the backend", async () => {

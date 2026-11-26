@@ -5,12 +5,14 @@ import type { FeedbackMode } from "../../bindings/FeedbackMode";
 import { Loading, ResourceView } from "../../components/states";
 import { showError, showSuccess, showToast } from "../../components/toasts";
 import { modeLabel } from "../../labels";
-import Navigator from "./Navigator";
+import { focusMode, toggleFocusMode, useFocusMode } from "../../focusMode";
+import NavigatorDrawer from "./NavigatorDrawer";
 import QuestionCard from "./QuestionCard";
 import ResolverDialogs, { type ResolverDialog } from "./ResolverDialogs";
 import ScoreSummary from "./ScoreSummary";
 import ShortcutHelp from "./ShortcutHelp";
 import { mergeExplanation } from "./mergeExplanation";
+import { playQuestionTransition } from "./questionTransition";
 import useResolverShortcuts from "./useResolverShortcuts";
 
 /** The solve screen for one attempt (spec §3.3). */
@@ -70,6 +72,19 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
   const locked = () => finished() || current()?.reveal != null;
   const total = () => view()?.questions.length ?? 0;
   const answered = () => view()?.questions.filter((q) => q.choice !== null).length ?? 0;
+  useFocusMode(() => view() !== undefined && !finished());
+
+  let stage: HTMLDivElement | undefined;
+  createEffect(
+    on(
+      () => current()?.position,
+      (position, previous) => {
+        if (stage && position !== undefined && previous !== undefined && position !== previous) {
+          playQuestionTransition(stage, position - previous);
+        }
+      },
+    ),
+  );
 
   // Only the question number is announced here. A confirmed answer hands the focus to the reveal
   // section, which reads the outcome; annulling and key changes have their own toast. Finishing
@@ -243,6 +258,20 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
       >
         {(attempt) => (
           <div class="resolver">
+            <div
+              class="progress-bar"
+              role="progressbar"
+              aria-label="Progresso da tentativa"
+              aria-valuemin={0}
+              aria-valuemax={total()}
+              aria-valuenow={answered()}
+              aria-valuetext={`${answered()} de ${total()} respondidas`}
+            >
+              <div
+                class="progress-fill"
+                style={{ width: `${total() === 0 ? 0 : (answered() / total()) * 100}%` }}
+              />
+            </div>
             <header class="resolver-header">
               <div>
                 <h1>{attempt().title}</h1>
@@ -253,20 +282,6 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                   </span>
                   <Show when={finished()}> · finalizada</Show>
                 </p>
-                <div
-                  class="progress-bar"
-                  role="progressbar"
-                  aria-label="Progresso da tentativa"
-                  aria-valuemin={0}
-                  aria-valuemax={total()}
-                  aria-valuenow={answered()}
-                  aria-valuetext={`${answered()} de ${total()} respondidas`}
-                >
-                  <div
-                    class="progress-fill"
-                    style={{ width: `${total() === 0 ? 0 : (answered() / total()) * 100}%` }}
-                  />
-                </div>
               </div>
               <div class="resolver-actions">
                 <Show
@@ -277,6 +292,15 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                     </button>
                   }
                 >
+                  <button
+                    type="button"
+                    class="secondary"
+                    aria-pressed={focusMode()}
+                    title={focusMode() ? "Mostrar o menu lateral" : "Esconder o menu lateral"}
+                    onClick={toggleFocusMode}
+                  >
+                    Modo foco
+                  </button>
                   <button type="button" class="secondary" onClick={() => setDialog("abandon")}>
                     Abandonar
                   </button>
@@ -291,31 +315,38 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
               </div>
             </header>
             <Show when={attempt().score}>{(score) => <ScoreSummary score={score()} />}</Show>
-            <Navigator questions={attempt().questions} current={index()} onSelect={select} />
-            <Show when={current()}>
-              {(q) => (
-                <QuestionCard
-                  question={q()}
-                  number={index() + 1}
-                  total={total()}
-                  feedbackMode={attempt().feedbackMode}
-                  finishedAt={attempt().finishedAt}
-                  optionAction={shortcuts.optionAction()}
-                  pending={pending()}
-                  onAnswer={choose}
-                  onConfirm={confirm}
-                  onEliminate={eliminate}
-                  onFlag={flag}
-                  onAnnul={annul}
-                  onUnannul={unannul}
-                  onExplain={explain}
-                  onRecheck={recheck}
-                  onRecheckApply={applyRecheck}
-                  onRecheckDismiss={dismissRecheck}
-                  onAiCancel={() => void api.aiRequestCancel().catch(showError)}
-                />
-              )}
-            </Show>
+            <NavigatorDrawer
+              questions={attempt().questions}
+              current={index()}
+              answered={answered()}
+              onSelect={select}
+            />
+            <div class="question-stage" ref={stage}>
+              <Show when={current()}>
+                {(q) => (
+                  <QuestionCard
+                    question={q()}
+                    number={index() + 1}
+                    total={total()}
+                    feedbackMode={attempt().feedbackMode}
+                    finishedAt={attempt().finishedAt}
+                    optionAction={shortcuts.optionAction()}
+                    pending={pending()}
+                    onAnswer={choose}
+                    onConfirm={confirm}
+                    onEliminate={eliminate}
+                    onFlag={flag}
+                    onAnnul={annul}
+                    onUnannul={unannul}
+                    onExplain={explain}
+                    onRecheck={recheck}
+                    onRecheckApply={applyRecheck}
+                    onRecheckDismiss={dismissRecheck}
+                    onAiCancel={() => void api.aiRequestCancel().catch(showError)}
+                  />
+                )}
+              </Show>
+            </div>
             <footer class="resolver-footer">
               <button
                 type="button"

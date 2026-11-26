@@ -9,6 +9,8 @@ import type { GenerateRequest } from "../bindings/GenerateRequest";
 import type { RoleChange } from "../bindings/RoleChange";
 import type { RoleConfig } from "../bindings/RoleConfig";
 import type { RoleOptions } from "../bindings/RoleOptions";
+import type { TopicTree } from "../bindings/TopicTree";
+import { stats } from "../test/fixtures";
 import type { GenerationStatus } from "../bindings/GenerationStatus";
 import GenerationBanner from "../components/GenerationBanner";
 import { Toaster } from "../components/toasts";
@@ -48,17 +50,22 @@ const idle: GenerationStatus = {
   outcome: null,
   outcomeKind: null,
 };
-const tree = {
+const tree: TopicTree = {
   areas: [
     {
       name: "Direito",
-      questions: 5,
+      stats: stats(0, 0, 0, 5),
       matters: [
         {
           name: "Constitucional",
-          questions: 5,
+          stats: stats(0, 0, 0, 5),
           topics: [
-            { id: 1, name: "Controle de constitucionalidade", questions: 5, accuracy: null },
+            {
+              topicId: 1,
+              name: "Controle de constitucionalidade",
+              stats: stats(0, 0, 0, 5),
+              trend: [],
+            },
           ],
         },
       ],

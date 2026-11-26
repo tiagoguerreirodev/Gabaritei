@@ -9,6 +9,7 @@ import type { ResponseView } from "../../bindings/ResponseView";
 import type { RecheckView } from "../../bindings/RecheckView";
 import type { Reveal } from "../../bindings/Reveal";
 import { loadShortcuts } from "../../shortcuts";
+import { focusMode } from "../../focusMode";
 import { mergeExplanation } from "./mergeExplanation";
 import Navigator from "./Navigator";
 import Resolver from "./Resolver";
@@ -191,6 +192,13 @@ async function open(mode: FeedbackMode, onLeave = () => {}) {
 }
 
 const card = () => screen.getByRole("article");
+
+/** Opens the question-map drawer, if it isn't open already. */
+async function showMap(user: ReturnType<typeof userEvent.setup>) {
+  const toggle = screen.getByRole("button", { name: /^Mapa de questões/ });
+  if (toggle.getAttribute("aria-expanded") !== "true") await user.click(toggle);
+  return screen.getByRole("navigation", { name: "Mapa de questões" });
+}
 const option = (letter: string) =>
   within(card())
     .getAllByRole("button", { pressed: false })
@@ -565,6 +573,7 @@ describe("Resolver", () => {
     const { user, calls } = await open("exam");
 
     await user.keyboard("f");
+    await showMap(user);
 
     expect(await screen.findByRole("button", { name: /Questão 1, marcada/ })).toBeVisible();
     expect(screen.getByRole("button", { name: "Marcada" })).toBeVisible();
@@ -595,6 +604,7 @@ describe("Resolver", () => {
     expect(calls.filter((c) => c.command !== "attempt")).toEqual([
       { command: "answer", args: { attemptId: "att", position: 1, optionId: "q1-e" } },
     ]);
+    await showMap(user);
     expect(screen.getByRole("button", { name: /Questão 2, respondida/ })).toBeVisible();
     expect(screen.getByTestId("progress")).toHaveTextContent("1 de 3 respondidas");
   });
@@ -605,6 +615,7 @@ describe("Resolver", () => {
     // X, then the question map: the next letter answers on the new question.
     await user.keyboard("x");
     expect(screen.getByRole("status")).toHaveTextContent("Escolha a letra");
+    await showMap(user);
     await user.click(screen.getByRole("button", { name: "Questão 3" }));
     await screen.findByRole("article", { name: "Questão 3 de 3" });
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -676,6 +687,7 @@ describe("Resolver", () => {
     expect(screen.getByRole("region", { name: "Gabarito e explicação" })).toHaveTextContent(
       "Questão anulada",
     );
+    await showMap(user);
     expect(screen.getByRole("button", { name: /Questão 1, respondida, anulada/ })).toBeVisible();
     expect(calls.at(-1)).toEqual({ command: "annul", args: { attemptId: "att", position: 0 } });
   });
@@ -740,6 +752,7 @@ describe("Resolver: answer-sheet UI", () => {
     expect(wrong.querySelector("[aria-hidden=true]")).toHaveTextContent("✕");
     const key = within(card()).getByText("Gabarito", { selector: ".option-mark", exact: false });
     expect(key.querySelector("[aria-hidden=true]")).toHaveTextContent("✓");
+    await showMap(user);
     const nav = screen.getByRole("button", { name: "Questão 1, respondida, errada" });
     expect(nav.querySelector(".nav-mark")).toHaveTextContent("✕");
   });
@@ -747,12 +760,15 @@ describe("Resolver: answer-sheet UI", () => {
   it("marks flagged and annulled questions in the navigator with shapes", async () => {
     const { user } = await open("study");
     await user.keyboard("f");
+    await showMap(user);
     const flagged = await screen.findByRole("button", { name: "Questão 1, marcada" });
     expect(flagged.querySelector(".nav-flag")).toHaveTextContent("⚑");
+    await user.keyboard("{Escape}");
 
     await user.keyboard("b");
     await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("button", { name: "Anular questão" }));
+    await showMap(user);
     const annulled = await screen.findByRole("button", { name: /Questão 1.*anulada/ });
     expect(annulled).toHaveClass("outcome-annulled");
   });
@@ -867,6 +883,7 @@ describe("Resolver: answer-sheet UI", () => {
     for (const mode of ["study", "exam"] as const) {
       const { user } = await open(mode);
       await user.keyboard("a");
+      await showMap(user);
       if (mode === "study") {
         // Marked but not confirmed: still nothing to reveal.
         expect(screen.getByRole("button", { name: "Questão 1" })).toBeInTheDocument();
@@ -875,7 +892,7 @@ describe("Resolver: answer-sheet UI", () => {
           expect(screen.getByRole("button", { name: "Questão 1, respondida" })).toBeInTheDocument(),
         );
       }
-      const nav = screen.getByRole("navigation", { name: "Mapa de questões" });
+      const nav = await showMap(user);
       for (const bubble of within(nav).getAllByRole("button")) {
         expect(bubble.getAttribute("aria-label")).not.toMatch(words);
         expect(bubble.className).not.toMatch(words);
@@ -1031,5 +1048,78 @@ describe("Navigator", () => {
     render(() => <Navigator questions={many(8)} current={0} onSelect={() => {}} />);
     expect(screen.queryByRole("group")).not.toBeInTheDocument();
     expect(screen.getAllByRole("button")).toHaveLength(8);
+  });
+});
+
+describe("Resolver: focus mode", () => {
+  it("is on while the attempt is open, and the Modo foco button turns it off and on", async () => {
+    const { user } = await open("exam");
+    const button = screen.getByRole("button", { name: "Modo foco" });
+    expect(focusMode()).toBe(true);
+    expect(button).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(button);
+    expect(focusMode()).toBe(false);
+    expect(button).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(button);
+    expect(focusMode()).toBe(true);
+  });
+
+  it("ends when the attempt is finished", async () => {
+    const { user } = await open("exam");
+    await user.click(screen.getByRole("button", { name: "Finalizar" }));
+    const dialog = await screen.findByRole("dialog", { name: "Finalizar tentativa?" });
+    await user.click(within(dialog).getByRole("button", { name: "Finalizar" }));
+    await screen.findByRole("button", { name: "Voltar ao Banco" });
+    expect(focusMode()).toBe(false);
+    expect(screen.queryByRole("button", { name: "Modo foco" })).not.toBeInTheDocument();
+  });
+
+  it("ends when the screen closes, and the next attempt starts focused again", async () => {
+    const { user } = await open("exam");
+    await user.click(screen.getByRole("button", { name: "Modo foco" }));
+    cleanup();
+    expect(focusMode()).toBe(false);
+
+    await open("exam");
+    expect(focusMode()).toBe(true);
+  });
+});
+
+describe("Resolver: question map drawer", () => {
+  const toggle = () => screen.getByRole("button", { name: /^Mapa de questões/ });
+  const map = () => screen.queryByRole("navigation", { name: "Mapa de questões" });
+
+  it("starts closed and shows the answered count on its toggle", async () => {
+    const { user } = await open("exam");
+    expect(map()).not.toBeInTheDocument();
+    expect(toggle()).toHaveAttribute("aria-expanded", "false");
+    expect(toggle()).toHaveTextContent("(0/3)");
+    await user.keyboard("b");
+    await waitFor(() => expect(toggle()).toHaveTextContent("(1/3)"));
+  });
+
+  it("opens on the current question and closes on Escape, returning focus", async () => {
+    const { user } = await open("exam");
+    await user.click(toggle());
+    expect(toggle()).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Questão 1" })).toHaveFocus());
+
+    await user.keyboard("{Escape}");
+    expect(map()).not.toBeInTheDocument();
+    expect(toggle()).toHaveFocus();
+  });
+
+  it("closes once a question is picked, or on a click outside", async () => {
+    const { user } = await open("exam");
+    await user.click(toggle());
+    await user.click(screen.getByRole("button", { name: "Questão 2" }));
+    await screen.findByRole("article", { name: "Questão 2 de 3" });
+    expect(map()).not.toBeInTheDocument();
+
+    await user.click(toggle());
+    await user.click(card());
+    expect(map()).not.toBeInTheDocument();
   });
 });

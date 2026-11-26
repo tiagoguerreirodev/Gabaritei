@@ -8,6 +8,7 @@ import type { CollectionPage } from "../bindings/CollectionPage";
 import type { CollectionQuery } from "../bindings/CollectionQuery";
 import type { CollectionSummary } from "../bindings/CollectionSummary";
 import type { TopicTree } from "../bindings/TopicTree";
+import { stats } from "../test/fixtures";
 import Bank from "./Bank";
 
 const tree: TopicTree = {
@@ -15,19 +16,24 @@ const tree: TopicTree = {
   areas: [
     {
       name: "Direito",
-      questions: 1200,
+      stats: stats(30, 10, 0, 1200),
       matters: [
         {
           name: "Constitucional",
-          questions: 300,
+          stats: stats(30, 10, 0, 300),
           topics: [
-            { id: 1, name: "Controle de constitucionalidade", questions: 120, accuracy: null },
-            { id: 2, name: "Direitos fundamentais", questions: 1, accuracy: null },
+            {
+              topicId: 1,
+              name: "Controle de constitucionalidade",
+              stats: stats(30, 10, 0, 120),
+              trend: [],
+            },
+            { topicId: 2, name: "Direitos fundamentais", stats: stats(0, 0, 0, 1), trend: [] },
           ],
         },
       ],
     },
-    { name: "Informática", questions: 2400, matters: [] },
+    { name: "Informática", stats: stats(0, 0, 0, 2400), matters: [] },
   ],
 };
 
@@ -46,14 +52,24 @@ const summary = (
   questions,
   createdAt: "2026-11-11T00:15:54.786Z",
   lastFinishedAt: null,
-  inProgress: false,
+  lastAchievement: null,
+  activeAttemptId: null,
 });
 
 // 23 collections: two pages of 20.
 const collections: CollectionSummary[] = [
-  summary("c-adm", "Direito › Administração", "ALEPA · Programação", null, 41),
+  {
+    ...summary("c-adm", "Direito › Administração", "ALEPA · Programação", null, 41),
+    lastFinishedAt: "2026-11-20T12:00:00.000Z",
+    lastAchievement: 0.45,
+  },
   summary("c-sql", "Informática › SQL", "Perito Criminal", "FGV"),
-  summary("c-crase", "Português › Crase", "ALEPA · Programação", "Cebraspe"),
+  {
+    ...summary("c-crase", "Português › Crase", "ALEPA · Programação", "Cebraspe"),
+    lastFinishedAt: "2026-11-18T12:00:00.000Z",
+    lastAchievement: 0,
+    activeAttemptId: "att-crase",
+  },
   ...Array.from({ length: 20 }, (_, i) =>
     summary(`c-${i}`, `Assunto ${String(i).padStart(2, "0")}`, "Perito Criminal", null),
   ),
@@ -158,39 +174,25 @@ describe("Banco", () => {
       expect(within(treeList).getByText("Controle de constitucionalidade")).toBeVisible();
     });
 
-    it("shows each answered topic's accuracy", async () => {
-      const [direito, informatica] = tree.areas;
-      const [constitucional] = direito!.matters;
-      const [controle, fundamentais] = constitucional!.topics;
-      backend({
-        tree: {
-          ...tree,
-          areas: [
-            {
-              ...direito!,
-              matters: [
-                {
-                  ...constitucional!,
-                  topics: [{ ...controle!, accuracy: 0.5 }, fundamentais!],
-                },
-              ],
-            },
-            informatica!,
-          ],
-        },
-      });
+    it("shows coverage and an achievement bar on every level", async () => {
+      backend();
       const user = userEvent.setup();
       render(() => <Bank />);
 
       const treeList = await screen.findByRole("list", { name: "Assuntos" });
+      const direito = within(treeList).getByText("Direito").closest("summary")!;
+      expect(direito).toHaveTextContent("cobertura 3,3%");
+      expect(
+        within(direito).getByRole("meter", { name: "Aproveitamento em Direito" }),
+      ).toHaveAttribute("aria-valuetext", "75% de aproveitamento");
+
       await user.click(within(treeList).getByText("Direito"));
       await user.click(within(treeList).getByText("Constitucional"));
-      expect(
-        within(treeList).getByText("Controle de constitucionalidade").closest("li"),
-      ).toHaveTextContent("acerto 50%");
-      expect(
-        within(treeList).getByText("Direitos fundamentais").closest("li"),
-      ).not.toHaveTextContent("acerto");
+      const controle = within(treeList).getByText("Controle de constitucionalidade").closest("li")!;
+      expect(controle).toHaveTextContent("cobertura 33,3%");
+      const fundamentais = within(treeList).getByText("Direitos fundamentais").closest("li")!;
+      expect(fundamentais).toHaveTextContent("nunca resolvido");
+      expect(fundamentais).not.toHaveTextContent("cobertura");
     });
 
     it("explains an empty bank", async () => {
@@ -234,17 +236,55 @@ describe("Banco", () => {
   });
 
   describe("collections", () => {
-    it("lists the first page with counts, tags and status", async () => {
+    const card = (title: string) =>
+      screen.getByRole("button", { name: title }).closest<HTMLElement>(".collection-card")!;
+
+    it("lists the first page with counts, tags and the last attempt", async () => {
       const queries = backend();
       await openCollections();
 
       expect(screen.getByText("23 cadernos")).toBeVisible();
       expect(listedTitles()).toHaveLength(20);
-      const first = screen.getByRole("button", { name: /Direito › Administração/ });
+      const first = card("Direito › Administração");
       expect(first).toHaveTextContent("ALEPA · Programação");
       expect(first).toHaveTextContent("41 questões");
-      expect(first).toHaveTextContent("Não iniciado");
+      expect(first).toHaveTextContent("Última tentativa em 20/11/2026");
+      expect(within(first).getByText("45% de aproveitamento")).toHaveAttribute("data-band", "weak");
+      expect(card("Informática › SQL")).toHaveTextContent("Nunca resolvido");
       expect(queries[0]).toEqual({ search: "", contest: "", board: "", page: 0, pageSize: 20 });
+    });
+
+    it("shows a 0% achievement instead of hiding it", async () => {
+      backend();
+      await openCollections();
+
+      expect(card("Português › Crase")).toHaveTextContent("0% de aproveitamento");
+    });
+
+    it("starts a collection session from its card in one click", async () => {
+      const calls = backend();
+      const user = await openCollections();
+
+      await user.click(screen.getByRole("button", { name: "Resolver Informática › SQL" }));
+      const start = await screen.findByRole("dialog", { name: "Informática › SQL" });
+      await user.click(within(start).getByRole("button", { name: "Começar" }));
+
+      await waitFor(() => expect(calls.started).toHaveLength(1));
+      expect(calls.started[0]).toEqual({
+        source: { kind: "collection", collectionId: "c-sql" },
+        feedbackMode: "study",
+      });
+    });
+
+    it("continues the attempt in progress from its card", async () => {
+      backend();
+      const user = await openCollections();
+      const crase = card("Português › Crase");
+
+      expect(crase).toHaveTextContent("Em andamento");
+      expect(within(crase).queryByRole("button", { name: /^Resolver/ })).not.toBeInTheDocument();
+      await user.click(within(crase).getByRole("button", { name: "Continuar Português › Crase" }));
+      expect(window.location.hash).toBe("#/resolver?tentativa=att-crase");
     });
 
     it("searches ignoring case and accents", async () => {
@@ -314,7 +354,7 @@ describe("Banco", () => {
     });
 
     async function sqlCollection(user: Awaited<ReturnType<typeof openCollections>>) {
-      await user.click(screen.getByRole("button", { name: /Informática › SQL/ }));
+      await user.click(screen.getByRole("button", { name: "Informática › SQL" }));
       return screen.findByRole("dialog", { name: "Informática › SQL" });
     }
 
@@ -374,7 +414,7 @@ describe("Banco", () => {
         ],
       });
       const user = await openCollections();
-      await user.click(screen.getByRole("button", { name: /Informática › SQL/ }));
+      await user.click(screen.getByRole("button", { name: "Informática › SQL" }));
       const dialog = await screen.findByRole("dialog", { name: "Informática › SQL" });
 
       expect(await within(dialog).findByText("Há uma tentativa em andamento.")).toBeVisible();

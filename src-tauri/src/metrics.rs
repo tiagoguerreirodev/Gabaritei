@@ -12,6 +12,7 @@
 //!   once per group (area, area › matter, area › matter › topic).
 //! * **Weekly trend** uses *every* answer of finished attempts, grouped by ISO week (Monday
 //!   to Sunday) in the caller's local time.
+//!   Each topic also carries its own trend, cut to its latest weeks with answers.
 //! * **Contest and board** filters match questions that belong to a collection with that tag.
 
 use std::cmp::Ordering;
@@ -35,6 +36,8 @@ use crate::ordering::{cmp_pt, some_first};
 pub const SMALL_SAMPLE: u32 = 5;
 /// How many topics the "weakest" list holds.
 pub const WEAKEST_LIMIT: usize = 10;
+/// How many of a topic's most recent weeks with answers its mini trend shows.
+pub const TOPIC_TREND_WEEKS: usize = 8;
 
 // ---- Request and result shapes ---------------------------------------------------------------
 
@@ -58,6 +61,8 @@ pub struct PerformanceQuery {
 pub struct GroupStats {
     /// Outcomes of the latest answers: achievement and accuracy live here.
     pub score: Score,
+    /// Distinct questions in the group, annulled ones included.
+    pub questions: u32,
     /// Questions answered (correct + wrong) under the current key.
     pub answered: u32,
     /// Questions in the group that aren't annulled.
@@ -75,6 +80,8 @@ pub struct TopicStats {
     pub topic_id: TopicId,
     pub name: String,
     pub stats: GroupStats,
+    /// The topic's latest [`TOPIC_TREND_WEEKS`] weeks with answers, oldest first.
+    pub trend: Vec<WeekPoint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
@@ -164,6 +171,7 @@ impl Acc {
             coverage: Score::ratio(answered, self.available),
             small_sample: answered < SMALL_SAMPLE,
             score: self.score,
+            questions: u32::try_from(self.seen.len()).unwrap_or(u32::MAX),
             answered,
             available: self.available,
         }
@@ -221,7 +229,7 @@ pub fn performance(conn: &Connection, query: &PerformanceQuery) -> AppResult<Per
         groups.add(id, topic_id, path, row);
     })?;
     let overall = groups.overall.stats();
-    let mut areas = build_areas(groups.areas);
+    let mut areas = build_areas(groups.areas, topic_trends(conn, query)?);
     let weakest = weakest_topics(&areas);
     sort_areas(&mut areas);
     Ok(Performance {
@@ -317,7 +325,11 @@ impl StrengthGroups {
     }
 }
 
-fn build_areas(groups: BTreeMap<String, AreaGroup>) -> Vec<AreaStats> {
+/// Folds the groups into areas, giving each topic its trend from `trends` (none if absent).
+fn build_areas(
+    groups: BTreeMap<String, AreaGroup>,
+    mut trends: HashMap<TopicId, Vec<WeekPoint>>,
+) -> Vec<AreaStats> {
     groups
         .into_iter()
         .map(|(name, area)| AreaStats {
@@ -336,6 +348,7 @@ fn build_areas(groups: BTreeMap<String, AreaGroup>) -> Vec<AreaStats> {
                             name,
                             topic_id,
                             stats: group.stats(),
+                            trend: trends.remove(&topic_id).unwrap_or_default(),
                         })
                         .collect(),
                 })
@@ -379,28 +392,88 @@ fn sort_areas(areas: &mut [AreaStats]) {
     areas.sort_by(|a, b| weakest_first((&a.stats, &a.name), (&b.stats, &b.name)));
 }
 
-/// *Acerto entre respondidas* per topic id for the Banco tree, over all finished attempts.
-/// Topics without an answer are absent.
-pub fn topic_accuracy(conn: &Connection) -> AppResult<HashMap<TopicId, f64>> {
-    let mut topics = HashMap::<TopicId, Score>::new();
-    visit_topic_results(conn, &PerformanceQuery::default(), |_, topic_id, _, row| {
-        if let Some(outcome) = row.outcome {
-            topics.entry(topic_id).or_default().record(outcome);
-        }
-    })?;
-    Ok(topics
-        .into_iter()
-        .filter_map(|(id, score)| Some((id, score.accuracy?)))
-        .collect())
+/// Strength of every area, matter and topic for the Banco tree, over all finished attempts
+/// in either mode. Unlike [`performance`], groups keep name order.
+pub fn bank_strength(conn: &Connection) -> AppResult<Vec<AreaStats>> {
+    let mut groups = StrengthGroups::default();
+    visit_topic_results(
+        conn,
+        &PerformanceQuery::default(),
+        |id, topic_id, path, row| {
+            groups.add(id, topic_id, path, row);
+        },
+    )?;
+    Ok(build_areas(groups.areas, HashMap::new()))
 }
 
 fn trend(conn: &Connection, query: &PerformanceQuery) -> AppResult<Vec<WeekPoint>> {
+    let mut weeks: BTreeMap<String, Score> = BTreeMap::new();
+    visit_weekly_answers(conn, query, WeeklyScope::Overall, |_, week, result| {
+        weeks.entry(week).or_default().record(result);
+    })?;
+    Ok(week_points(weeks))
+}
+
+/// Each topic's weekly trend, cut to its latest [`TOPIC_TREND_WEEKS`] weeks with answers.
+fn topic_trends(
+    conn: &Connection,
+    query: &PerformanceQuery,
+) -> AppResult<HashMap<TopicId, Vec<WeekPoint>>> {
+    let mut topics: HashMap<TopicId, BTreeMap<String, Score>> = HashMap::new();
+    visit_weekly_answers(
+        conn,
+        query,
+        WeeklyScope::PerTopic,
+        |topic_id, week, result| {
+            let Some(topic_id) = topic_id else { return };
+            topics
+                .entry(topic_id)
+                .or_default()
+                .entry(week)
+                .or_default()
+                .record(result);
+        },
+    )?;
+    Ok(topics
+        .into_iter()
+        .map(|(topic_id, weeks)| {
+            let mut points = week_points(weeks);
+            points.drain(..points.len().saturating_sub(TOPIC_TREND_WEEKS));
+            (topic_id, points)
+        })
+        .collect())
+}
+
+/// Whether weekly answers are counted once or once per topic of their question.
+#[derive(Clone, Copy)]
+enum WeeklyScope {
+    Overall,
+    PerTopic,
+}
+
+/// Visits every counted answer (correct or wrong) of finished attempts with the Monday of
+/// its local week, and, for [`WeeklyScope::PerTopic`], once per topic of its question.
+fn visit_weekly_answers(
+    conn: &Connection,
+    query: &PerformanceQuery,
+    scope: WeeklyScope,
+    mut visit: impl FnMut(Option<TopicId>, String, Outcome),
+) -> AppResult<()> {
+    let (topic_column, topic_join) = match scope {
+        WeeklyScope::Overall => ("NULL", ""),
+        WeeklyScope::PerTopic => (
+            "qt.topic_id",
+            "JOIN question_topics qt ON qt.question_id = q.id",
+        ),
+    };
     // `date(ts, '-6 days', 'weekday 1')` is the Monday of the ts's week.
     let sql = format!(
-        "SELECT date(r.answered_at, :offset, '-6 days', 'weekday 1'), r.choice, q.answer_id, q.annulled
+        "SELECT date(r.answered_at, :offset, '-6 days', 'weekday 1'), r.choice, q.answer_id,
+                q.annulled, {topic_column}
          FROM responses r
          JOIN attempts a ON a.id = r.attempt_id
          JOIN questions q ON q.id = r.question_id
+         {topic_join}
          WHERE a.finished_at IS NOT NULL AND r.choice IS NOT NULL AND r.answered_at IS NOT NULL
            AND (:mode IS NULL OR a.feedback_mode = :mode) {FILTERS}"
     );
@@ -411,7 +484,6 @@ fn trend(conn: &Connection, query: &PerformanceQuery) -> AppResult<Vec<WeekPoint
         ":contest": tag(&query.contest),
         ":board": tag(&query.board),
     })?;
-    let mut weeks: BTreeMap<String, Score> = BTreeMap::new();
     while let Some(r) = rows.next()? {
         let week: Option<String> = r.get(0)?;
         let choice: String = r.get(1)?;
@@ -420,10 +492,14 @@ fn trend(conn: &Connection, query: &PerformanceQuery) -> AppResult<Vec<WeekPoint
         let Some(week) = week else { continue };
         let result = outcome(Some(&choice), &answer_id, annulled.into());
         if matches!(result, Outcome::Correct | Outcome::Wrong) {
-            weeks.entry(week).or_default().record(result);
+            visit(r.get(4)?, week, result);
         }
     }
-    Ok(weeks
+    Ok(())
+}
+
+fn week_points(weeks: BTreeMap<String, Score>) -> Vec<WeekPoint> {
+    weeks
         .into_iter()
         .map(|(week_start, score)| WeekPoint {
             week_start,
@@ -431,7 +507,7 @@ fn trend(conn: &Connection, query: &PerformanceQuery) -> AppResult<Vec<WeekPoint
             correct: score.correct,
             accuracy: score.accuracy,
         })
-        .collect())
+        .collect()
 }
 
 fn filter_options(conn: &Connection) -> AppResult<FilterOptions> {
@@ -465,6 +541,9 @@ pub struct HomeSummary {
     pub overall: GroupStats,
     /// Weakest first.
     pub areas: Vec<AreaSummary>,
+    /// The topic with the lowest achievement among those with something evaluated: the
+    /// home page suggests training it when nothing more urgent waits.
+    pub weakest_topic: Option<WeakTopic>,
     /// Unfinished attempts to resume, newest first.
     pub active_attempts: Vec<ActiveAttempt>,
     /// Spaced-repetition reviews due at `now` (counts rows of `review_state`, filled by #21).
@@ -478,17 +557,22 @@ pub struct HomeSummary {
 
 /// The home summary at `now` (an RFC 3339 UTC timestamp).
 pub fn home(conn: &Connection, now: &str) -> AppResult<HomeSummary> {
-    let mut overall = Acc::default();
-    let mut area_groups = BTreeMap::<String, Acc>::new();
-    visit_topic_results(conn, &PerformanceQuery::default(), |id, _, path, row| {
-        overall.add(id, row);
-        area_groups.entry(path.area).or_default().add(id, row);
-    })?;
-    let mut areas: Vec<_> = area_groups
+    let mut groups = StrengthGroups::default();
+    visit_topic_results(
+        conn,
+        &PerformanceQuery::default(),
+        |id, topic_id, path, row| {
+            groups.add(id, topic_id, path, row);
+        },
+    )?;
+    let overall = groups.overall.stats();
+    let areas = build_areas(groups.areas, HashMap::new());
+    let weakest_topic = weakest_topics(&areas).into_iter().next();
+    let mut areas: Vec<_> = areas
         .into_iter()
-        .map(|(name, group)| AreaSummary {
-            name,
-            stats: group.stats(),
+        .map(|area| AreaSummary {
+            name: area.name,
+            stats: area.stats,
         })
         .collect();
     areas.sort_by(|a, b| weakest_first((&a.stats, &a.name), (&b.stats, &b.name)));
@@ -497,8 +581,9 @@ pub fn home(conn: &Connection, now: &str) -> AppResult<HomeSummary> {
     };
     Ok(HomeSummary {
         questions: count("SELECT COUNT(*) FROM questions", &[])?,
-        overall: overall.stats(),
+        overall,
         areas,
+        weakest_topic,
         active_attempts: attempts::active(conn)?,
         due_reviews: crate::learning::due_count(conn, now)?,
         due_in_open_attempt: crate::learning::due_in_open_attempt(conn, now)?,

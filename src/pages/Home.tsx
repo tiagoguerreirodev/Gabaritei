@@ -1,16 +1,20 @@
 import { A } from "@solidjs/router";
 import { For, Show, createResource } from "solid-js";
 import { api } from "../api";
+import type { GroupStats } from "../bindings/GroupStats";
 import LegacyImport from "../components/LegacyImport";
 import MasteryBar from "../components/MasteryBar";
-import { EmptyState, Loading, ResourceView } from "../components/states";
-import { formatDate, formatNumber, questionCount } from "../format";
-import StatCards from "./performance/StatCards";
-import { openAttempt } from "../navigation";
-
+import { Loading, ResourceView } from "../components/states";
+import { formatDate, formatNumber, formatPercent, questionCount } from "../format";
 import { modeLabel } from "../labels";
+import { openAttempt } from "../navigation";
+import TodayCard from "./home/TodayCard";
+import { todayAction } from "./home/todayAction";
 
-/** Início: summary cards, attempts to resume, due reviews and drafts waiting for review. */
+/**
+ * Início, the day's dashboard: one main action on top, a compact strip of numbers, then the
+ * other open attempts, what waits for the user and achievement per area.
+ */
 export default function Home() {
   const [status] = createResource(() => api.legacyImportStatus());
   const [home, { refetch: refetchHome }] = createResource(() => api.home());
@@ -32,95 +36,119 @@ export default function Home() {
         onRetry={() => refetchHome()}
         placeholder={<Loading />}
       >
-        {(summary) => (
-          <>
-            <p class="muted">{questionCount(summary().questions)} no banco.</p>
-            <Show
-              when={summary().overall.score.evaluated > 0}
-              fallback={
-                <EmptyState
-                  title="Você ainda não finalizou nenhuma tentativa."
-                  action={
-                    <A class="primary" href="/banco">
-                      Ir para o Banco
-                    </A>
-                  }
-                >
-                  <p class="muted">Comece um caderno ou um assunto no Banco.</p>
-                </EmptyState>
-              }
-            >
-              <StatCards stats={summary().overall} label="Resumo" />
-            </Show>
+        {(summary) => {
+          const evaluated = () => summary().overall.score.evaluated > 0;
+          const otherAttempts = () => summary().activeAttempts.slice(1);
+          return (
+            <>
+              <TodayCard action={todayAction(summary())} />
 
-            <section class="card wide" aria-labelledby="active-title">
-              <h2 id="active-title">Tentativas para retomar</h2>
-              <Show
-                when={summary().activeAttempts.length > 0}
-                fallback={<p class="muted">Nenhuma tentativa em andamento.</p>}
-              >
-                <ul class="attempt-list">
-                  <For each={summary().activeAttempts}>
-                    {(attempt) => (
-                      <li>
-                        <span class="attempt-title">{attempt.title}</span>
-                        <span class="muted">
-                          {modeLabel[attempt.feedbackMode]} · {formatNumber(attempt.answered)} de{" "}
-                          {formatNumber(attempt.total)} respondidas · iniciada em{" "}
-                          {formatDate(attempt.startedAt)}
-                        </span>
-                        <button
-                          type="button"
-                          class="primary"
-                          aria-label={`Retomar ${attempt.title}`}
-                          onClick={() => openAttempt(attempt.id)}
-                        >
-                          Retomar
-                        </button>
-                      </li>
-                    )}
-                  </For>
-                </ul>
+              <p class="muted">{questionCount(summary().questions)} no banco.</p>
+              <Show when={evaluated()}>
+                <SummaryStrip stats={summary().overall} />
               </Show>
-            </section>
 
-            <section class="card wide" aria-labelledby="waiting-title">
-              <h2 id="waiting-title">Aguardando você</h2>
-              <ul class="waiting-list">
-                <li>
-                  <A href="/erros-e-revisoes">Revisões pendentes</A>
-                  <strong>{formatNumber(summary().dueReviews)}</strong>
-                  <Show when={summary().dueInOpenAttempt > 0}>
-                    <span class="muted">
-                      {" "}
-                      · {formatNumber(summary().dueInOpenAttempt)} em tentativa aberta
-                    </span>
-                  </Show>
-                </li>
-                <li>
-                  <A href="/revisar-pacote">Pacotes para revisar</A>
-                  <strong>{formatNumber(summary().draftsWaiting)}</strong>
-                </li>
-              </ul>
-            </section>
-            <Show when={summary().overall.score.evaluated > 0}>
-              <section class="card wide" aria-labelledby="areas-title">
-                <h2 id="areas-title">Aproveitamento por área</h2>
-                <ul class="area-list">
-                  <For each={summary().areas.filter((a) => a.stats.score.evaluated > 0)}>
-                    {(area) => (
+              <Show when={otherAttempts().length > 0}>
+                <section class="card wide" aria-labelledby="active-title">
+                  <h2 id="active-title">Outras tentativas em andamento</h2>
+                  <ul class="attempt-list">
+                    <For each={otherAttempts()}>
+                      {(attempt) => (
+                        <li>
+                          <span class="attempt-title">{attempt.title}</span>
+                          <span class="muted">
+                            {modeLabel[attempt.feedbackMode]} · {formatNumber(attempt.answered)} de{" "}
+                            {formatNumber(attempt.total)} respondidas · iniciada em{" "}
+                            {formatDate(attempt.startedAt)}
+                          </span>
+                          <button
+                            type="button"
+                            class="secondary"
+                            aria-label={`Retomar ${attempt.title}`}
+                            onClick={() => openAttempt(attempt.id)}
+                          >
+                            Retomar
+                          </button>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </section>
+              </Show>
+
+              <Show when={summary().dueReviews > 0 || summary().draftsWaiting > 0}>
+                <section class="card wide" aria-labelledby="waiting-title">
+                  <h2 id="waiting-title">Aguardando você</h2>
+                  <ul class="waiting-list">
+                    <Show when={summary().dueReviews > 0}>
                       <li>
-                        <MasteryBar name={area.name} achievement={area.stats.score.achievement} />
+                        <A href="/erros-e-revisoes">Revisões pendentes</A>
+                        <strong>{formatNumber(summary().dueReviews)}</strong>
+                        <Show when={summary().dueInOpenAttempt > 0}>
+                          <span class="muted">
+                            {" "}
+                            · {formatNumber(summary().dueInOpenAttempt)} em tentativa aberta
+                          </span>
+                        </Show>
                       </li>
-                    )}
-                  </For>
-                </ul>
-                <A href="/desempenho">Ver desempenho completo</A>
-              </section>
-            </Show>
-          </>
-        )}
+                    </Show>
+                    <Show when={summary().draftsWaiting > 0}>
+                      <li>
+                        <A href="/revisar-pacote">Pacotes para revisar</A>
+                        <strong>{formatNumber(summary().draftsWaiting)}</strong>
+                      </li>
+                    </Show>
+                  </ul>
+                </section>
+              </Show>
+
+              <Show when={evaluated()}>
+                <section class="card wide" aria-labelledby="areas-title">
+                  <h2 id="areas-title">Aproveitamento por área</h2>
+                  <ul class="area-list">
+                    <For each={summary().areas.filter((a) => a.stats.score.evaluated > 0)}>
+                      {(area) => (
+                        <li>
+                          <MasteryBar name={area.name} achievement={area.stats.score.achievement} />
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                  <A href="/desempenho">Ver desempenho completo</A>
+                </section>
+              </Show>
+            </>
+          );
+        }}
       </ResourceView>
     </section>
+  );
+}
+
+/** The headline numbers in one compact row, below the main action. */
+function SummaryStrip(props: { stats: GroupStats }) {
+  const items = () => [
+    { name: "Aproveitamento", value: formatPercent(props.stats.score.achievement) },
+    { name: "Acerto entre respondidas", value: formatPercent(props.stats.score.accuracy) },
+    {
+      name: "Cobertura",
+      value: formatPercent(props.stats.coverage),
+      hint: `${formatNumber(props.stats.answered)} de ${formatNumber(props.stats.available)}`,
+    },
+  ];
+  return (
+    <ul class="summary-strip" aria-label="Resumo">
+      <For each={items()}>
+        {(item) => (
+          <li>
+            <span class="stat-name">{item.name}</span>
+            <strong>{item.value}</strong>
+            <Show when={item.hint}>
+              <span class="muted">{item.hint}</span>
+            </Show>
+          </li>
+        )}
+      </For>
+    </ul>
   );
 }

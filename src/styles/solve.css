@@ -1,13 +1,5 @@
 /* ---- Resolver ---- */
 
-.tree-leaf .tree-name {
-  flex: 1;
-}
-
-.tree-leaf .link-button {
-  font-size: var(--text-sm);
-}
-
 .modal-footer .primary:only-child {
   margin-left: auto;
 }
@@ -48,6 +40,7 @@
 
 .resolver {
   max-width: 52rem;
+  margin-inline: auto;
 }
 
 .resolver-header {
@@ -124,13 +117,16 @@
   font-weight: 600;
 }
 
-.progress-bar {
-  width: min(24rem, 100%);
-  height: 0.6rem;
+/* A thin bar that stays at the top of the window while the page scrolls. */
+.resolver > .progress-bar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  height: 0.3rem;
+  margin-bottom: var(--space-4);
   overflow: hidden;
-  border: 1px solid var(--border-strong);
   border-radius: var(--radius-pill);
-  background: var(--surface);
+  background: var(--border);
 }
 
 .progress-fill {
@@ -139,12 +135,45 @@
   transition: width var(--dur-base) var(--ease);
 }
 
+/* Navigator drawer: a toggle above the question and a panel that slides in from the right. */
+.navigator-drawer-root {
+  margin: var(--space-4) 0;
+}
+
+.navigator-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+}
+
+.navigator-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 8;
+  width: min(22rem, 90vw);
+  padding: var(--space-6) var(--space-5);
+  overflow-y: auto;
+  border-left: 1px solid var(--border-strong);
+  background: var(--surface);
+  box-shadow: var(--shadow-modal);
+  animation: drawer-in var(--dur-base) var(--ease);
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
 /* Navigator: a sheet of numbered bubbles in blocks of ten. */
 .navigator {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3) var(--space-5);
-  margin: var(--space-4) 0;
 }
 
 .navigator-group {
@@ -305,7 +334,9 @@
 
 .question-stem {
   display: block;
+  max-width: var(--measure);
   margin: var(--space-4) 0;
+  font-size: var(--text-md);
 }
 
 .hint {
@@ -324,7 +355,7 @@
 .option {
   display: flex;
   align-items: stretch;
-  border: 1px solid var(--border);
+  border: 2px solid var(--border);
   border-radius: var(--radius);
   transition:
     background-color var(--dur-fast) var(--ease),
@@ -335,8 +366,9 @@
   display: flex;
   flex: 1;
   gap: var(--space-3);
-  align-items: baseline;
-  padding: var(--space-3);
+  align-items: center;
+  min-height: 3.25rem;
+  padding: var(--space-3) var(--space-4);
   border: none;
   background: transparent;
   color: var(--text);
@@ -427,7 +459,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .option.option-pop .option-bubble {
+  .option.option-pop .option-bubble,
+  .navigator-drawer {
     animation: none;
   }
 }
@@ -437,9 +470,22 @@
   background: var(--accent-soft);
 }
 
+.option:has(.option-choose:enabled:hover) {
+  border-color: var(--border-strong);
+}
+
+.option.eliminated {
+  border-style: dashed;
+  background: var(--bg);
+}
+
 .option.eliminated .option-choose {
   opacity: 0.45;
   text-decoration: line-through;
+}
+
+.option.eliminated .option-bubble {
+  border-style: dashed;
 }
 
 .option.option-key {
@@ -459,6 +505,7 @@
 }
 
 .option-eliminate {
+  min-width: 3rem;
   padding: 0 var(--space-3);
   color: var(--muted);
 }

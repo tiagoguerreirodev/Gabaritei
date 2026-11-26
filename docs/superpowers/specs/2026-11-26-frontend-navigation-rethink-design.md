@@ -219,6 +219,17 @@ Each step is one issue and one PR, behavior-preserving outside its screen.
 6. **Remaining screens with the design system:** Resolver, Gerar, Revisar pacote (redesigns
    already in `docs/design-system/`), Início, Desempenho, Configurações.
 
+## Plans
+
+One implementation plan per step, in `docs/superpowers/plans/`:
+
+1. `2026-11-26-design-system-foundations.md`
+2. `2026-11-26-banco-backend.md`
+3. `2026-11-26-banco-screen.md`
+4. `2026-11-26-entry-points.md`
+5. `2026-11-26-historico.md`
+6. `2026-11-26-screen-restyles.md`
+
 ## Spec changes (same PR as step 2, after approval)
 
 - §3.1: Banco is a filterable view (topics, status, caderno), no longer a tree browser.

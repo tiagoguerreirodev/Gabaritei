@@ -108,7 +108,7 @@ export default function QuestionLines(props: { summary: DraftSummary }) {
                         </span>
                       </summary>
                       <div class="review-row-body">
-                        <div class="sheet-stem">
+                        <div class="review-row-stem">
                           <RichText text={content().stem} />
                         </div>
                         <ol class="review-row-options">

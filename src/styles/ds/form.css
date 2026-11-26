@@ -37,7 +37,7 @@
 .form-row .field {
   max-width: none;
 }
-.field .input {
+.form .field .input {
   width: 100%;
 }
 .form-actions {

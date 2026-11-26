@@ -48,6 +48,8 @@
   gap: var(--space-3);
   padding: var(--space-3) var(--space-2);
   list-style: none;
+}
+.review-row > summary {
   cursor: pointer;
 }
 .review-row > summary::-webkit-details-marker {
@@ -79,8 +81,10 @@
   gap: var(--space-3);
   padding: 0 var(--space-2) var(--space-5) calc(2.5rem + var(--space-5));
 }
-.review-row-body .sheet-stem {
+.review-row-stem {
+  font-family: var(--font-reading);
   font-size: 1rem;
+  line-height: 1.7;
   margin: 0;
 }
 .review-row-options {
@@ -117,21 +121,4 @@
   flex-wrap: wrap;
   gap: var(--space-1);
   justify-content: flex-end;
-}
-.verdict-counts {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-  gap: var(--space-3);
-  max-width: var(--content-width-wide);
-  margin: var(--space-3) 0;
-}
-.verdict-counts dd {
-  margin: 0;
-}
-.verdict-disputed {
-  border-style: dashed;
-  border-color: var(--danger);
-}
-.verdict-problems {
-  border-color: var(--danger);
 }

@@ -2,6 +2,7 @@ import { Show } from "solid-js";
 import { api } from "../../api";
 import type { GenerateSources } from "../../bindings/GenerateSources";
 import { showError } from "../../components/toasts";
+import Optional from "./Optional";
 import AttachmentList from "./AttachmentList";
 
 export default function SourcesFields(props: {
@@ -19,8 +20,10 @@ export default function SourcesFields(props: {
     }
   };
   return (
-    <>
-      <span class="field-label">Fontes</span>
+    <div class="field">
+      <span class="field-label">
+        Fontes <Optional />
+      </span>
       <div>
         <label>
           <input
@@ -70,6 +73,6 @@ export default function SourcesFields(props: {
           }
         />
       </div>
-    </>
+    </div>
   );
 }

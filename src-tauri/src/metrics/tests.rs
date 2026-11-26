@@ -530,6 +530,67 @@ fn weekly_trend_uses_iso_weeks_in_local_time() {
 }
 
 #[test]
+fn each_topic_has_its_own_weekly_trend() {
+    let f = fixture(&[("q1", &[D]), ("q2", &[P])]);
+    f.attempt_at(
+        "a1",
+        FeedbackMode::Study,
+        Some("2026-11-24T10:00:00.000Z"),
+        &[
+            ("q1", Some("o0"), "2026-11-10T12:00:00.000Z"),
+            ("q2", Some("o1"), "2026-11-17T12:00:00.000Z"),
+        ],
+    );
+    let p = f.all();
+    let trend_of = |topic: &str| -> Vec<(String, u32, u32)> {
+        p.areas
+            .iter()
+            .flat_map(|a| &a.matters)
+            .flat_map(|m| &m.topics)
+            .find(|t| t.name == topic)
+            .unwrap()
+            .trend
+            .iter()
+            .map(|w| (w.week_start.clone(), w.answered, w.correct))
+            .collect()
+    };
+    assert_eq!(trend_of("Controle"), [("2026-11-09".to_owned(), 1, 1)]);
+    assert_eq!(trend_of("Crase"), [("2026-11-16".to_owned(), 1, 0)]);
+}
+
+#[test]
+fn topic_trend_keeps_only_the_latest_weeks() {
+    let f = fixture(&[("q1", &[D])]);
+    let answers: Vec<String> = (0..10)
+        .map(|week| {
+            format!(
+                "2026-0{}-{:02}T12:00:00.000Z",
+                1 + week / 4,
+                5 + (week % 4) * 7
+            )
+        })
+        .collect();
+    let responses: Vec<_> = answers
+        .iter()
+        .map(|at| ("q1", Some("o0"), at.as_str()))
+        .collect();
+    f.attempt_at(
+        "a1",
+        FeedbackMode::Study,
+        Some("2026-04-01T10:00:00.000Z"),
+        &responses,
+    );
+    let p = f.all();
+    let topic = &p.areas[0].matters[0].topics[0];
+    assert_eq!(p.trend.len(), 10, "the overall trend keeps every week");
+    assert_eq!(topic.trend.len(), TOPIC_TREND_WEEKS);
+    assert_eq!(
+        topic.trend.last().unwrap().week_start,
+        p.trend[9].week_start
+    );
+}
+
+#[test]
 fn weeks_cross_the_year_boundary() {
     let f = fixture(&[("q1", &[D])]);
     // Thursday 1 Jan 2026 belongs to the ISO week starting Monday 29 Dec 2025.

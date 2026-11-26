@@ -19,6 +19,7 @@ interface FieldProps {
 export function AgentField(props: FieldProps) {
   return (
     <select
+      class="input"
       aria-label={`Agente: ${props.label}`}
       disabled={props.editor.changing()}
       onChange={(event) => {
@@ -48,6 +49,7 @@ export function ModelField(props: FieldProps) {
       when={list()}
       fallback={
         <input
+          class="input"
           type="text"
           aria-label={`Modelo: ${props.label}`}
           placeholder="Digite o modelo"
@@ -61,6 +63,7 @@ export function ModelField(props: FieldProps) {
     >
       {(agent) => (
         <select
+          class="input"
           aria-label={`Modelo: ${props.label}`}
           disabled={props.editor.changing()}
           onChange={(event) => {
@@ -92,6 +95,7 @@ export function EffortField(props: FieldProps) {
   const options = () => props.editor.options()?.efforts ?? [value().effort];
   return (
     <select
+      class="input"
       aria-label={`Esforço: ${props.label}`}
       disabled={props.editor.changing()}
       onChange={(event) =>

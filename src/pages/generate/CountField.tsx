@@ -12,6 +12,7 @@ export default function CountField(props: {
     <>
       <label for="gen-count">Quantidade</label>
       <input
+        class="input"
         id="gen-count"
         type="number"
         min={props.counts.min}
@@ -24,7 +25,7 @@ export default function CountField(props: {
         onInput={(event) => props.onInput(Number(event.currentTarget.value))}
         onBlur={() => props.onBlur()}
       />
-      <p class="hint muted" id="gen-count-hint">
+      <p class="field-hint" id="gen-count-hint">
         Obrigatório. De {props.counts.min} a {props.counts.max}. Cada questão passa pela conferência
         às cegas.
       </p>

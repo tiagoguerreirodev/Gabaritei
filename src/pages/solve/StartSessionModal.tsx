@@ -103,6 +103,7 @@ export default function StartSessionModal(props: {
             <label class="count-field">
               Quantidade de questões
               <input
+                class="input"
                 type="number"
                 min={range().min}
                 max={range().max}

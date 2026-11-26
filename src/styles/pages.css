@@ -9,7 +9,7 @@
 }
 
 .form-grid > label,
-.form-grid > .label {
+.form-grid > .field-label {
   /* Lines the label up with the text inside the input next to it (padding plus border). */
   padding-top: calc(var(--space-1) + 1px);
   font-weight: 600;
@@ -24,10 +24,9 @@
   font: inherit;
 }
 
-.form-grid .hint {
+.form-grid .field-hint {
   grid-column: 2;
   margin: calc(-1 * var(--space-1)) 0 0;
-  font-size: var(--text-sm);
 }
 
 .topic-path {
@@ -372,15 +371,16 @@
   font-weight: 600;
 }
 
-.field-error {
+.form-grid .field-error {
   grid-column: 2;
   margin: 0;
-  color: var(--danger);
   font-weight: 600;
 }
 
 .generate-form > .field-error {
   margin: var(--space-2) 0;
+  white-space: pre-line;
+  font-weight: 600;
 }
 
 .banner-actions {

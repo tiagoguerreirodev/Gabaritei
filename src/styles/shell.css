@@ -74,6 +74,10 @@
   margin: var(--space-6) 0;
 }
 
+.tabs {
+  margin: var(--space-4) 0 var(--space-5);
+}
+
 .card h2,
 .modal-header h2 {
   margin: 0 0 var(--space-2);

@@ -85,6 +85,7 @@ export default function RemNoteSection(props: {
         <div class="settings-row">
           <label for="remnote-url">Endereço do servidor</label>
           <input
+            class="input"
             id="remnote-url"
             type="url"
             placeholder="https://…"
@@ -97,6 +98,7 @@ export default function RemNoteSection(props: {
         <div class="settings-row">
           <label for="remnote-token">Token</label>
           <input
+            class="input"
             id="remnote-token"
             type="password"
             autocomplete="off"

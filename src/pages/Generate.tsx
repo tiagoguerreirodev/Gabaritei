@@ -277,7 +277,7 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
       <p class="muted">Campos obrigatórios: assunto e quantidade. O resto tem valores prontos.</p>
 
       <div class="form-grid">
-        <span class="label" id="topic-label">
+        <span class="field-label" id="topic-label">
           Assunto <span class="required">(obrigatório)</span>
         </span>
         <TopicPicker
@@ -306,6 +306,7 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
 
         <label for="gen-format">Formato</label>
         <select
+          class="input"
           id="gen-format"
           value={form.format ?? ""}
           onChange={(event) => {
@@ -331,6 +332,7 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
         <div class="form-grid">
           <label for="gen-board">Estilo da banca</label>
           <input
+            class="input"
             id="gen-board"
             type="text"
             list="gen-boards"
@@ -344,6 +346,7 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
 
           <label for="gen-instructions">Instruções</label>
           <textarea
+            class="input"
             id="gen-instructions"
             rows="3"
             placeholder="Opcional: foco, nível, tipo de pegadinha…"
@@ -357,15 +360,15 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
             onChange={(sources) => setForm("sources", sources)}
           />
 
-          <span class="label">Gerador</span>
+          <span class="field-label">Gerador</span>
           <RolePicker label="Gerador" editor={generatorEditor} />
-          <span class="label">Conferente</span>
+          <span class="field-label">Conferente</span>
           <RolePicker label="Conferente" editor={checkerEditor} />
         </div>
       </details>
       <CatalogNotice agents={[generator().agent, checker().agent]} />
       <Show when={problems().length > 0}>
-        <div role="alert" class="error">
+        <div role="alert" class="field-error">
           <For each={problems()}>{(problem) => <p>{problem}</p>}</For>
           <p>Corrija em “Opções avançadas”, no Gerador e no Conferente, para poder gerar.</p>
         </div>

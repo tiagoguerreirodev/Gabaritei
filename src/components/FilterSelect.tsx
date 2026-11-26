@@ -14,7 +14,11 @@ export default function FilterSelect(props: {
   return (
     <label>
       <span>{labels[props.field].name}</span>
-      <select value={props.value} onChange={(event) => props.onChange(event.currentTarget.value)}>
+      <select
+        class="input"
+        value={props.value}
+        onChange={(event) => props.onChange(event.currentTarget.value)}
+      >
         <option value="">{labels[props.field].all}</option>
         <For each={props.options}>{(name) => <option value={name}>{name}</option>}</For>
       </select>

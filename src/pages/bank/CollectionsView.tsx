@@ -45,6 +45,7 @@ export default function CollectionsView() {
         <label>
           <span>Buscar cadernos</span>
           <input
+            class="input"
             type="search"
             placeholder="Área, matéria ou assunto"
             value={search()}

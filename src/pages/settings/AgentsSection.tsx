@@ -43,6 +43,7 @@ export default function AgentsSection(props: {
             <div class="settings-row">
               <label for={`cli-${agent}`}>{agentLabels[agent]}</label>
               <input
+                class="input"
                 id={`cli-${agent}`}
                 type="text"
                 placeholder="Detectar automaticamente"

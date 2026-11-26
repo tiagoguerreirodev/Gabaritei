@@ -20,7 +20,7 @@ export default function SourcesFields(props: {
   };
   return (
     <>
-      <span class="label">Fontes</span>
+      <span class="field-label">Fontes</span>
       <div>
         <label>
           <input

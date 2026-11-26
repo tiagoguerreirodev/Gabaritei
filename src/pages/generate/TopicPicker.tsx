@@ -35,6 +35,7 @@ export default function TopicPicker(props: {
       }}
     >
       <input
+        class="input"
         type="text"
         id="gen-topic-area"
         aria-label="Área"
@@ -50,6 +51,7 @@ export default function TopicPicker(props: {
         <For each={props.tree.areas}>{(area) => <option value={area.name} />}</For>
       </datalist>
       <input
+        class="input"
         type="text"
         id="gen-topic-matter"
         aria-label="Matéria"
@@ -65,6 +67,7 @@ export default function TopicPicker(props: {
         <For each={current()?.matters}>{(matter) => <option value={matter} />}</For>
       </datalist>
       <input
+        class="input"
         type="text"
         id="gen-topic-topic"
         aria-label="Assunto"

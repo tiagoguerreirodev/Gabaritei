@@ -1,27 +1,5 @@
 /* ---- Banco ---- */
 
-.tabs {
-  display: flex;
-  gap: var(--space-1);
-  margin: var(--space-4) 0 var(--space-5);
-  border-bottom: 1px solid var(--border);
-}
-
-.tab {
-  padding: var(--space-2) var(--space-4);
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.tab[aria-selected="true"] {
-  border-bottom-color: var(--accent);
-  color: var(--text);
-  font-weight: 600;
-}
-
 .tree,
 .tree ul {
   list-style: none;

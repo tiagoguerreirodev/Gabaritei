@@ -78,6 +78,7 @@ export default function Performance() {
         <label>
           <span>Modo</span>
           <select
+            class="input"
             value={mode()}
             onChange={(event) => {
               const value = event.currentTarget.value;

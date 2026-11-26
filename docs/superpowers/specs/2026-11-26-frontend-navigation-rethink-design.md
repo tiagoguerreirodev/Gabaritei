@@ -15,7 +15,7 @@ The owner finds the study flow awkward in three places:
 3. **Finding past work.** A finished attempt is only reachable from a collection's detail or an
    error row. There is no history, and no way to redo a set.
 
-The new design system (`docs/design-system/` on branch `claude/design-system-refactor-72b0fc`)
+The new design system (`docs/design-system/`, merged in #225)
 is being implemented at the same time. The owner chose to **rebuild each screen once**, applying
 the new layout and the design system together.
 

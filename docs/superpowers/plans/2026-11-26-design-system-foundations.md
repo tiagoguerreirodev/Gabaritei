@@ -59,8 +59,6 @@ the visual target.
 ### Task 1: Tokens from `tokens.json`
 
 **Files:**
-- Bring in: `docs/design-system/` (cherry-pick commit `5b15857` from
-  `claude/design-system-refactor-72b0fc`; docs only)
 - Create: `scripts/tokens.ts`, `scripts/generate-tokens.ts`, `src/styles/theme.css`,
   `src/styles/legacy-aliases.css`, `src/styles/tokens.test.ts`
 - Modify: `src/styles/tokens.css` (now generated), `src/styles.css`, `package.json`,
@@ -73,12 +71,7 @@ the visual target.
   `--dur-fast`…), plus `--font-ui`, `--font-reading`, `--font-mono` from `type.families` and
   `--ease: cubic-bezier(0.2, 0, 0, 1)`.
 
-- [ ] **Step 1: Cherry-pick the design-system docs**
-
-Run: `git cherry-pick 5b15857`
-Expected: `docs/design-system/` exists; no file outside `docs/` changed.
-
-- [ ] **Step 2: Write the failing tests in `src/styles/tokens.test.ts`**
+- [ ] **Step 1: Write the failing tests in `src/styles/tokens.test.ts`**
 
 ```ts
 import tokens from "../../docs/design-system/tokens.json";
@@ -97,11 +90,11 @@ it("writes the same dark values for the system preference and data-theme=dark", 
 });
 ```
 
-- [ ] **Step 3: Run `npx vitest run src/styles/tokens.test.ts`**
+- [ ] **Step 2: Run `npx vitest run src/styles/tokens.test.ts`**
 
 Expected: FAIL, `scripts/tokens` not found.
 
-- [ ] **Step 4: Implement `renderTokensCss` in `scripts/tokens.ts`**
+- [ ] **Step 3: Implement `renderTokensCss` in `scripts/tokens.ts`**
 
 Output, in order: a header comment `/* Generated from docs/design-system/tokens.json by npm run
 tokens. Do not edit. */`; `:root { … }` with every token's light (or single) value, the font
@@ -112,7 +105,7 @@ emitted (components carry their sizes).
 `scripts/generate-tokens.ts` reads the JSON, writes the file, and runs Prettier on it so
 `npm run lint` passes. Add `"tokens": "node scripts/generate-tokens.ts"` to `package.json`.
 
-- [ ] **Step 5: Split the hand-written parts out of tokens.css**
+- [ ] **Step 4: Split the hand-written parts out of tokens.css**
 
 Move `color-scheme` (root and per `data-theme`), the root `font-family`, `line-height: 1.5`,
 `color`, `background` and the three `data-text-size` rules into `src/styles/theme.css`, keeping
@@ -124,12 +117,12 @@ the root `font-size: 16px` default there. Put the old names that screens still u
 `--text-xl: 1.6rem`, `--leading-ui: 1.5`, `--leading-reading: 1.7`. `src/styles.css` imports
 `fonts, tokens, legacy-aliases, theme, base`, then the screen files as today.
 
-- [ ] **Step 6: Run `npm run tokens`, then the tests**
+- [ ] **Step 5: Run `npm run tokens`, then the tests**
 
 Run: `npx vitest run src/styles/`
 Expected: tokens tests PASS.
 
-- [ ] **Step 7: Point `contrast.test.ts` at `tokens.json`**
+- [ ] **Step 6: Point `contrast.test.ts` at `tokens.json`**
 
 Read themes from the JSON instead of parsing CSS (drop the CSS block parser and the "dark copies
 match" test, now in `tokens.test.ts`). Pairs: keep the existing list with `flag-bar` replaced by
@@ -138,13 +131,13 @@ match" test, now in `tokens.test.ts`). Pairs: keep the existing list with `flag-
 add `text` and `muted` on `explain-bg`, and `rule` is not checked (decorative).
 Run: `npx vitest run src/styles/contrast.test.ts` → PASS in *claro* and *escuro*.
 
-- [ ] **Step 8: Check and commit**
+- [ ] **Step 7: Check and commit**
 
 Run: `npm run lint && npm run typecheck && npm test` → all green. The app looks the same except
 `measure` 65ch.
 
 ```bash
-git add docs/design-system scripts src/styles src/styles.css package.json tsconfig.node.json
+git add scripts src/styles src/styles.css package.json tsconfig.node.json
 git commit -m "feat: generate the CSS tokens from the design system"
 ```
 

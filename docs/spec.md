@@ -109,13 +109,13 @@ All UI text is in Portuguese. There are no accounts and no server.
 - **Other views:** a home dashboard (with the first-use checklist from decision 4), and CSV export.
 - **All attempts are kept** (drops `U-E1`).
 
-### 3.5 Learning (*Erros e revisões*)
-- **Error notebook:** questions whose latest *answered* response is wrong (a later blank never hides an earlier wrong answer, the same blank rule as §3.4); the list links to the attempt holding that wrong answer. Blanks are optional: when included, a question whose latest result is blank is listed too.
+### 3.5 Learning (error notebook and reviews)
+- **Error notebook:** questions whose latest *answered* response is wrong (a later blank never hides an earlier wrong answer, the same blank rule as §3.4); Banco shows them through its *Erradas* status. Blanks are optional: when included, a question whose latest result is blank is listed too.
 - **Spaced repetition:** a full hit moves the interval along 1 → 3 → 7 → 14 → 30 → 60 days (the first hit is 1 day, as in the legacy app). A miss resets it to 1. A blank answer counts as a miss. Only finished attempts count, and annulled questions have no review.
 - **Derived state:** a review is recomputed from the question's answers against its current key, so key corrections and annulments apply to it, and it is rebuilt at startup.
-- **Practice sessions** are built from the Banco status filters *Erradas*, *Em branco* and *Revisão vencida* (§3.1, §3.3) with the same rules as below: the reviews session takes due reviews first, then recent errors (1–100 questions). Questions that sit in an unfinished attempt are left out of a new errors or reviews session, so a new errors or reviews session never repeats a question already in progress. The "due now" count (Learning page and Home) still includes them, with a note saying how many are in an open attempt.
+- **Practice sessions** are built from the Banco status filters *Erradas*, *Em branco* and *Revisão vencida* (§3.1, §3.3) with the same rules as below: the reviews session takes due reviews first, then recent errors (1–100 questions). Questions that sit in an unfinished attempt are left out of a new errors or reviews session, so a new errors or reviews session never repeats a question already in progress. The "due now" count (Home) still includes them, with a note saying how many are in an open attempt.
 
-- **Page layout:** tabs with counts (*Para hoje*, *Atrasadas*, *Próximas*, *Caderno de erros*) over one list, with *Revisar tudo de hoje* on top. A row shows the topic, its matter, a chip with the review interval, the last answer date and a chip with the question's accuracy (green from 75%, amber from 50%, red below, always with the number). Its one action opens the past attempt; rows carry no stem, key or explanation.
+- **No page of its own:** Início and Desempenho (*Treinar*) open Banco with the filter already set (*Revisões de hoje* is the `Due` + `Wrong` status filter, due first). The old route `/erros-e-revisoes` redirects there. Attempts started before this change (`topic`, `errors`, `reviews`) keep opening with their titles.
 
 ### 3.6 Data
 - **Storage:** SQLite in the OS app-data folder.
@@ -193,7 +193,7 @@ The patterns below were **verified against the installed CLIs** (Claude Code 2.1
 
 **Events:** generation progress, re-check and explain progress.
 
-**Frontend pages (Solid):** *Início*, *Banco*, *Gerar*, *Revisar pacote*, *Resolver*, *Desempenho*, *Erros e revisões*, *Configurações*.
+**Frontend pages (Solid):** *Início*, *Banco*, *Gerar*, *Revisar pacote*, *Resolver*, *Desempenho*, *Configurações*.
 
 **Tables:**
 - `topics`, `questions`, `question_topics`

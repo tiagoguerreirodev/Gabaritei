@@ -28,10 +28,10 @@ export default function CollectionCard(props: {
         <span class="collection-tags">
           <span class="chip">{questionCount(collection().questions)}</span>
           <Show when={collection().contest}>
-            <span class="tag">{collection().contest}</span>
+            <span class="badge badge-accent">{collection().contest}</span>
           </Show>
           <Show when={collection().board}>
-            <span class="tag">{collection().board}</span>
+            <span class="badge badge-accent">{collection().board}</span>
           </Show>
         </span>
         <span class="collection-meta">

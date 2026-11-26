@@ -16,7 +16,7 @@ export default function RolesSection(props: {
   editors: Array<{ role: Role; editor: RoleEditor }>;
 }) {
   return (
-    <section class="card wide" aria-labelledby="roles-title">
+    <section class="card card-wide" aria-labelledby="roles-title">
       <h2 id="roles-title">Funções</h2>
       <p class="muted">
         Cada função usa um agente, um modelo e um esforço de raciocínio. Os modelos e esforços vêm

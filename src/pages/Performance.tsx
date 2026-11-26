@@ -147,7 +147,7 @@ export default function Performance() {
                 </EmptyState>
               }
             >
-              <section class="card wide" aria-labelledby="weakest-title">
+              <section class="card card-wide" aria-labelledby="weakest-title">
                 <h2 id="weakest-title">Assuntos mais fracos</h2>
                 <ol class="weakest-list">
                   <For each={data().weakest}>
@@ -170,12 +170,12 @@ export default function Performance() {
                 </ol>
               </section>
             </Show>
-            <section class="card wide" aria-labelledby="trend-title">
+            <section class="card card-wide" aria-labelledby="trend-title">
               <h2 id="trend-title">Evolução semanal</h2>
               <TrendChart weeks={data().trend} />
             </section>
             <Show when={data().areas.length > 0}>
-              <section class="card wide" aria-labelledby="table-title">
+              <section class="card card-wide" aria-labelledby="table-title">
                 <h2 id="table-title">Por área, matéria e assunto</h2>
                 <StrengthTable areas={data().areas} />
               </section>

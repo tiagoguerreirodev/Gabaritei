@@ -23,7 +23,7 @@ export default function FirstSteps(props: { steps: FirstStepStatus[] }) {
 
   return (
     <Show when={props.steps.length > 0}>
-      <section class="card wide first-steps" aria-labelledby="first-steps-title">
+      <section class="card card-wide first-steps" aria-labelledby="first-steps-title">
         <h2 id="first-steps-title">Primeiros passos</h2>
         <p class="muted">
           {doneCount()} de {props.steps.length} concluídos

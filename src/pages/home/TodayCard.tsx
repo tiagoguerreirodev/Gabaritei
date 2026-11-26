@@ -13,7 +13,7 @@ export default function TodayCard(props: { action: TodayAction }) {
   const topicPath = (topic: WeakTopic) => `${topic.area} › ${topic.matter} › ${topic.topic}`;
 
   return (
-    <section class="card wide today-card" aria-labelledby="today-title">
+    <section class="card card-wide today-card" aria-labelledby="today-title">
       <Switch>
         <Match when={props.action.kind === "resume" && props.action.attempt} keyed>
           {(attempt) => (

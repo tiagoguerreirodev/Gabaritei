@@ -1,8 +1,4 @@
 /* Desempenho and Início */
-.card.wide {
-  max-width: var(--content-width-wide);
-}
-
 .stat-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
@@ -13,23 +9,8 @@
   list-style: none;
 }
 
-.stat-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-0-5);
-  padding: var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.stat-name {
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-
-.stat-value {
-  font-size: var(--text-xl);
+.stat-cards .card {
+  margin: 0;
 }
 
 .stat-hint {
@@ -159,7 +140,7 @@
 }
 
 .stat-card-main .stat-value {
-  font-size: calc(var(--text-xl) * 1.5);
+  font-size: 3rem;
   line-height: 1.1;
 }
 

@@ -199,13 +199,6 @@
   color: var(--danger);
 }
 
-.tag {
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
 .pager {
   display: flex;
   align-items: center;

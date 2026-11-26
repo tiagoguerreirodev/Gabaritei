@@ -31,7 +31,10 @@ function alphabetical(areas: AreaStats[]): AreaStats[] {
 export function SmallSample(props: { stats: GroupStats }) {
   return (
     <Show when={props.stats.smallSample && props.stats.score.evaluated > 0}>
-      <span class="tag" title="Menos de 5 respostas: ainda não dá para confiar nos percentuais.">
+      <span
+        class="badge badge-accent"
+        title="Menos de 5 respostas: ainda não dá para confiar nos percentuais."
+      >
         amostra pequena
       </span>
     </Show>

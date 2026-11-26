@@ -4,6 +4,8 @@
 @import "./styles/theme.css";
 @import "./styles/ds/base.css";
 @import "./styles/ds/button.css";
+@import "./styles/ds/card.css";
+@import "./styles/ds/badge.css";
 @import "./styles/base.css";
 @import "./styles/shell.css";
 @import "./styles/bank.css";

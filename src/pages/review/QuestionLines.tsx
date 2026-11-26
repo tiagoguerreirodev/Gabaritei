@@ -31,7 +31,7 @@ export default function QuestionLines(props: { summary: DraftSummary }) {
   const visibleLines = () => (onlyFlagged() ? flagged() : s().lines);
 
   return (
-    <section class="card wide" aria-labelledby="checks-title">
+    <section class="card card-wide" aria-labelledby="checks-title">
       <h2 id="checks-title">Conferência às cegas</h2>
       <VerdictSentence summary={s()} />
       <Show when={flagged().length > 0}>

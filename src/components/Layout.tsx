@@ -54,7 +54,7 @@ function MenuLink(props: { route: AppRoute; count?: number }) {
         </Show>
       </span>
       <Show when={props.count}>
-        <span class="menu-count" aria-hidden="true">
+        <span class="badge badge-count" aria-hidden="true">
           {props.count}
         </span>
       </Show>

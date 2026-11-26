@@ -95,7 +95,7 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
     <>
       <VerdictCounts summary={s()} />
 
-      <section class="card wide" aria-labelledby="package-title">
+      <section class="card card-wide" aria-labelledby="package-title">
         <h2 id="package-title">
           {s().topic.area} › {s().topic.matter} › {s().topic.topic}
         </h2>
@@ -132,7 +132,7 @@ function Summary(props: { summary: DraftSummary; onChanged: () => void }) {
       <QuestionLines summary={s()} />
 
       <Show when={s().problems.length > 0}>
-        <section class="card wide" aria-labelledby="problems-title">
+        <section class="card card-wide" aria-labelledby="problems-title">
           <h2 id="problems-title">Problemas encontrados</h2>
           <ul>
             <For each={s().problems}>

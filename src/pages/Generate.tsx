@@ -267,7 +267,7 @@ function Form(props: { tree: TopicTree; settings: AiSettings; counts: CountLimit
 
   return (
     <form
-      class="card wide generate-form"
+      class="card card-wide generate-form"
       onSubmit={(event) => void submit(event)}
       aria-label="Nova geração"
       noValidate

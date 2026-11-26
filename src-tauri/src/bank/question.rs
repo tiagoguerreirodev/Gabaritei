@@ -82,7 +82,7 @@ impl TopicPath {
     }
 
     /// The same path with surrounding whitespace removed from each name.
-    fn trimmed(&self) -> Self {
+    pub(super) fn trimmed(&self) -> Self {
         Self::new(
             js_trim(&self.area),
             js_trim(&self.matter),

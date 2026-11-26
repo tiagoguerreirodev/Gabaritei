@@ -47,16 +47,31 @@ export default function LeftBehindNotice(props: {
                 antes de restaurar).
               </Show>
             </p>
-            <button type="button" disabled={props.busy} onClick={() => props.onCopy()}>
+            <button
+              type="button"
+              class="secondary"
+              disabled={props.busy}
+              onClick={() => props.onCopy()}
+            >
               Copiar para a pasta nova
             </button>{" "}
-            <button type="button" disabled={props.busy} onClick={() => props.onMove()}>
+            <button
+              type="button"
+              class="secondary"
+              disabled={props.busy}
+              onClick={() => props.onMove()}
+            >
               Mover para a pasta nova
             </button>{" "}
           </>
         )}
       </Show>
-      <button type="button" disabled={props.busy} onClick={() => props.onDismiss()}>
+      <button
+        type="button"
+        class="secondary"
+        disabled={props.busy}
+        onClick={() => props.onDismiss()}
+      >
         Entendi
       </button>
     </div>

@@ -5,7 +5,7 @@ import { api } from "../../api";
 import type { DraftSummary } from "../../bindings/DraftSummary";
 import type { ImportResult } from "../../bindings/ImportResult";
 import ConfirmModal from "../../components/ConfirmModal";
-import { showToast } from "../../components/toasts";
+import { showSuccess, showToast } from "../../components/toasts";
 import { formatNumber } from "../../format";
 import { refreshWaitingDrafts } from "../../generation";
 
@@ -21,7 +21,7 @@ export default function ReviewActions(props: { summary: DraftSummary; onChanged:
 
   const imported = async (result: ImportResult) => {
     await refreshWaitingDrafts();
-    showToast(
+    showSuccess(
       `${formatNumber(result.imported)} questões importadas para “${result.title}”` +
         (result.skipped > 0 ? `; ${formatNumber(result.skipped)} ficaram de fora.` : "."),
     );
@@ -90,18 +90,25 @@ export default function ReviewActions(props: { summary: DraftSummary; onChanged:
         </button>
         <button
           type="button"
+          class="secondary"
           disabled={busy() || checking() || confirmed() === 0}
           onClick={() => void importConfirmed()}
         >
           Importar só as confirmadas
         </button>
         <Show when={!checking() && s().needsCheck}>
-          <button type="button" disabled={busy()} onClick={() => void rerunCheck()}>
+          <button
+            type="button"
+            class="secondary"
+            disabled={busy()}
+            onClick={() => void rerunCheck()}
+          >
             Conferir de novo
           </button>
         </Show>
         <button
           type="button"
+          class="secondary"
           disabled={busy() || checking()}
           onClick={() => setConfirmingDiscard(true)}
         >

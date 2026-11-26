@@ -226,11 +226,16 @@ export default function QuestionCard(props: {
               fallback={
                 <div class="ai-panel">
                   <p class="muted">Esta questão não tem explicação.</p>
-                  <button type="button" disabled={explaining()} onClick={() => void explain()}>
+                  <button
+                    type="button"
+                    class="secondary"
+                    disabled={explaining()}
+                    onClick={() => void explain()}
+                  >
                     {explaining() ? "Escrevendo a explicação…" : "Explicar"}
                   </button>
                   <Show when={explaining()}>
-                    <button type="button" onClick={() => props.onAiCancel()}>
+                    <button type="button" class="secondary" onClick={() => props.onAiCancel()}>
                       Cancelar
                     </button>
                   </Show>
@@ -256,6 +261,7 @@ export default function QuestionCard(props: {
             <div class="reveal-actions">
               <button
                 type="button"
+                class="secondary"
                 onClick={() => (revealed().annulled ? props.onUnannul() : props.onAnnul())}
               >
                 {revealed().annulled ? "Desfazer anulação" : "Anular questão"}

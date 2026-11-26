@@ -172,7 +172,7 @@ function Outcome() {
       {(outcome) => (
         <section class="card" aria-label="Resultado da última geração">
           {outcomeContent(outcome())}
-          <button type="button" onClick={() => void dismissGeneration()}>
+          <button type="button" class="secondary" onClick={() => void dismissGeneration()}>
             Dispensar
           </button>
         </section>
@@ -250,7 +250,7 @@ function Form(props: {
   const topicError = () =>
     form.topic.area.trim() && form.topic.matter.trim() && form.topic.topic.trim()
       ? null
-      : "Informe a área, a matéria e o assunto.";
+      : "Selecione a área, a matéria e o assunto.";
   const countError = () =>
     Number.isInteger(form.count) && form.count >= props.counts.min && form.count <= props.counts.max
       ? null

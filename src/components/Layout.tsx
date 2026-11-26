@@ -10,6 +10,7 @@ import {
   type ParentProps,
 } from "solid-js";
 import { api } from "../api";
+import { focusMode } from "../focusMode";
 import { routes, type AppRoute } from "../routes";
 import { waitingDrafts, watchGeneration } from "../generation";
 import GenerationBanner from "./GenerationBanner";
@@ -84,11 +85,11 @@ export default function Layout(props: ParentProps) {
   );
 
   return (
-    <div class="shell" classList={{ "sidebar-collapsed": collapsed() }}>
+    <div class="shell" classList={{ "sidebar-collapsed": collapsed(), "focus-mode": focusMode() }}>
       <button type="button" class="skip-link" onClick={() => main?.focus()}>
         Pular para o conteúdo
       </button>
-      <aside class="sidebar">
+      <aside class="sidebar" hidden={focusMode()}>
         <div class="brand">
           <span class="brand-name">Gabaritei</span>
           <button

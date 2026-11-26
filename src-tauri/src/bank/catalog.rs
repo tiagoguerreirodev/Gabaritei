@@ -2,7 +2,7 @@
 //!
 //! These views never include answer keys or explanations (AGENTS.md rule 1).
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use super::tags::FilterOptions;
 use crate::ordering::cmp_pt;
@@ -11,9 +11,10 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::attempts::{ANSWERED_RESPONSE_SQL, FeedbackMode, SourceKind};
+use crate::attempts::{ANSWERED_RESPONSE_SQL, FeedbackMode, Score, SourceKind, outcome};
 use crate::error::{AppError, AppResult};
-use crate::ids::{AttemptId, CollectionId, TopicId};
+use crate::ids::{AttemptId, CollectionId};
+use crate::metrics::{self, AreaStats};
 
 /// Default and maximum page sizes for the collections list.
 pub const DEFAULT_PAGE_SIZE: u32 = 20;
@@ -25,49 +26,23 @@ pub const MAX_PAGE_SIZE: u32 = 100;
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct TopicTree {
-    pub areas: Vec<AreaNode>,
+    pub areas: Vec<AreaStats>,
     /// Questions in the bank (each counted once).
     pub questions: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct AreaNode {
-    pub name: String,
-    /// Distinct questions under this area.
-    pub questions: u32,
-    pub matters: Vec<MatterNode>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct MatterNode {
-    pub name: String,
-    /// Distinct questions under this matter.
-    pub questions: u32,
-    pub topics: Vec<TopicNode>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct TopicNode {
-    pub id: TopicId,
-    pub name: String,
-    pub questions: u32,
-    /// *Acerto entre respondidas* over the latest answers; `None` until the topic is answered.
-    pub accuracy: Option<f64>,
-}
-
-/// Area › matter › topic with distinct question counts at every level. A question filed
-/// under two topics of the same matter counts once for that matter.
+/// Area › matter › topic with distinct question counts and strength at every level, in
+/// Portuguese name order, including topics created ahead of time that have no questions yet. A question filed under two topics of the same matter counts once
+/// for that matter.
 pub fn topic_tree(conn: &Connection) -> AppResult<TopicTree> {
-    let area_counts = area_counts(conn)?;
-    let matter_counts = matter_counts(conn)?;
-    let groups = topic_groups(conn)?;
-    let areas = build_areas(groups, &area_counts, &matter_counts)?;
+    let mut areas = metrics::bank_strength(conn)?;
+    for area in &mut areas {
+        for matter in &mut area.matters {
+            matter.topics.sort_by(|a, b| cmp_pt(&a.name, &b.name));
+        }
+        area.matters.sort_by(|a, b| cmp_pt(&a.name, &b.name));
+    }
+    areas.sort_by(|a, b| cmp_pt(&a.name, &b.name));
     let questions = conn.query_row("SELECT COUNT(*) FROM questions", [], |r| r.get(0))?;
     Ok(TopicTree { areas, questions })
 }
@@ -144,92 +119,6 @@ pub fn topic_choices(conn: &Connection, typed: &super::TopicPath) -> AppResult<T
     })
 }
 
-type ByAreaAndMatter<T> = BTreeMap<String, BTreeMap<String, T>>;
-
-fn area_counts(conn: &Connection) -> AppResult<BTreeMap<String, u32>> {
-    let mut statement = conn.prepare(
-        "SELECT t.area, COUNT(DISTINCT qt.question_id)
-         FROM topics t JOIN question_topics qt ON qt.topic_id = t.id GROUP BY t.area",
-    )?;
-    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
-    Ok(rows.collect::<Result<_, _>>()?)
-}
-
-fn matter_counts(conn: &Connection) -> AppResult<ByAreaAndMatter<u32>> {
-    let mut statement = conn.prepare(
-        "SELECT t.area, t.matter, COUNT(DISTINCT qt.question_id)
-         FROM topics t JOIN question_topics qt ON qt.topic_id = t.id
-         GROUP BY t.area, t.matter",
-    )?;
-    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-    let mut counts = ByAreaAndMatter::new();
-    for row in rows {
-        let (area, matter, count) = row?;
-        counts.entry(area).or_default().insert(matter, count);
-    }
-    Ok(counts)
-}
-
-fn topic_groups(conn: &Connection) -> AppResult<ByAreaAndMatter<Vec<TopicNode>>> {
-    let accuracy = crate::metrics::topic_accuracy(conn)?;
-    let mut groups = ByAreaAndMatter::<Vec<TopicNode>>::new();
-    let mut statement = conn.prepare(
-        "SELECT t.id, t.area, t.matter, t.topic, COUNT(qt.question_id)
-         FROM topics t JOIN question_topics qt ON qt.topic_id = t.id
-         GROUP BY t.id",
-    )?;
-    let rows = statement.query_map([], |row| {
-        let id = row.get(0)?;
-        let topic = TopicNode {
-            id,
-            name: row.get(3)?,
-            questions: row.get(4)?,
-            accuracy: accuracy.get(&id).copied(),
-        };
-        Ok((row.get(1)?, row.get(2)?, topic))
-    })?;
-    for row in rows {
-        let (area, matter, topic) = row?;
-        groups
-            .entry(area)
-            .or_default()
-            .entry(matter)
-            .or_default()
-            .push(topic);
-    }
-    Ok(groups)
-}
-
-fn build_areas(
-    groups: ByAreaAndMatter<Vec<TopicNode>>,
-    area_counts: &BTreeMap<String, u32>,
-    matter_counts: &ByAreaAndMatter<u32>,
-) -> AppResult<Vec<AreaNode>> {
-    let missing_count = || AppError::Internal("missing group count in the topic tree".into());
-    let mut areas = Vec::with_capacity(groups.len());
-    for (area, grouped_matters) in groups {
-        let questions = *area_counts.get(&area).ok_or_else(missing_count)?;
-        let counts = matter_counts.get(&area).ok_or_else(missing_count)?;
-        let mut matters = Vec::with_capacity(grouped_matters.len());
-        for (matter, mut topics) in grouped_matters {
-            topics.sort_by(|a, b| cmp_pt(&a.name, &b.name));
-            matters.push(MatterNode {
-                questions: *counts.get(&matter).ok_or_else(missing_count)?,
-                name: matter,
-                topics,
-            });
-        }
-        matters.sort_by(|a, b| cmp_pt(&a.name, &b.name));
-        areas.push(AreaNode {
-            name: area,
-            questions,
-            matters,
-        });
-    }
-    areas.sort_by(|a, b| cmp_pt(&a.name, &b.name));
-    Ok(areas)
-}
-
 // ---- Collections -----------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -262,7 +151,7 @@ pub struct CollectionQuery {
     pub page_size: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct CollectionSummary {
@@ -275,11 +164,14 @@ pub struct CollectionSummary {
     pub created_at: String,
     /// When the latest attempt finished, if any.
     pub last_finished_at: Option<String>,
-    /// Whether an attempt is in progress.
-    pub in_progress: bool,
+    /// *Aproveitamento* of that attempt under the current keys; `None` when nothing in it
+    /// counts or no attempt finished.
+    pub last_achievement: Option<f64>,
+    /// The attempt in progress, if any (at most one per collection).
+    pub active_attempt_id: Option<AttemptId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct CollectionPage {
@@ -294,12 +186,13 @@ pub struct CollectionPage {
 }
 
 fn all_collections(conn: &Connection) -> AppResult<Vec<CollectionSummary>> {
+    let mut last_scores = last_finished_scores(conn)?;
     let mut stmt = conn.prepare(
         "SELECT c.id, c.title, c.kind, c.contest, c.board, c.created_at,
                 (SELECT COUNT(*) FROM collection_items ci WHERE ci.collection_id = c.id),
                 (SELECT MAX(a.finished_at) FROM attempts a
                   WHERE a.source_kind = ?1 AND a.source_ref = c.id),
-                EXISTS (SELECT 1 FROM attempts a
+                (SELECT a.id FROM attempts a
                   WHERE a.source_kind = ?1 AND a.source_ref = c.id
                     AND a.finished_at IS NULL)
          FROM collections c",
@@ -314,12 +207,22 @@ fn all_collections(conn: &Connection) -> AppResult<Vec<CollectionSummary>> {
             r.get::<_, String>(5)?,
             r.get::<_, u32>(6)?,
             r.get::<_, Option<String>>(7)?,
-            r.get::<_, bool>(8)?,
+            r.get::<_, Option<AttemptId>>(8)?,
         ))
     })?;
     rows.map(|row| {
-        let (id, title, kind, contest, board, created_at, questions, last_finished_at, in_progress) =
-            row?;
+        let (
+            id,
+            title,
+            kind,
+            contest,
+            board,
+            created_at,
+            questions,
+            last_finished_at,
+            active_attempt_id,
+        ) = row?;
+        let last_achievement = last_scores.remove(&id).and_then(|score| score.achievement);
         Ok(CollectionSummary {
             id,
             title,
@@ -329,10 +232,39 @@ fn all_collections(conn: &Connection) -> AppResult<Vec<CollectionSummary>> {
             questions,
             created_at,
             last_finished_at,
-            in_progress,
+            last_achievement,
+            active_attempt_id,
         })
     })
     .collect()
+}
+
+/// The score of each collection's latest finished attempt, derived from current question
+/// state so key corrections and annulments apply. One query for every collection.
+fn last_finished_scores(conn: &Connection) -> AppResult<HashMap<CollectionId, Score>> {
+    let mut stmt = conn.prepare(
+        "WITH latest AS (
+             SELECT a.id, a.source_ref,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY a.source_ref ORDER BY a.finished_at DESC, a.id DESC) AS rn
+             FROM attempts a
+             WHERE a.source_kind = ?1 AND a.finished_at IS NOT NULL)
+         SELECT l.source_ref, r.choice, q.answer_id, q.annulled
+         FROM latest l
+         JOIN responses r ON r.attempt_id = l.id
+         JOIN questions q ON q.id = r.question_id
+         WHERE l.rn = 1",
+    )?;
+    let mut rows = stmt.query([SourceKind::Collection])?;
+    let mut scores = HashMap::<CollectionId, Score>::new();
+    while let Some(row) = rows.next()? {
+        let choice: Option<String> = row.get(1)?;
+        let answer_id: String = row.get(2)?;
+        let annulled: bool = row.get(3)?;
+        let outcome = outcome(choice.as_deref(), &answer_id, annulled.into());
+        scores.entry(row.get(0)?).or_default().record(outcome);
+    }
+    Ok(scores)
 }
 
 /// One page of collections matching the query, ordered by contest and then title.
@@ -506,6 +438,21 @@ mod tests {
         (db, ids)
     }
 
+    #[test]
+    fn the_tree_lists_topics_created_ahead_with_zero_questions() {
+        let (db, _) = bank();
+        db.with(|conn| {
+            crate::bank::create_topic(conn, &TopicPath::new("História", "Brasil", "Império"))?;
+            let tree = topic_tree(conn)?;
+            let area = tree.areas.iter().find(|a| a.name == "História").unwrap();
+            assert_eq!(area.stats.questions, 0);
+            assert_eq!(area.matters[0].topics[0].name, "Império");
+            assert_eq!(area.matters[0].topics[0].stats.questions, 0);
+            Ok(())
+        })
+        .unwrap();
+    }
+
     fn add_collection(
         db: &Database,
         id: &str,
@@ -585,17 +532,17 @@ mod tests {
         assert_eq!(names, ["Direito", "Informática"]);
 
         let direito = &tree.areas[0];
-        assert_eq!(direito.questions, 2);
+        assert_eq!(direito.stats.questions, 2);
         let constitucional = &direito.matters[1];
         assert_eq!(constitucional.name, "Constitucional");
         assert_eq!(
-            constitucional.questions, 1,
+            constitucional.stats.questions, 1,
             "q1 is in two topics but counts once"
         );
         let topics: Vec<(&str, u32)> = constitucional
             .topics
             .iter()
-            .map(|t| (t.name.as_str(), t.questions))
+            .map(|t| (t.name.as_str(), t.stats.questions))
             .collect();
         assert_eq!(
             topics,
@@ -615,21 +562,6 @@ mod tests {
                 questions: 0
             }
         );
-    }
-
-    #[test]
-    fn the_tree_rejects_missing_matter_counts() {
-        let groups = ByAreaAndMatter::from([(
-            "Direito".into(),
-            BTreeMap::from([("Constitucional".into(), Vec::new())]),
-        )]);
-        let area_counts = BTreeMap::from([("Direito".into(), 1)]);
-        let matter_counts = ByAreaAndMatter::from([("Direito".into(), BTreeMap::new())]);
-
-        assert!(matches!(
-            build_areas(groups, &area_counts, &matter_counts),
-            Err(AppError::Internal(_))
-        ));
     }
 
     fn sample_collections() -> Database {
@@ -717,7 +649,7 @@ mod tests {
             .with(|c| collections(c, &CollectionQuery::default()))
             .unwrap();
         let summary = page.items.iter().find(|c| c.id.as_str() == "c1").unwrap();
-        assert!(!summary.in_progress);
+        assert_eq!(summary.active_attempt_id, None);
     }
 
     #[test]
@@ -893,10 +825,62 @@ mod tests {
             .with(|c| collections(c, &CollectionQuery::default()))
             .unwrap();
         let c1 = page.items.iter().find(|c| c.id.as_str() == "c1").unwrap();
-        assert!(c1.in_progress);
+        assert_eq!(c1.active_attempt_id, Some(AttemptId::from("a2")));
         assert_eq!(
             c1.last_finished_at.as_deref(),
             Some("2026-11-01T11:00:00.000Z")
+        );
+    }
+
+    fn last_achievement(db: &Database, collection: &str) -> Option<f64> {
+        let page = db
+            .with(|c| collections(c, &CollectionQuery::default()))
+            .unwrap();
+        let item = page.items.iter().find(|c| c.id.as_str() == collection);
+        item.unwrap().last_achievement
+    }
+
+    #[test]
+    fn collections_report_the_latest_finished_achievement_under_current_keys() {
+        let db = sample_collections();
+        db.with(|c| {
+            c.execute(
+                "INSERT INTO attempts (id, source_kind, source_ref, feedback_mode, started_at, finished_at)
+                 VALUES ('old', ?1, 'c1', ?2, '2026-11-01T10:00:00.000Z', '2026-11-01T11:00:00.000Z'),
+                        ('new', ?1, 'c1', ?2, '2026-11-02T10:00:00.000Z', '2026-11-02T11:00:00.000Z'),
+                        ('open', ?1, 'c1', ?2, '2026-11-03T10:00:00.000Z', NULL)",
+                params![SourceKind::Collection, FeedbackMode::Exam],
+            )?;
+            // `old` and `open` miss both questions; `new` gets q1 right and q2 wrong.
+            c.execute(
+                "INSERT INTO responses (attempt_id, position, question_id, snapshot, choice)
+                 SELECT a.id, ci.position, q.id, '{}',
+                        CASE WHEN a.id = 'new' AND ci.position = 0 THEN q.answer_id
+                             ELSE 'wrong' END
+                 FROM attempts a, collection_items ci JOIN questions q ON q.id = ci.question_id
+                 WHERE ci.collection_id = 'c1'",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(last_achievement(&db, "c1"), Some(0.5));
+        assert_eq!(last_achievement(&db, "c2"), None, "never finished");
+
+        db.with(|c| {
+            c.execute(
+                "UPDATE questions SET annulled = 1
+                 WHERE id = (SELECT question_id FROM collection_items
+                             WHERE collection_id = 'c1' AND position = 1)",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            last_achievement(&db, "c1"),
+            Some(1.0),
+            "annulment re-scores"
         );
     }
 

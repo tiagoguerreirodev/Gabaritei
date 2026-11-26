@@ -57,7 +57,7 @@ export default function StartSessionModal(props: {
       onClose={() => props.onClose()}
       footer={
         <>
-          <button type="button" onClick={() => props.onClose()}>
+          <button type="button" class="secondary" onClick={() => props.onClose()}>
             Cancelar
           </button>
           <button

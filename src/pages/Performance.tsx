@@ -1,3 +1,4 @@
+import { A } from "@solidjs/router";
 import { createAction } from "../actions";
 import { feedbackModes, modeLabel } from "../labels";
 import FilterSelect from "../components/FilterSelect";
@@ -7,7 +8,7 @@ import type { FeedbackMode } from "../bindings/FeedbackMode";
 import type { FilterOptions } from "../bindings/FilterOptions";
 import type { PerformanceQuery } from "../bindings/PerformanceQuery";
 import { EmptyState, Loading, ResourceView } from "../components/states";
-import { showToast } from "../components/toasts";
+import { showSuccess } from "../components/toasts";
 import StatCards from "./performance/StatCards";
 import StrengthTable, { SmallSample } from "./performance/StrengthTable";
 import TrendChart from "./performance/TrendChart";
@@ -39,11 +40,16 @@ export default function Performance() {
     if (loaded) setOptions(loaded.filters);
   });
   const filtering = () => contest() !== "" || board() !== "" || mode() !== "";
+  const clearFilters = () => {
+    setContest("");
+    setBoard("");
+    setMode("");
+  };
 
   const exportCsv = () => {
     const filters = query();
     return exporting.run(async () => {
-      if (await api.exportPerformanceCsv(filters)) showToast("Planilha salva.");
+      if (await api.exportPerformanceCsv(filters)) showSuccess("Planilha salva.");
     });
   };
 
@@ -92,7 +98,7 @@ export default function Performance() {
         </label>
         <button
           type="button"
-          class="export-button"
+          class="secondary"
           disabled={exporting.active()}
           onClick={() => void exportCsv()}
         >
@@ -111,13 +117,27 @@ export default function Performance() {
         pending={result.state === "pending"}
         retrying={result.loading}
         onRetry={() => refetch()}
-        placeholder={<Loading variant="skeleton" label="Calculando desempenho…" />}
+        placeholder={<Loading label="Calculando desempenho…" />}
         empty={
           <EmptyState
             title={
               filtering()
                 ? "Nenhuma questão corresponde a estes filtros."
                 : "Nenhuma questão no banco ainda."
+            }
+            action={
+              <Show
+                when={filtering()}
+                fallback={
+                  <A class="button-link primary" href="/gerar">
+                    Gerar questões
+                  </A>
+                }
+              >
+                <button type="button" class="secondary" onClick={clearFilters}>
+                  Limpar filtros
+                </button>
+              </Show>
             }
           >
             <p class="muted">
@@ -139,6 +159,20 @@ export default function Performance() {
                     filtering()
                       ? "Nenhuma tentativa finalizada com estes filtros."
                       : "Você ainda não finalizou nenhuma tentativa."
+                  }
+                  action={
+                    <Show
+                      when={filtering()}
+                      fallback={
+                        <A class="button-link primary" href="/banco">
+                          Ir para o Banco
+                        </A>
+                      }
+                    >
+                      <button type="button" class="secondary" onClick={clearFilters}>
+                        Limpar filtros
+                      </button>
+                    </Show>
                   }
                 >
                   <p class="muted">

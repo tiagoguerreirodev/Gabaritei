@@ -43,11 +43,14 @@
   --text-md: 1.1rem;
   --text-lg: 1.25rem;
   --text-xl: 1.6rem;
+  --text-2xl: 2rem;
+  --leading-tight: 1.25;
   --leading-ui: 1.5;
   --leading-reading: 1.7;
   --measure: 68ch;
 
   /* Space (4px steps at the default text size; they scale with it) */
+  --space-0-5: 0.125rem;
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -69,6 +72,9 @@
   --dur-base: 200ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
 
+  /* Layout: how wide a column of cards may grow */
+  --width-content: 48rem;
+  --width-wide: 56rem;
   --sidebar-width: 14rem;
 
   font-family: var(--font-ui);

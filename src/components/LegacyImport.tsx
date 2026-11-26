@@ -4,7 +4,7 @@ import { api } from "../api";
 import type { LegacyImportReport } from "../bindings/LegacyImportReport";
 import type { ActionRunner } from "../actions";
 import { errorMessage, InlineError } from "./states";
-import { showToast } from "./toasts";
+import { showSuccess } from "./toasts";
 
 export function reportSummary(report: LegacyImportReport) {
   return (
@@ -40,7 +40,7 @@ export default function LegacyImport(props: {
       const outcome = await api.importLegacyBank();
       if (outcome) {
         setReport(outcome.report);
-        showToast("Banco do Caderno Local importado.");
+        showSuccess("Banco do Caderno Local importado.");
         props.onImported?.(outcome.report);
       }
     } catch (e) {
@@ -72,7 +72,7 @@ export default function LegacyImport(props: {
             repositório Simulados-Concursos neste computador. Os arquivos são conferidos antes de
             qualquer alteração, e a importação acontece uma única vez.
           </p>
-          <button type="button" class="primary" disabled={blocked()} onClick={() => void start()}>
+          <button type="button" class="secondary" disabled={blocked()} onClick={() => void start()}>
             {importing() ? "Importando…" : "Escolher pasta e importar"}
           </button>
         </Match>

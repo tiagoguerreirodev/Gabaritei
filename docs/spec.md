@@ -23,11 +23,11 @@ All UI text is in Portuguese. There are no accounts and no server.
 | 1 | AI access | Run the **locally installed, already-logged-in `claude` and `codex` CLIs** as subprocesses with schema-checked JSON output. The app stores **no AI credentials**. |
 | 2 | AI roles | Four roles: **Generate, Blind check, Re-check on demand, Explain on demand**. Each has its own **agent (Claude or Codex), model and reasoning effort**. Defaults live in Settings; Generate and Blind check can be overridden in the generation form. Intended use: a cheaper model generates, a smarter model checks. Model and effort choices come from the CLIs (Codex lists its models, efforts and Fast tier; Claude has no list, so its model is typed), and Fast Mode is a per-role option. |
 | 3 | Devices | Two computers, switching rarely. Data moves with a **manual export/import file**. No live sync. |
-| 4 | Users | Only you. No onboarding, no public distribution concerns. |
+| 4 | Users | Only you. No onboarding flow and no public distribution concerns. Início shows a first-use checklist that never blocks the page and disappears once complete: check the agents, generate the first package, review it, finish the first attempt. Each step is derived from the database, never from a stored flag; a generated package also counts as proof that the agents work (owner decision, 2026-11-26). The legacy import is not a step. |
 | 5 | History migration | **Bank only.** Import questions, collections, topics and images once from this repo's `biblioteca/`. There is no attempt history to carry over. |
 | 6 | Question formats | **5-option multiple choice** and **Certo/Errado**. No essays. |
 | 7 | Taxonomy | One **topic tree** (area › matter › topic). **Contest** and **board** become optional tags, not the top-level grouping. Tags live on **collections**; a question's contests are those of the collections that contain it (decided 2026-11-19, because 389 legacy questions belong to both contests). |
-| 8 | Generation scope | **One topic per generation**, picked from the tree or typed as a new path. Every generated question gets exactly that topic. |
+| 8 | Generation scope | **One topic per generation**, picked from the topics created ahead of time in Banco › Assuntos (Gerar never creates one). Every generated question gets exactly that topic. |
 | 9 | Generation form | Topic and count are required. Optional: **board style**, **format** (blank means the AI may mix both formats), **free-text instructions**. Sources: **RemNote**, **attached files**, **web**. The generator also gets **that topic's existing stems** so it avoids near-duplicates. |
 | 10 | No spoilers | **No screen shows a question's answer before you've answered it.** That includes the package preview. |
 | 11 | Package review | Preview shows the **summary and blind-check verdicts**: count, topic, validation problems, and agrees/disputed per question. A question the blind check **flagged** (disputed, or with a validation problem) also shows its **stem and options**, so you can judge it; **never** its answer key, explanation or references. A question with no verdict problem and no validation problem shows no content; a flagged line (disputed, or with a validation problem) expands to its stem and options whatever its verdict. You approve or discard. |
@@ -51,15 +51,16 @@ All UI text is in Portuguese. There are no accounts and no server.
 ## 3. Feature set
 
 ### 3.1 Bank and taxonomy
-- **Topic tree:** area › matter › topic. Browse it with counts of questions, answered questions and accuracy.
+- **Topic tree:** area › matter › topic. Every level shows its question count, coverage and an achievement bar, computed like topic strength (§3.4). Each topic has a *Resolver* button that opens the session dialog.
 - **Question fields:** `type` (`multiple` or `boolean`), stem, options (5 for multiple choice, Certo/Errado for boolean), answer key, explanation, references, topics (one or more paths), image (migrated only) with alt text, `annulled`, provenance (agent, model, date, blind-check verdict). Questions carry no contest or board of their own; see Collections below.
 - **Collections** are fixed question lists with optional contest and board tags: the 352 migrated *cadernos*, plus one collection per approved package.
+- **Collection cards** show the tags, the question count, the date and achievement of the latest finished attempt (scored with the current keys), and one button: *Resolver* to start a session or *Continuar* for the attempt in progress.
 - **Deduplication** works as today (`N-C5`): canonical option IDs plus a content fingerprint. An answer-key conflict blocks import.
 - **Dropped:** `difficulty`, generic `tags`, `objectives`, the versions table, syllabus, taxonomy merges and aliases (`U-C1`, `U-C2`, `U-C6`, `O-C3`).
 
 ### 3.2 Generation (*Gerar*)
 **Form**
-- Topic (tree picker or new path)
+- Topic (picker over the topics created in Banco › Assuntos)
 - Count
 - Board (optional): a list of the boards of existing collections, plus "Outra" to type any board. Guides the formal wording, the command verbs, the question structures and the distractor types.
 - Contest and position (optional, free text): tune difficulty and depth within the topic.
@@ -105,7 +106,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 - **Trend:** weekly accuracy from all answers. Each topic also gets a mini trend: the same weekly accuracy over its latest 8 weeks with answers.
 - **Topic table:** area › matter › topic expands in place, weakest first or in alphabetical order, with an achievement bar per row, the topic's mini trend and a "Treinar" action that opens the topic session dialog. Achievement leads the summary cards.
 - **Filters:** contest tag, board tag (both from the collections a question belongs to), feedback mode.
-- **Other views:** history per collection and per session, a home dashboard, and CSV export.
+- **Other views:** history per collection and per session, a home dashboard (with the first-use checklist from decision 4), and CSV export.
 - **All attempts are kept** (drops `U-E1`).
 
 ### 3.5 Learning (*Erros e revisões*)
@@ -113,6 +114,8 @@ All UI text is in Portuguese. There are no accounts and no server.
 - **Spaced repetition:** a full hit moves the interval along 1 → 3 → 7 → 14 → 30 → 60 days (the first hit is 1 day, as in the legacy app). A miss resets it to 1. A blank answer counts as a miss. Only finished attempts count, and annulled questions have no review.
 - **Derived state:** a review is recomputed from the question's answers against its current key, so key corrections and annulments apply to it, and it is rebuilt at startup.
 - **Practice sessions** are built from errors and due reviews: the reviews session takes due reviews first, then recent errors (1–100 questions). Questions that sit in an unfinished attempt are left out of a new errors or reviews session, so a new errors or reviews session never repeats a question already in progress. The "due now" count (Learning page and Home) still includes them, with a note saying how many are in an open attempt.
+
+- **Page layout:** tabs with counts (*Para hoje*, *Atrasadas*, *Próximas*, *Caderno de erros*) over one list, with *Revisar tudo de hoje* on top. A row shows the topic, its matter, a chip with the review interval, the last answer date and a chip with the question's accuracy (green from 75%, amber from 50%, red below, always with the number). Its one action opens the past attempt; rows carry no stem, key or explanation.
 
 ### 3.6 Data
 - **Storage:** SQLite in the OS app-data folder.
@@ -178,7 +181,7 @@ The patterns below were **verified against the installed CLIs** (Claude Code 2.1
 
 **Tauri commands, about 25:**
 - `home`
-- `topics_tree`
+- `topics_tree`, `create_topic`
 - `collections`, `collection`
 - `session_start`, `attempt`, `answer`, `eliminate`, `flag`, `finish`, `abandon`
 - `annul`, `recheck`, `apply_recheck`, `explain`

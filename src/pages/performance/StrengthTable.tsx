@@ -42,7 +42,7 @@ export function SmallSample(props: { stats: GroupStats }) {
 function MasteryBar(props: { stats: GroupStats }) {
   const achievement = () => props.stats.score.achievement;
   return (
-    <span class="mastery">
+    <span class="table-mastery">
       <span class="mastery-bar" aria-hidden="true">
         <span
           class="mastery-fill"

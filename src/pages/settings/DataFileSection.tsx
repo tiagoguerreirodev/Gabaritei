@@ -1,7 +1,7 @@
 import { Show, createSignal } from "solid-js";
 import { api } from "../../api";
 import ConfirmModal from "../../components/ConfirmModal";
-import { showToast } from "../../components/toasts";
+import { showSuccess } from "../../components/toasts";
 import type { ActionRunner } from "../../actions";
 
 /** Moves the study data between computers with one file. */
@@ -18,7 +18,7 @@ export default function DataFileSection(props: {
 
   const exportData = () =>
     busy.run(async () => {
-      if (await api.exportData()) showToast("Arquivo de dados salvo.");
+      if (await api.exportData()) showSuccess("Arquivo de dados salvo.");
     });
 
   const importData = () =>
@@ -27,7 +27,7 @@ export default function DataFileSection(props: {
         const imported = await api.importData();
         setConfirming(false);
         if (imported) {
-          showToast("Dados importados.");
+          showSuccess("Dados importados.");
           if (onImported) onImported();
           else window.location.reload();
         }
@@ -46,13 +46,18 @@ export default function DataFileSection(props: {
       <p class="actions">
         <button
           type="button"
-          class="primary"
+          class="secondary"
           disabled={busy.active()}
           onClick={() => void exportData()}
         >
           Exportar dados…
         </button>
-        <button type="button" disabled={busy.active()} onClick={() => setConfirming(true)}>
+        <button
+          type="button"
+          class="secondary"
+          disabled={busy.active()}
+          onClick={() => setConfirming(true)}
+        >
           Importar dados…
         </button>
       </p>

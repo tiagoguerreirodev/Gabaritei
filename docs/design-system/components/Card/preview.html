@@ -1,0 +1,28 @@
+<!-- @dsCard group="Layout" height=320 -->
+<style>
+  body {
+    padding: 16px;
+    background: var(--bg);
+  }
+</style>
+<div style="display: grid; gap: 16px">
+  <section class="card">
+    <h2>Revisões de hoje</h2>
+    <p class="muted" style="margin: 0 0 12px">8 questões esperam revisão.</p>
+    <button class="btn btn-primary">Revisar agora</button>
+  </section>
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 11rem)); gap: 12px">
+    <div class="card card-compact stat">
+      <span class="stat-name">Aproveitamento</span><span class="stat-value">72%</span>
+    </div>
+    <div class="card card-compact stat">
+      <span class="stat-name">Respondidas</span><span class="stat-value">418</span>
+    </div>
+    <div class="card card-compact stat">
+      <span class="stat-name">Erros</span><span class="stat-value">37</span>
+    </div>
+  </div>
+  <div class="card card-row">
+    <span>Gerando 10 questões de Direito Administrativo…</span><button class="btn">Cancelar</button>
+  </div>
+</div>

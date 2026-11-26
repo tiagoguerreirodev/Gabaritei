@@ -27,6 +27,7 @@ export default function CancelGeneration() {
     <>
       <button
         type="button"
+        class="secondary"
         disabled={pending()}
         onClick={() => (cancelDiscardsDraft() ? setConfirming(true) : void cancel())}
       >

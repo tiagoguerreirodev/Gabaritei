@@ -68,7 +68,7 @@ export default function Performance() {
         todas as respostas.
       </p>
 
-      <div class="filters" role="search">
+      <div class="filter-bar" role="search">
         <FilterSelect
           field="contest"
           value={contest()}

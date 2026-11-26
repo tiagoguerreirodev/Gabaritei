@@ -78,7 +78,7 @@ export default function VerdictCounts(props: { summary: DraftSummary }) {
       }
     });
   return (
-    <section class="card card-wide verdict-summary" aria-labelledby="verdict-title">
+    <section aria-labelledby="verdict-title">
       <h2 id="verdict-title">Resumo da conferência</h2>
       <Show when={props.summary.checking}>
         <p class="muted">Conferência em andamento: os números aparecem quando ela terminar.</p>
@@ -86,12 +86,12 @@ export default function VerdictCounts(props: { summary: DraftSummary }) {
       <dl class="verdict-counts">
         <For each={rows()}>
           {(row) => (
-            <div class={row.style}>
-              <dt>
+            <div class={`card card-compact stat ${row.style ?? ""}`}>
+              <dt class="stat-name">
                 <span aria-hidden="true">{row.icon} </span>
                 {row.label}
               </dt>
-              <dd>{row.waiting ? "…" : formatNumber(row.count)}</dd>
+              <dd class="stat-value">{row.waiting ? "…" : formatNumber(row.count)}</dd>
             </div>
           )}
         </For>

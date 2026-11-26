@@ -56,14 +56,14 @@
   white-space: nowrap;
 }
 
-.filters {
+.filter-bar {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-4);
   margin-bottom: var(--space-4);
 }
 
-.filters label {
+.filter-bar label {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -71,13 +71,13 @@
   color: var(--muted);
 }
 
-.filters input,
-.filters select {
+.filter-bar input,
+.filter-bar select {
   min-width: 14rem;
 }
 
 /* An action in the filter row (Exportar CSV) sits on the inputs' baseline, not the labels'. */
-.filters > .btn {
+.filter-bar > .btn {
   align-self: flex-end;
 }
 

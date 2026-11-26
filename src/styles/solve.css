@@ -1,14 +1,5 @@
 /* ---- Resolver ---- */
 
-.link-button {
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--accent);
-  cursor: pointer;
-  text-decoration: underline;
-}
-
 .modal-footer .primary:only-child {
   margin-left: auto;
 }
@@ -39,7 +30,7 @@
 
 .count-field {
   display: grid;
-  gap: 0.35rem;
+  gap: var(--space-1);
 }
 
 .count-field input {
@@ -67,26 +58,6 @@
   display: flex;
   gap: var(--space-2);
   flex-shrink: 0;
-}
-
-.resolver-actions button:not(.primary),
-.resolver-footer button,
-.modal-footer button:not(.primary) {
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--text);
-  cursor: pointer;
-}
-
-.resolver-footer button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.primary.danger {
-  background: var(--danger);
 }
 
 .score .facts {
@@ -167,15 +138,6 @@
 /* Navigator drawer: a toggle above the question and a panel that slides in from the right. */
 .navigator-drawer-root {
   margin: var(--space-4) 0;
-}
-
-.navigator-toggle {
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--text);
-  cursor: pointer;
 }
 
 .navigator-toggle[aria-expanded="true"] {
@@ -286,8 +248,8 @@
 }
 
 .nav-mark {
-  right: -0.3rem;
-  bottom: -0.3rem;
+  right: calc(-1 * var(--space-1));
+  bottom: calc(-1 * var(--space-1));
 }
 
 .outcome-correct .nav-mark {
@@ -299,22 +261,13 @@
 }
 
 .nav-flag {
-  top: -0.3rem;
-  right: -0.3rem;
+  top: calc(-1 * var(--space-1));
+  right: calc(-1 * var(--space-1));
   color: var(--flag);
 }
 
 .shortcuts {
   position: relative;
-}
-
-.shortcuts-toggle {
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--text);
-  cursor: pointer;
 }
 
 .shortcuts-panel {
@@ -569,7 +522,7 @@
 
 .reveal h3 {
   margin: var(--space-4) 0 var(--space-1);
-  font-size: 1rem;
+  font-size: var(--text-base);
 }
 
 .reveal .explanation {
@@ -597,13 +550,4 @@
   gap: var(--space-3);
   margin-top: var(--space-4);
   font-size: var(--text-sm);
-}
-
-.reveal-actions button {
-  padding: 0.35rem var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--text);
-  cursor: pointer;
 }

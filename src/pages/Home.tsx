@@ -34,7 +34,7 @@ export default function Home() {
         pending={home.state === "pending"}
         retrying={home.loading}
         onRetry={() => refetchHome()}
-        placeholder={<Loading variant="skeleton" />}
+        placeholder={<Loading />}
       >
         {(summary) => {
           const evaluated = () => summary().overall.score.evaluated > 0;
@@ -63,6 +63,7 @@ export default function Home() {
                           </span>
                           <button
                             type="button"
+                            class="secondary"
                             aria-label={`Retomar ${attempt.title}`}
                             onClick={() => openAttempt(attempt.id)}
                           >

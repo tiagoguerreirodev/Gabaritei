@@ -38,7 +38,7 @@ export default function Learning() {
         pending={overview.state === "pending"}
         retrying={overview.loading}
         onRetry={() => refetch()}
-        placeholder={<Loading variant="skeleton" />}
+        placeholder={<Loading />}
       >
         {(data) => (
           <>

@@ -7,7 +7,7 @@ import type { FeedbackMode } from "../bindings/FeedbackMode";
 import type { FilterOptions } from "../bindings/FilterOptions";
 import type { PerformanceQuery } from "../bindings/PerformanceQuery";
 import { EmptyState, Loading, ResourceView } from "../components/states";
-import { showToast } from "../components/toasts";
+import { showSuccess } from "../components/toasts";
 import StatCards from "./performance/StatCards";
 import StrengthTable, { SmallSample } from "./performance/StrengthTable";
 import TrendChart from "./performance/TrendChart";
@@ -43,7 +43,7 @@ export default function Performance() {
   const exportCsv = () => {
     const filters = query();
     return exporting.run(async () => {
-      if (await api.exportPerformanceCsv(filters)) showToast("Planilha salva.");
+      if (await api.exportPerformanceCsv(filters)) showSuccess("Planilha salva.");
     });
   };
 
@@ -92,7 +92,7 @@ export default function Performance() {
         </label>
         <button
           type="button"
-          class="export-button"
+          class="secondary"
           disabled={exporting.active()}
           onClick={() => void exportCsv()}
         >
@@ -111,7 +111,7 @@ export default function Performance() {
         pending={result.state === "pending"}
         retrying={result.loading}
         onRetry={() => refetch()}
-        placeholder={<Loading variant="skeleton" label="Calculando desempenho…" />}
+        placeholder={<Loading label="Calculando desempenho…" />}
         empty={
           <EmptyState
             title={

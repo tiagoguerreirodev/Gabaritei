@@ -16,7 +16,7 @@
 //! * **Contest and board** filters match questions that belong to a collection with that tag.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use rusqlite::{Connection, named_params};
 use serde::{Deserialize, Serialize};
@@ -403,7 +403,7 @@ pub fn bank_strength(conn: &Connection) -> AppResult<Vec<AreaStats>> {
             groups.add(id, topic_id, path, row);
         },
     )?;
-    Ok(build_areas(groups.areas))
+    Ok(build_areas(groups.areas, HashMap::new()))
 }
 
 fn trend(conn: &Connection, query: &PerformanceQuery) -> AppResult<Vec<WeekPoint>> {

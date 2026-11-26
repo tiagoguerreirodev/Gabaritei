@@ -376,6 +376,15 @@ describe("Resolver", () => {
     delete explanations.q2;
   });
 
+  it.each([
+    ["study", "Confirmar resposta (Enter)"],
+    ["exam", "Finalizar"],
+  ] as const)("keeps one primary button in %s mode", async (mode, name) => {
+    await open(mode);
+    const primaries = document.querySelectorAll(".primary");
+    expect([...primaries].map((button) => button.textContent)).toEqual([name]);
+  });
+
   it("keeps Simulado feedback hidden while toggling an answer", async () => {
     const { user } = await open("exam");
 

@@ -60,7 +60,12 @@ const tree: TopicTree = {
           name: "Constitucional",
           stats: stats(0, 0, 0, 5),
           topics: [
-            { topicId: 1, name: "Controle de constitucionalidade", stats: stats(0, 0, 0, 5) },
+            {
+              topicId: 1,
+              name: "Controle de constitucionalidade",
+              stats: stats(0, 0, 0, 5),
+              trend: [],
+            },
           ],
         },
       ],

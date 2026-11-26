@@ -73,7 +73,7 @@ export default function CollectionsView() {
         pending={!current()}
         retrying={result.loading}
         onRetry={() => refetch()}
-        placeholder={<Loading variant="skeleton" label="Carregando cadernos…" />}
+        placeholder={<Loading label="Carregando cadernos…" />}
         empty={
           <EmptyState title={filtering() ? "Nenhum caderno encontrado." : "Nenhum caderno ainda."}>
             <Show when={filtering()}>
@@ -99,7 +99,12 @@ export default function CollectionsView() {
               </For>
             </ul>
             <nav class="pager" aria-label="Páginas">
-              <button type="button" disabled={page() === 0} onClick={() => setPage(page() - 1)}>
+              <button
+                type="button"
+                class="secondary"
+                disabled={page() === 0}
+                onClick={() => setPage(page() - 1)}
+              >
                 Anterior
               </button>
               <span>
@@ -107,6 +112,7 @@ export default function CollectionsView() {
               </span>
               <button
                 type="button"
+                class="secondary"
                 disabled={page() + 1 >= pages()}
                 onClick={() => setPage(page() + 1)}
               >

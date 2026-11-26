@@ -68,6 +68,7 @@ export default function LearningRow(props: { item: LearningItem }) {
       </span>
       <button
         type="button"
+        class="secondary"
         aria-label={`Ver resultado: ${accessibleTopic(props.item)}`}
         onClick={() => openAttempt(props.item.lastAttemptId)}
       >

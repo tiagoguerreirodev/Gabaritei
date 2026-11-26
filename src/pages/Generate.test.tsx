@@ -183,9 +183,9 @@ async function fillTopic(user: ReturnType<typeof userEvent.setup>) {
   await user.selectOptions(screen.getByLabelText("Assunto"), "Controle de constitucionalidade");
 }
 
-/** Opens the "Opções avançadas" disclosure (it starts collapsed). */
+/** Opens the "Avançado" disclosure (it starts collapsed). */
 async function openAdvanced(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByText(/Opções avançadas/));
+  await user.click(await screen.findByText(/Avançado/));
 }
 
 beforeEach(() => {
@@ -211,13 +211,13 @@ describe("Gerar", () => {
     await fillTopic(user);
     await user.clear(screen.getByLabelText("Quantidade"));
     await user.type(screen.getByLabelText("Quantidade"), "7");
-    await user.selectOptions(screen.getByLabelText("Banca"), "Cebraspe");
-    await user.type(screen.getByLabelText("Concurso"), "TRF 1");
-    await user.type(screen.getByLabelText("Cargo"), "Analista");
-    await user.selectOptions(screen.getByLabelText("Formato"), "boolean");
-    await user.type(screen.getByLabelText("Instruções"), "Foque em jurisprudência");
+    await user.selectOptions(screen.getByLabelText(/^Banca/), "Cebraspe");
+    await user.type(screen.getByLabelText(/^Concurso/), "TRF 1");
+    await user.type(screen.getByLabelText(/^Cargo/), "Analista");
+    await user.selectOptions(screen.getByLabelText(/^Formato/), "boolean");
+    await user.type(screen.getByLabelText(/^Instruções/), "Foque em jurisprudência");
     await user.type(screen.getByLabelText("Modelo: Conferente"), "-x");
-    await user.click(screen.getByRole("button", { name: "Gerar" }));
+    await user.click(screen.getByRole("button", { name: "Gerar questões" }));
 
     const start = await waitFor(() => {
       const call = calls.find((c) => c.command === "generation_start");
@@ -249,9 +249,9 @@ describe("Gerar", () => {
     const user = userEvent.setup();
     renderPage();
     await fillTopic(user);
-    await user.selectOptions(await screen.findByLabelText("Banca"), "Outra…");
+    await user.selectOptions(await screen.findByLabelText(/^Banca/), "Outra…");
     await user.type(screen.getByLabelText("Nome da banca"), "Instituto X");
-    await user.click(screen.getByRole("button", { name: "Gerar" }));
+    await user.click(screen.getByRole("button", { name: "Gerar questões" }));
     const start = await waitFor(() => {
       const call = calls.find((c) => c.command === "generation_start");
       expect(call).toBeDefined();
@@ -265,10 +265,10 @@ describe("Gerar", () => {
     const user = userEvent.setup();
     renderPage();
     await fillTopic(user);
-    await user.click(await screen.findByText(/Opções avançadas/));
+    await user.click(await screen.findByText(/Avançado/));
     await user.click(screen.getByRole("button", { name: "Anexar arquivos" }));
     await user.click(await screen.findByLabelText("Referência de estilo: Lei 8.112.md"));
-    await user.click(screen.getByRole("button", { name: "Gerar" }));
+    await user.click(screen.getByRole("button", { name: "Gerar questões" }));
     const start = await waitFor(() => {
       const call = calls.find((c) => c.command === "generation_start");
       expect(call).toBeDefined();
@@ -293,7 +293,7 @@ describe("Gerar", () => {
     renderPage();
     await fillTopic(user);
     await user.click(await screen.findByRole("checkbox", { name: "Modo rápido: Gerador" }));
-    await user.click(screen.getByRole("button", { name: "Gerar" }));
+    await user.click(screen.getByRole("button", { name: "Gerar questões" }));
     const start = await waitFor(() => {
       const call = calls.find((c) => c.command === "generation_start");
       expect(call).toBeDefined();
@@ -345,7 +345,7 @@ describe("Gerar", () => {
     await user.click(screen.getByRole("button", { name: "Anexar arquivos" }));
     expect(await screen.findByText("Lei 8.112.md")).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "Gerar" }));
+    await user.click(screen.getByRole("button", { name: "Gerar questões" }));
     await waitFor(() => expect(calls.some((c) => c.command === "generation_start")).toBe(true));
     const request = calls.find((c) => c.command === "generation_start")!.args
       .request as GenerateRequest;
@@ -439,7 +439,7 @@ describe("Gerar", () => {
     expect(items()[1]).toHaveTextContent("(pendente)");
     expect(within(steps).queryByRole("listitem", { current: "step" })).toBeNull();
 
-    await user.selectOptions(screen.getByLabelText("Formato"), "boolean");
+    await user.selectOptions(screen.getByLabelText(/^Formato/), "boolean");
     expect(items()[1]).toHaveTextContent("(concluída)");
     expect(items()[2]).toHaveTextContent("(pendente)");
   });
@@ -479,22 +479,40 @@ describe("Gerar", () => {
     backend();
     const user = userEvent.setup();
     renderPage();
-    const summary = await screen.findByText(/Opções avançadas/);
+    const summary = await screen.findByText(/Avançado/);
     const details = summary.closest("details")!;
     expect(details).not.toHaveAttribute("open");
     expect(screen.getByLabelText("Quantidade")).toBeVisible();
     expect(screen.getByLabelText("Quantidade")).toBeRequired();
-    expect(screen.getByLabelText("Instruções")).not.toBeVisible();
+    expect(screen.getByRole("group", { name: "Gerador" })).not.toBeVisible();
     await user.click(summary);
     expect(details).toHaveAttribute("open");
-    expect(screen.getByLabelText("Instruções")).toBeVisible();
+    expect(screen.getByRole("group", { name: "Gerador" })).toBeVisible();
+  });
+
+  it("the form has four numbered sections", async () => {
+    backend();
+    renderPage();
+    await screen.findByLabelText("Quantidade");
+    const titles = Array.from(document.querySelectorAll(".form-section-title")).map((title) =>
+      title.textContent?.trim(),
+    );
+    expect(titles).toEqual(["1Assunto", "2Quantidade e banca", "3Fontes", "4Avançado"]);
+  });
+
+  it("optional fields say opcional and the required ones do not", async () => {
+    backend();
+    renderPage();
+    expect(await screen.findByLabelText(/^Banca.*opcional/)).toBeVisible();
+    expect(screen.getByLabelText(/^Instruções.*opcional/)).toBeVisible();
+    expect(screen.getByLabelText("Quantidade")).toBeVisible();
   });
 
   async function submitEmptyForm() {
     const calls = backend();
     const user = userEvent.setup();
     renderPage();
-    await user.click(await screen.findByRole("button", { name: "Gerar" }));
+    await user.click(await screen.findByRole("button", { name: "Gerar questões" }));
     return { user, calls };
   }
 
@@ -523,7 +541,7 @@ describe("Gerar", () => {
     const { user, calls } = await submitEmptyForm();
     await fillTopic(user);
     await user.clear(screen.getByLabelText("Quantidade"));
-    await user.click(screen.getByRole("button", { name: "Gerar" }));
+    await user.click(screen.getByRole("button", { name: "Gerar questões" }));
     expect(
       await screen.findByText("A quantidade deve ser um número inteiro de 1 a 30."),
     ).toBeVisible();
@@ -543,8 +561,8 @@ describe("Gerar", () => {
     };
     backend(idle, stale, listed);
     renderPage();
-    expect(await screen.findByText(/Corrija em “Opções avançadas”/)).toBeVisible();
-    expect(screen.getByLabelText("Instruções")).toBeVisible();
+    expect(await screen.findByText(/Corrija em “Avançado”/)).toBeVisible();
+    expect(screen.getByRole("group", { name: "Gerador" })).toBeVisible();
   });
 
   it("links to the finished package", async () => {
@@ -892,7 +910,7 @@ describe("Aviso de geração", () => {
     const calls = backend(idle, stale, listed);
     renderPage();
     expect(await screen.findByText(/“antigo” não está mais disponível/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Gerar" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Gerar questões" })).toBeDisabled();
     expect(calls.some((c) => c.command === "generation_start")).toBe(false);
   });
 });

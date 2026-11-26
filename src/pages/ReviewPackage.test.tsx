@@ -113,6 +113,11 @@ beforeEach(() => {
   resetGenerationWatch();
 });
 
+/** The list item of question `position` in the package preview. */
+function rowOf(position: number): HTMLElement {
+  return screen.getByText(`Q${position}`).closest("li")!;
+}
+
 describe("Revisar pacote", () => {
   describe("when a new check reports progress before the previous finish", () => {
     const checking: GenerationStatus = {
@@ -163,7 +168,7 @@ describe("Revisar pacote", () => {
       current = summary;
       reportNextCheck();
 
-      expect(await screen.findByText("Q1 · conferida")).toBeVisible();
+      await waitFor(() => expect(rowOf(1)).toHaveTextContent("Aprovada"));
       expect(screen.getByRole("button", { name: "Importar tudo" })).toBeEnabled();
     });
 
@@ -208,11 +213,11 @@ describe("Revisar pacote", () => {
 
   it("lists each question with its blind-check verdict", async () => {
     await openSummary();
-    const lines = within(screen.getByRole("list", { name: "Questões do pacote" }));
-    expect(lines.getByText("Q1 · conferida")).toBeVisible();
-    expect(lines.getByText("Q2 · contestada")).toBeVisible();
-    expect(lines.getByText("Q3 · corrigida e conferida")).toBeVisible();
-    expect(lines.getByText("Q4 · conferida")).toBeVisible();
+    expect(screen.getByRole("list", { name: "Questões do pacote" })).toBeVisible();
+    expect(rowOf(1)).toHaveTextContent("Aprovada");
+    expect(rowOf(2)).toHaveTextContent("Contestada");
+    expect(rowOf(3)).toHaveTextContent("Aprovada, corrigida");
+    expect(rowOf(4)).toHaveTextContent("Aprovada");
   });
 
   it("shows the stem and options only for a flagged question", async () => {
@@ -235,9 +240,7 @@ describe("Revisar pacote", () => {
   it("does not let the user answer a question in the preview", async () => {
     await openSummary();
     expect(document.querySelector("textarea, [role=radio], [role=radiogroup]")).toBeNull();
-    const inputs = [...document.querySelectorAll("input")];
-    expect(inputs).toHaveLength(1);
-    expect(screen.getByRole("checkbox", { name: /Mostrar só as sinaladas/ })).toBe(inputs[0]);
+    expect(document.querySelector("input")).toBeNull();
   });
 
   it("explains why an agreed line expands and uses C/E for Certo/Errado", async () => {
@@ -261,7 +264,8 @@ describe("Revisar pacote", () => {
     });
     renderAt("/revisar-pacote?id=d1");
 
-    expect(await screen.findByText("Q1 · conferida · com problema")).toBeVisible();
+    await screen.findByText("Q1");
+    expect(rowOf(1)).toHaveTextContent("Com problemas");
     expect(screen.getByText("C")).toBeInTheDocument();
     expect(screen.getByText("E")).toBeInTheDocument();
   });
@@ -360,22 +364,35 @@ describe("Revisar pacote", () => {
       renderAt("/revisar-pacote?id=d1");
       const lines = within(await screen.findByRole("list", { name: "Questões do pacote" }));
       expect(lines.getAllByRole("listitem", { hidden: true }).length).toBeGreaterThanOrEqual(4);
-      expect(lines.getByText("Q1 · conferida")).toBeVisible();
+      expect(lines.getByText("Q1")).toBeVisible();
 
-      await user.click(screen.getByRole("checkbox", { name: /Mostrar só as sinaladas \(2\)/ }));
-      expect(lines.queryByText("Q1 · conferida")).not.toBeInTheDocument();
-      expect(lines.getByText("Q2 · contestada")).toBeVisible();
-      expect(lines.getByText("Q4 · contestada")).toBeVisible();
+      await user.click(screen.getByRole("button", { name: /Contestadas 2/ }));
+      expect(screen.getByRole("button", { name: /Contestadas 2/ })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      expect(lines.queryByText("Q1")).not.toBeInTheDocument();
+      expect(lines.getByText("Q2")).toBeVisible();
+      expect(lines.getByText("Q4")).toBeVisible();
 
-      await user.click(screen.getByRole("checkbox", { name: /Mostrar só as sinaladas/ }));
-      expect(lines.getByText("Q1 · conferida")).toBeVisible();
+      await user.click(screen.getByRole("button", { name: /Todas 4/ }));
+      expect(lines.getByText("Q1")).toBeVisible();
+    });
+
+    it("an empty filter shows a message", async () => {
+      backend(two);
+      const user = userEvent.setup();
+      renderAt("/revisar-pacote?id=d1");
+      await user.click(await screen.findByRole("button", { name: /Com problemas 0/ }));
+      expect(screen.getByText("Nenhuma questão neste filtro.")).toBeVisible();
+      expect(screen.queryByRole("list", { name: "Questões do pacote" })).not.toBeInTheDocument();
     });
 
     async function openFlaggedSummary() {
       backend(two);
       const user = userEvent.setup();
       renderAt("/revisar-pacote?id=d1");
-      await screen.findByText("Q2 · contestada");
+      await screen.findByText("Q2");
       return user;
     }
 
@@ -403,12 +420,11 @@ describe("Revisar pacote", () => {
       }
     });
 
-    it("hides the toolbar when nothing is flagged", async () => {
+    it("hides the expand button when nothing is flagged", async () => {
       backend({ ...summary, lines: summary.lines.map((line) => ({ ...line, content: null })) });
       renderAt("/revisar-pacote?id=d1");
-      await screen.findByText("Q2 · contestada");
+      await screen.findByText("Q2");
       expect(screen.queryByRole("button", { name: "Expandir todas" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     });
   });
 

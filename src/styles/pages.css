@@ -1,34 +1,5 @@
 /* ---- Geração ---- */
 
-.form-grid {
-  display: grid;
-  grid-template-columns: 11rem 1fr;
-  gap: var(--space-3) var(--space-4);
-  align-items: start;
-  margin: var(--space-4) 0;
-}
-
-.form-grid > label,
-.form-grid > .field-label {
-  /* Lines the label up with the text inside the input next to it (padding plus border). */
-  padding-top: calc(var(--space-1) + 1px);
-  font-weight: 600;
-}
-
-.form-grid input[type="text"],
-.form-grid input[type="number"],
-.form-grid select,
-.form-grid textarea {
-  width: 100%;
-  max-width: 28rem;
-  font: inherit;
-}
-
-.form-grid .field-hint {
-  grid-column: 2;
-  margin: calc(-1 * var(--space-1)) 0 0;
-}
-
 .topic-path {
   display: grid;
   gap: var(--space-2);
@@ -48,30 +19,6 @@
 .attachments {
   margin: var(--space-2) 0 0;
   padding-left: var(--space-5);
-}
-
-.question-lines {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin: var(--space-3) 0;
-  padding: 0;
-  list-style: none;
-}
-
-.question-lines li {
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-}
-
-.question-lines .line-disputed {
-  border-color: var(--danger);
-  color: var(--danger);
-}
-
-.question-lines .line-unchecked {
-  color: var(--muted);
 }
 
 .review-actions {
@@ -266,12 +213,6 @@
   flex-wrap: wrap;
 }
 
-/* No inline style: the production CSP (style-src 'self') blocks it. */
-.flagged-options {
-  list-style: none;
-  padding: 0;
-}
-
 /* ---- Gerar: etapas, opções avançadas, erros ---- */
 
 .step-list,
@@ -329,31 +270,7 @@
   color: var(--on-accent);
 }
 
-.generate-form .required {
-  font-weight: 400;
-  color: var(--muted);
-}
-
-.advanced {
-  margin: var(--space-4) 0;
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.advanced > summary {
-  cursor: pointer;
-  padding: var(--space-2) 0;
-  font-weight: 600;
-}
-
-.form-grid .field-error {
-  grid-column: 2;
-  margin: 0;
-  font-weight: 600;
-}
-
-.generate-form > .field-error {
+.form > .field-error {
   margin: var(--space-2) 0;
   white-space: pre-line;
   font-weight: 600;
@@ -366,58 +283,6 @@
 }
 
 /* ---- Revisar pacote: resumo e triagem ---- */
-
-.verdict-counts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  margin: 0;
-}
-
-.verdict-counts > div {
-  min-width: 8rem;
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.verdict-counts dt {
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-
-.verdict-counts dd {
-  margin: 0;
-  font-size: var(--text-xl);
-  font-weight: 700;
-}
-
-/* Border style (dashed / solid) as well as colour tells disputed from problems. */
-.verdict-counts .verdict-disputed {
-  border: 2px dashed var(--danger);
-}
-
-.verdict-counts .verdict-problems {
-  border: 2px solid var(--danger);
-}
-
-.curate-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin: var(--space-3) 0;
-}
-
-.question-lines li.expanded {
-  flex-basis: 100%;
-  border-radius: var(--radius-md);
-}
-
-.question-lines summary {
-  cursor: pointer;
-}
 
 /* ---- Início: the day's main action and the compact numbers below it ---- */
 .today-card {
@@ -514,4 +379,23 @@
 
 .first-steps-list li.done .first-step-mark {
   color: var(--success);
+}
+
+/* ---- Revisar pacote: the verdict count tiles (screen-only layout) ---- */
+.verdict-counts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--space-3);
+  max-width: var(--content-width-wide);
+  margin: var(--space-3) 0;
+}
+.verdict-counts dd {
+  margin: 0;
+}
+.verdict-disputed {
+  border-style: dashed;
+  border-color: var(--danger);
+}
+.verdict-problems {
+  border-color: var(--danger);
 }

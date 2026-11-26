@@ -10,7 +10,7 @@ onto it.
 | `components/bundle.css` | One class family per component, built only from token custom properties (`--bg`, `--space-4`, `--font-ui`…). |
 | `components/<Name>/README.md` | Guidelines: when to use it, structure, states, do and don't. |
 | `components/<Name>/preview.html` | A static HTML specimen. Line 1 is a preview marker; open it with the tokens and `bundle.css` loaded. |
-| `components/*Screen/` | Resolver, Gerar and Revisar pacote composed from the components. |
+| `components/*Screen/` | Banco, Histórico, Resolver, Gerar and Revisar pacote composed from the components. |
 | `migration.md` | Old token and class names → new ones, and the intentional changes. |
 
 Assets are not copied here: the app icon lives in `src-tauri/icons/` and the line icons in
@@ -25,7 +25,7 @@ Gabaritei looks like an answer sheet (*cartão-resposta*): cool paper, blue-blac
 3. **Never colour alone.** Every outcome carries a glyph or a word too (✓ / ✗ / ⚑, *Certo* / *Errado*); meters print their number.
 4. **Printed, not decorated.** The answer-sheet look comes from print details only: a 3px `accent` top edge, fine `rule` lines, a numbered gutter and tracked `label` captions. No textures, gradients or extra colour.
 5. **Flat.** Cards have a border and no shadow. Shadows are for things that float: `shadow-raised` (toast, tooltip) and `shadow-overlay` (modal).
-6. **No spoilers in the UI.** `success` and the key's mark appear only after the user has answered. Before that, an option is plain or `is-selected`.
+6. **No spoilers in the UI.** `success` and the key's mark appear only after the user has answered. Before that, an option is plain or `is-selected`. Banco shows counts only, never stems; Histórico shows titles, progress and scores only.
 
 ## Content
 
@@ -68,6 +68,14 @@ Gabaritei looks like an answer sheet (*cartão-resposta*): cool paper, blue-blac
 - **Resolver:** the Sheet (`sheet-width`) centred, the navigator Rail (`rail-width`) sticky to its right, `space-8` apart. Below 60rem the rail becomes a scrolling row above the sheet.
 - **Forms (Gerar):** one column of numbered Form sections, labels above fields, short fields side by side in a `form-row`, one primary action at the end.
 - **Lists to triage (Revisar pacote):** full-width rows with verdict filters above; never a grid of chips.
+- **Banco:** presets on top, then `.bank-layout`: the FilterPanel (`card`, about 20rem) left and the ResultPanel right; below 60rem the filters stack above the result. Every way into a session (Início, Desempenho *Treinar*, a caderno, Histórico *Refazer*) is a link to Banco with filters set, so there is one start flow and no start dialog.
+- **Histórico:** sections *Em andamento* then *Finalizadas*, each a bordered list of HistoryRows, newest first, with a Pager. An empty page gets an EmptyState that links to Banco.
+
+## Navigation
+
+- The sidebar is organized by activity: **Início, Banco, Gerar, Desempenho, Histórico**, then **Revisar pacote** while a package waits, and **Configurações** in the footer. Resolver opens in context and has no entry.
+- *Erros e revisões* is gone: its two lists are the Banco presets *Revisões de hoje* and *Caderno de erros*.
+- Banco's filters live in the URL, so a shortcut is a plain link and Back restores the filters.
 
 ## States and motion
 
@@ -84,4 +92,12 @@ Gabaritei looks like an answer sheet (*cartão-resposta*): cool paper, blue-blac
 
 ## Components
 
-Sixteen class families in `components/bundle.css`: **Button, Card, Badge, Field, Tabs, Bubble, Option, Meter, Nav, Modal, Toast**, plus the answering and authoring set **Sheet, Explanation, Rail, FormSection, ReviewRow**. Each is one base class plus `-variant` modifiers and `is-state` flags. Three screen previews (*ResolverScreen*, *GenerateScreen*, *ReviewScreen*) show them composed. `migration.md` maps every old class to its new name.
+Twenty-one class families in `components/bundle.css`:
+
+- **Shared:** Button, Card, Badge, Field, Tabs, Meter, Nav, Modal, Toast, EmptyState.
+- **Choosing (Banco):** FilterPanel, FilterChip, ResultPanel.
+- **Answering (Resolver):** Bubble, Option, Sheet, Explanation, Rail.
+- **Authoring (Gerar, Revisar pacote):** FormSection, ReviewRow.
+- **History (Histórico):** HistoryRow, with the Pager.
+
+Each is one base class plus `-variant` modifiers and `is-state` flags. Five screen previews (*BancoScreen*, *HistoricoScreen*, *ResolverScreen*, *GenerateScreen*, *ReviewScreen*) show them composed. `migration.md` maps every old class to its new name.

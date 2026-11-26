@@ -144,19 +144,21 @@ export default function TopicTreeView() {
                                             acerto {formatPercent(topic.accuracy)}
                                           </span>
                                         </Show>
-                                        <button
-                                          type="button"
-                                          class="link-button"
-                                          aria-label={`Resolver ${topic.name}`}
-                                          onClick={() =>
-                                            setSolving({
-                                              topic,
-                                              path: `${area.name} › ${matter.name} › ${topic.name}`,
-                                            })
-                                          }
-                                        >
-                                          Resolver
-                                        </button>
+                                        <Show when={topic.questions > 0}>
+                                          <button
+                                            type="button"
+                                            class="link-button"
+                                            aria-label={`Resolver ${topic.name}`}
+                                            onClick={() =>
+                                              setSolving({
+                                                topic,
+                                                path: `${area.name} › ${matter.name} › ${topic.name}`,
+                                              })
+                                            }
+                                          >
+                                            Resolver
+                                          </button>
+                                        </Show>
                                       </li>
                                     )}
                                   </For>

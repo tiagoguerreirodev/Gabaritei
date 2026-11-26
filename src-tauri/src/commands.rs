@@ -30,6 +30,7 @@ use crate::appearance::{self, Appearance};
 use crate::attempts::{self, AttemptView, SessionStart};
 use crate::backup::{BackupInfo, BackupService, BackupStatus, OpenableFolder, RelocateOutcome};
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
+use crate::bank::{self, TopicPath};
 use crate::db::Database;
 use crate::error::{AppError, AppResult, ErrorPayload};
 use crate::ids::{AttemptId, CollectionId, DraftId};
@@ -104,21 +105,10 @@ pub fn question_count_limits(
     Ok(context.limits())
 }
 
-#[tauri::command(async)]
-pub fn topic_choices(
-    db: State<'_, Database>,
-    path: crate::bank::TopicPath,
-) -> AppResult<catalog::TopicChoices> {
-    db.with(|conn| catalog::topic_choices(conn, &path))
-}
-
 /// Creates a topic ahead of time and returns it with the spelling it was stored under.
 #[tauri::command(async)]
-pub fn create_topic(
-    db: State<'_, Database>,
-    path: crate::bank::TopicPath,
-) -> AppResult<crate::bank::TopicPath> {
-    db.with(|conn| crate::bank::create_topic(conn, &path))
+pub fn create_topic(db: State<'_, Database>, path: TopicPath) -> AppResult<TopicPath> {
+    db.with(|conn| bank::create_topic(conn, &path))
 }
 
 /// Area › matter › topic with question counts.

@@ -44,7 +44,6 @@ import type { SessionStart } from "./bindings/SessionStart";
 import type { TopicPath } from "./bindings/TopicPath";
 import type { CountLimits } from "./bindings/CountLimits";
 import type { CountContext } from "./bindings/CountContext";
-import type { TopicChoices } from "./bindings/TopicChoices";
 import type { TopicTree } from "./bindings/TopicTree";
 
 const FALLBACK_MESSAGE = "Ocorreu um erro inesperado. Tente novamente.";
@@ -90,7 +89,6 @@ export const api = {
   /** Area › matter › topic with question counts. */
   questionCountLimits: (context: CountContext) =>
     call<CountLimits>("question_count_limits", { context }),
-  topicChoices: (path: TopicPath) => call<TopicChoices>("topic_choices", { path }),
   /** Creates a topic ahead of time; returns it with the spelling it was stored under. */
   createTopic: (path: TopicPath) => call<TopicPath>("create_topic", { path }),
   topicsTree: () => call<TopicTree>("topics_tree"),

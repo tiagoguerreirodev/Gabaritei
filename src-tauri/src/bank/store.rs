@@ -455,14 +455,15 @@ mod tests {
         db.with(|conn| {
             let path = TopicPath::new("Direito", "Constitucional", "Poderes");
             create_topic(conn, &path)?;
-            assert!(
-                create_topic(
-                    conn,
-                    &TopicPath::new("direito", "constitucional", "PODERES")
-                )
-                .is_err()
+            let message = |path: TopicPath| create_topic(conn, &path).unwrap_err().to_string();
+            assert_eq!(
+                message(TopicPath::new("direito", "constitucional", "PODERES")),
+                "Este assunto já existe."
             );
-            assert!(create_topic(conn, &TopicPath::new("Direito", " ", "Poderes")).is_err());
+            assert_eq!(
+                message(TopicPath::new("Direito", " ", "Poderes")),
+                "Informe a área, a matéria e o assunto."
+            );
             assert_eq!(count(conn, "topics"), 1);
             Ok(())
         })

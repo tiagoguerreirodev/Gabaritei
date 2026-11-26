@@ -70,7 +70,6 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::export_data,
             commands::import_data,
             commands::topics_tree,
-            commands::topic_choices,
             commands::create_topic,
             commands::question_count_limits,
             commands::collections,

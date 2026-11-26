@@ -163,6 +163,35 @@ describe("Banco", () => {
       expect(within(treeList).getByText("Controle de constitucionalidade")).toBeVisible();
     });
 
+    it("does not offer to solve a topic without questions", async () => {
+      const user = userEvent.setup();
+      backend({
+        tree: {
+          questions: 0,
+          areas: [
+            {
+              name: "Direito",
+              questions: 0,
+              matters: [
+                {
+                  name: "Penal",
+                  questions: 0,
+                  topics: [{ id: 1, name: "Dolo", questions: 0, accuracy: null }],
+                },
+              ],
+            },
+          ],
+        },
+      });
+      render(() => <Bank />);
+
+      const treeList = await screen.findByRole("list", { name: "Assuntos" });
+      await user.click(within(treeList).getByText("Direito"));
+      await user.click(within(treeList).getByText("Penal"));
+      expect(within(treeList).getByText("Dolo")).toBeVisible();
+      expect(screen.queryByRole("button", { name: "Resolver Dolo" })).toBeNull();
+    });
+
     it("creates a topic ahead of time", async () => {
       const user = userEvent.setup();
       const calls = backend();

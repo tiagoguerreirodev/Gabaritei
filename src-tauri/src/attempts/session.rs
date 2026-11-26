@@ -34,6 +34,15 @@ pub fn start(
             None,
             crate::learning::error_questions(conn, *filter, crate::learning::MAX_SESSION)?,
         ),
+        SessionSource::Filter {
+            filter,
+            count,
+            order,
+        } => (
+            SourceKind::Filter,
+            Some(SourceRef::Filter(filter.clone())),
+            crate::selection::pick(conn, filter, *count, *order, now, rng)?,
+        ),
         SessionSource::Reviews => (
             SourceKind::Reviews,
             None,
@@ -127,8 +136,7 @@ fn topic_questions(
         })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.shuffle(rng);
-    // `None` (never answered) sorts first; the sort is stable, so ties stay shuffled.
-    rows.sort_by(|a, b| a.1.cmp(&b.1));
+    let rows = crate::selection::unseen_first(rows, |row| row.1.clone());
     Ok(rows
         .into_iter()
         .take(count as usize)

@@ -341,19 +341,19 @@ fn save_review(stmt: &mut Statement<'_>, review: ReviewHistory) -> AppResult<()>
     Ok(())
 }
 
-#[derive(Clone, Copy)]
-enum LatestStatus {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LatestStatus {
     Correct,
     Blank,
     Wrong,
 }
 
 /// A question's latest result in finished attempts, keeping an earlier wrong answer visible.
-struct Latest {
-    question_id: QuestionId,
-    at: String,
+pub(crate) struct Latest {
+    pub(crate) question_id: QuestionId,
+    pub(crate) at: String,
     attempt_id: AttemptId,
-    status: LatestStatus,
+    pub(crate) status: LatestStatus,
 }
 
 impl Latest {
@@ -368,7 +368,7 @@ impl Latest {
 
 /// A later blank never hides an earlier wrong answer. In that case the timestamp and attempt
 /// ID point to the wrong answer. Otherwise they point to the latest response.
-fn latest_results(conn: &Connection) -> AppResult<Vec<Latest>> {
+pub(crate) fn latest_results(conn: &Connection) -> AppResult<Vec<Latest>> {
     let mut stmt = conn.prepare(&format!(
         "WITH base AS (
            SELECT r.question_id, a.id AS attempt_id, r.choice, ({MISS_SQL}) AS wrong, r.position,
@@ -419,10 +419,10 @@ fn latest_results(conn: &Connection) -> AppResult<Vec<Latest>> {
 /// The one definition of "held by an open attempt": the questions that sit in an unfinished
 /// attempt. Practice sessions leave them out: they stay due until that attempt is finished,
 /// and would otherwise be picked again. Every query that needs the rule embeds this one.
-const OPEN_ATTEMPT_QUESTIONS_SQL: &str = "SELECT DISTINCT r.question_id FROM responses r
+pub(crate) const OPEN_ATTEMPT_QUESTIONS_SQL: &str = "SELECT DISTINCT r.question_id FROM responses r
      JOIN attempts a ON a.id = r.attempt_id AND a.finished_at IS NULL";
 
-fn open_attempt_questions(conn: &Connection) -> AppResult<HashSet<QuestionId>> {
+pub(crate) fn open_attempt_questions(conn: &Connection) -> AppResult<HashSet<QuestionId>> {
     let ids = conn
         .prepare(OPEN_ATTEMPT_QUESTIONS_SQL)?
         .query_map([], |r| r.get::<_, QuestionId>(0))?
@@ -443,7 +443,7 @@ fn error_candidates<'a>(
         .map(|result| &result.question_id)
 }
 
-fn fill_review_session(
+pub(crate) fn fill_review_session(
     mut due: Vec<QuestionId>,
     errors: impl IntoIterator<Item = QuestionId>,
     limit: u32,

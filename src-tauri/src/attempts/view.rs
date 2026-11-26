@@ -6,6 +6,7 @@ use super::{
 };
 use crate::error::AppResult;
 use crate::ids::{AttemptId, CollectionId, QuestionId, TopicId};
+use crate::selection::{QuestionFilter, StudyStatus};
 
 /// The attempt as the frontend may see it.
 pub fn load(conn: &Connection, id: &AttemptId) -> AppResult<AttemptView> {
@@ -67,6 +68,62 @@ pub(super) fn topic_title(conn: &Connection, id: TopicId) -> AppResult<Option<St
         .optional()?)
 }
 
+/// The title of a filter session: what is checked, then the statuses.
+pub(super) fn filter_title(conn: &Connection, filter: &QuestionFilter) -> AppResult<String> {
+    let subject = match (
+        &filter.attempt_id,
+        filter.topic_ids.as_slice(),
+        &filter.collection_id,
+    ) {
+        (Some(attempt_id), _, _) => {
+            let header = load_header(conn, attempt_id)?;
+            let title = title(conn, header.source_kind, header.source_ref.as_ref())?;
+            format!("Refazer: {title}")
+        }
+        (None, [_, ..], _) => topics_title(conn, &filter.topic_ids)?,
+        (None, [], Some(collection_id)) => {
+            collection_title(conn, collection_id)?.unwrap_or_else(|| "Banco".into())
+        }
+        (None, [], None) => "Banco".into(),
+    };
+    if filter.statuses.is_empty() {
+        return Ok(subject);
+    }
+    let labels: Vec<&str> = filter.statuses.iter().map(|s| status_label(*s)).collect();
+    Ok(format!("{subject} · {}", labels.join(", ")))
+}
+
+/// The first topic's name in Portuguese order, plus how many others are checked.
+fn topics_title(conn: &Connection, topic_ids: &[TopicId]) -> AppResult<String> {
+    let mut names = Vec::new();
+    for id in topic_ids {
+        let name: Option<String> = conn
+            .query_row("SELECT topic FROM topics WHERE id = ?1", params![id], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        names.extend(name);
+    }
+    names.sort_by(|a, b| crate::ordering::cmp_pt(a, b));
+    let others = names.len().saturating_sub(1);
+    let first = names.into_iter().next().unwrap_or_else(|| "Banco".into());
+    Ok(if others == 0 {
+        first
+    } else {
+        format!("{first} + {others}")
+    })
+}
+
+fn status_label(status: StudyStatus) -> &'static str {
+    match status {
+        StudyStatus::Unseen => "Nunca resolvidas",
+        StudyStatus::Wrong => "Erradas",
+        StudyStatus::Blank => "Em branco",
+        StudyStatus::Due => "Revisão vencida",
+        StudyStatus::Flagged => "Sinalizadas",
+    }
+}
+
 pub(super) fn title(
     conn: &Connection,
     kind: SourceKind,
@@ -75,8 +132,9 @@ pub(super) fn title(
     let found = match source_ref {
         Some(SourceRef::Collection(id)) => collection_title(conn, id)?,
         Some(SourceRef::Topic(id)) => topic_title(conn, *id)?,
+        Some(SourceRef::Filter(filter)) => Some(filter_title(conn, filter)?),
         None => match kind {
-            SourceKind::Collection | SourceKind::Topic => None,
+            SourceKind::Collection | SourceKind::Topic | SourceKind::Filter => None,
             SourceKind::Errors => Some("Caderno de erros".into()),
             SourceKind::Reviews => Some("Revisões".into()),
         },

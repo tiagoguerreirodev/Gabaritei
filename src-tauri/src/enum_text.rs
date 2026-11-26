@@ -100,6 +100,7 @@ mod tests {
             (SourceKind::Topic, "topic"),
             (SourceKind::Errors, "errors"),
             (SourceKind::Reviews, "reviews"),
+            (SourceKind::Filter, "filter"),
         ]);
     }
 

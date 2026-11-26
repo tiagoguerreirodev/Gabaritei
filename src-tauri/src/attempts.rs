@@ -13,6 +13,7 @@
 
 use rusqlite::types::ToSqlOutput;
 use rusqlite::{Connection, OptionalExtension, ToSql, params};
+use serde::ser::Error as _;
 use serde::{Deserialize, Serialize, Serializer};
 use ts_rs::TS;
 
@@ -20,6 +21,7 @@ use crate::bank::{QuestionOption, QuestionType};
 use crate::error::{AppError, AppResult};
 use crate::ids::{AttemptId, CollectionId, QuestionId, TopicId};
 use crate::learning::ErrorFilter;
+use crate::selection::{QuestionFilter, SessionOrder};
 
 mod active;
 mod response;
@@ -36,6 +38,9 @@ pub use view::load;
 
 /// Largest topic session.
 pub const MAX_TOPIC_SESSION: u32 = 200;
+
+/// Largest session started from a filter.
+pub const MAX_SELECTION_SESSION: u32 = 200;
 
 // ---- Requests --------------------------------------------------------------------------------
 
@@ -74,6 +79,12 @@ pub enum SessionSource {
     },
     /// Due reviews (most overdue first), then recent errors (up to 100 in all).
     Reviews,
+    /// Up to `count` questions that match a combined filter, picked in the given order.
+    Filter {
+        filter: QuestionFilter,
+        count: u32,
+        order: SessionOrder,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, TS)]
@@ -130,6 +141,7 @@ pub enum SourceKind {
     Topic,
     Errors,
     Reviews,
+    Filter,
 }
 
 crate::enum_text::stored_enum!(SourceKind {
@@ -137,6 +149,7 @@ crate::enum_text::stored_enum!(SourceKind {
     Topic => "topic",
     Errors => "errors",
     Reviews => "reviews",
+    Filter => "filter",
 });
 
 /// A source stored as text, including topic IDs for compatibility with existing attempts.
@@ -144,6 +157,7 @@ crate::enum_text::stored_enum!(SourceKind {
 pub enum SourceRef {
     Collection(CollectionId),
     Topic(TopicId),
+    Filter(QuestionFilter),
 }
 
 impl SourceRef {
@@ -152,6 +166,7 @@ impl SourceRef {
         match kind {
             SourceKind::Collection => Some(Self::Collection(stored.into())),
             SourceKind::Topic => stored.parse::<i64>().ok().map(|id| Self::Topic(id.into())),
+            SourceKind::Filter => serde_json::from_str(&stored).ok().map(Self::Filter),
             SourceKind::Errors | SourceKind::Reviews => None,
         }
     }
@@ -162,6 +177,9 @@ impl Serialize for SourceRef {
         match self {
             Self::Collection(id) => id.serialize(serializer),
             Self::Topic(id) => serializer.collect_str(id),
+            Self::Filter(filter) => {
+                serializer.collect_str(&serde_json::to_string(filter).map_err(S::Error::custom)?)
+            }
         }
     }
 }
@@ -171,6 +189,9 @@ impl ToSql for SourceRef {
         match self {
             Self::Collection(id) => id.to_sql(),
             Self::Topic(id) => Ok(id.to_string().into()),
+            Self::Filter(filter) => serde_json::to_string(filter)
+                .map(Into::into)
+                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into())),
         }
     }
 }

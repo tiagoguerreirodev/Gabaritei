@@ -23,6 +23,7 @@ pub mod migrate;
 mod ordering;
 pub mod paths;
 mod question_count;
+pub mod selection;
 pub mod shortcuts;
 mod sync;
 
@@ -70,6 +71,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::export_data,
             commands::import_data,
             commands::topics_tree,
+            commands::selection_summary,
             commands::create_topic,
             commands::question_count_limits,
             commands::collections,

@@ -44,6 +44,8 @@ import type { SessionStart } from "./bindings/SessionStart";
 import type { TopicPath } from "./bindings/TopicPath";
 import type { CountLimits } from "./bindings/CountLimits";
 import type { CountContext } from "./bindings/CountContext";
+import type { QuestionFilter } from "./bindings/QuestionFilter";
+import type { SelectionSummary } from "./bindings/SelectionSummary";
 import type { TopicTree } from "./bindings/TopicTree";
 
 const FALLBACK_MESSAGE = "Ocorreu um erro inesperado. Tente novamente.";
@@ -92,6 +94,9 @@ export const api = {
   /** Creates a topic ahead of time; returns it with the spelling it was stored under. */
   createTopic: (path: TopicPath) => call<TopicPath>("create_topic", { path }),
   topicsTree: () => call<TopicTree>("topics_tree"),
+  /** Counts and facets for a combined filter. Numbers only, never question text. */
+  selectionSummary: (filter: QuestionFilter) =>
+    call<SelectionSummary>("selection_summary", { filter }),
   /** One page of collections matching the search and filters. */
   collections: (query: CollectionQuery) => call<CollectionPage>("collections", { query }),
   /** One collection with its attempts. */

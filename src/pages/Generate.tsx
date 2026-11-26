@@ -1,4 +1,5 @@
 import FieldError from "./generate/FieldError";
+import Optional from "./generate/Optional";
 import SourcesFields from "./generate/SourcesFields";
 import CountField from "./generate/CountField";
 import { A } from "@solidjs/router";
@@ -292,21 +293,19 @@ function Form(props: {
 
   return (
     <form
-      class="card card-wide generate-form"
+      class="form"
       onSubmit={(event) => void submit(event)}
       aria-label="Nova geração"
       noValidate
     >
-      <h2>Nova geração</h2>
       <StepList states={stepStates()} />
-      <p class="muted">
-        Campos obrigatórios: assunto e quantidade. Banca, concurso e cargo ajudam a imitar a prova.
-        O resto tem valores prontos.
-      </p>
 
-      <div class="form-grid">
+      <fieldset class="form-section">
+        <legend class="form-section-title label">
+          <span class="form-section-number">1</span>Assunto
+        </legend>
         <span class="field-label" id="topic-label">
-          Assunto <span class="required">(obrigatório)</span>
+          Assunto
         </span>
         <TopicPicker
           tree={props.tree}
@@ -320,72 +319,95 @@ function Form(props: {
           }}
         />
         <FieldError id="gen-topic-error">{shownTopicError()}</FieldError>
+      </fieldset>
 
-        <CountField
-          value={form.count}
-          counts={props.counts}
-          error={shownCountError()}
-          onBlur={validateCount}
-          onInput={(value) => {
-            setOptionsTouched(true);
-            setForm("count", value);
-          }}
+      <fieldset class="form-section">
+        <legend class="form-section-title label">
+          <span class="form-section-number">2</span>Quantidade e banca
+        </legend>
+        <div class="form-row">
+          <CountField
+            value={form.count}
+            counts={props.counts}
+            error={shownCountError()}
+            onBlur={validateCount}
+            onInput={(value) => {
+              setOptionsTouched(true);
+              setForm("count", value);
+            }}
+          />
+          <div class="field">
+            <label class="field-label" for="gen-format">
+              Formato <Optional />
+            </label>
+            <select
+              class="input"
+              id="gen-format"
+              value={form.format ?? ""}
+              onChange={(event) => {
+                setOptionsTouched(true);
+                setForm("format", (event.currentTarget.value || null) as QuestionType | null);
+              }}
+            >
+              <option value="">Seguir a prova de referência ou misturar</option>
+              <option value="multiple">Só múltipla escolha</option>
+              <option value="boolean">Só Certo/Errado</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <TargetFields
+            boards={props.boards}
+            board={form.board}
+            contest={form.contest}
+            position={form.position}
+            onBoard={(board) => setForm("board", board)}
+            onContest={(contest) => setForm("contest", contest)}
+            onPosition={(position) => setForm("position", position)}
+          />
+        </div>
+        <div class="field">
+          <label class="field-label" for="gen-instructions">
+            Instruções <Optional />
+          </label>
+          <textarea
+            class="input"
+            id="gen-instructions"
+            rows="3"
+            placeholder="Foco, nível, tipo de pegadinha…"
+            value={form.instructions ?? ""}
+            onInput={(event) => setForm("instructions", event.currentTarget.value || null)}
+          />
+        </div>
+      </fieldset>
+
+      <fieldset class="form-section">
+        <legend class="form-section-title label">
+          <span class="form-section-number">3</span>Fontes
+        </legend>
+        <SourcesFields
+          value={form.sources}
+          remnoteOn={props.settings.remnote.mode !== "off"}
+          onChange={(sources) => setForm("sources", sources)}
         />
-
-        <label for="gen-format">Formato</label>
-        <select
-          class="input"
-          id="gen-format"
-          value={form.format ?? ""}
-          onChange={(event) => {
-            setOptionsTouched(true);
-            setForm("format", (event.currentTarget.value || null) as QuestionType | null);
-          }}
-        >
-          <option value="">Seguir a prova de referência ou misturar</option>
-          <option value="multiple">Só múltipla escolha</option>
-          <option value="boolean">Só Certo/Errado</option>
-        </select>
-
-        <TargetFields
-          boards={props.boards}
-          board={form.board}
-          contest={form.contest}
-          position={form.position}
-          onBoard={(board) => setForm("board", board)}
-          onContest={(contest) => setForm("contest", contest)}
-          onPosition={(position) => setForm("position", position)}
-        />
-      </div>
+      </fieldset>
 
       <details
-        class="advanced"
+        class="form-section"
         open={advancedOpen()}
         onToggle={(event) => {
           setAdvancedOpen(event.currentTarget.open);
           if (event.currentTarget.open) setOptionsTouched(true);
         }}
       >
-        <summary>Opções avançadas: instruções, fontes e modelos</summary>
-        <div class="form-grid">
-          <label for="gen-instructions">Instruções</label>
-          <textarea
-            class="input"
-            id="gen-instructions"
-            rows="3"
-            placeholder="Opcional: foco, nível, tipo de pegadinha…"
-            value={form.instructions ?? ""}
-            onInput={(event) => setForm("instructions", event.currentTarget.value || null)}
-          />
-
-          <SourcesFields
-            value={form.sources}
-            remnoteOn={props.settings.remnote.mode !== "off"}
-            onChange={(sources) => setForm("sources", sources)}
-          />
-
+        <summary class="form-section-title label">
+          <span class="form-section-number">4</span>Avançado
+        </summary>
+        <div class="field">
           <span class="field-label">Gerador</span>
           <RolePicker label="Gerador" editor={generatorEditor} />
+        </div>
+        <div class="field">
           <span class="field-label">Conferente</span>
           <RolePicker label="Conferente" editor={checkerEditor} />
         </div>
@@ -394,20 +416,22 @@ function Form(props: {
       <Show when={problems().length > 0}>
         <div role="alert" class="field-error">
           <For each={problems()}>{(problem) => <p>{problem}</p>}</For>
-          <p>Corrija em “Opções avançadas”, no Gerador e no Conferente, para poder gerar.</p>
+          <p>Corrija em “Avançado”, no Gerador e no Conferente, para poder gerar.</p>
         </div>
       </Show>
       <FieldError role="alert">
         {shownErrors().length > 0 &&
           `Falta preencher ${shownErrors().length === 1 ? "um campo" : "dois campos"} para gerar.`}
       </FieldError>
-      <button
-        type="submit"
-        class="btn btn-primary"
-        disabled={submitting() || changingRole() || problems().length > 0}
-      >
-        {submitting() ? "Iniciando…" : "Gerar"}
-      </button>
+      <div class="form-actions">
+        <button
+          type="submit"
+          class="btn btn-primary"
+          disabled={submitting() || changingRole() || problems().length > 0}
+        >
+          {submitting() ? "Iniciando…" : "Gerar questões"}
+        </button>
+      </div>
     </form>
   );
 }

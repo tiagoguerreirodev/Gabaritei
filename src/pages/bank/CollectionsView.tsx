@@ -47,7 +47,7 @@ export default function CollectionsView() {
 
   return (
     <>
-      <div class="filters" role="search">
+      <div class="filter-bar" role="search">
         <label>
           <span>Buscar cadernos</span>
           <input

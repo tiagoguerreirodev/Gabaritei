@@ -47,4 +47,5 @@ export const emptyHome: HomeSummary = {
   dueReviews: 0,
   dueInOpenAttempt: 0,
   draftsWaiting: 0,
+  firstSteps: [],
 };

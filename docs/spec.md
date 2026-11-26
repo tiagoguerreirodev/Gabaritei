@@ -23,7 +23,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 | 1 | AI access | Run the **locally installed, already-logged-in `claude` and `codex` CLIs** as subprocesses with schema-checked JSON output. The app stores **no AI credentials**. |
 | 2 | AI roles | Four roles: **Generate, Blind check, Re-check on demand, Explain on demand**. Each has its own **agent (Claude or Codex), model and reasoning effort**. Defaults live in Settings; Generate and Blind check can be overridden in the generation form. Intended use: a cheaper model generates, a smarter model checks. Model and effort choices come from the CLIs (Codex lists its models, efforts and Fast tier; Claude has no list, so its model is typed), and Fast Mode is a per-role option. |
 | 3 | Devices | Two computers, switching rarely. Data moves with a **manual export/import file**. No live sync. |
-| 4 | Users | Only you. No onboarding, no public distribution concerns. |
+| 4 | Users | Only you. No onboarding flow and no public distribution concerns. Início shows a first-use checklist that never blocks the page and disappears once complete: check the agents, generate the first package, review it, finish the first attempt. Each step is derived from the database, never from a stored flag; a generated package also counts as proof that the agents work (owner decision, 2026-11-26). The legacy import is not a step. |
 | 5 | History migration | **Bank only.** Import questions, collections, topics and images once from this repo's `biblioteca/`. There is no attempt history to carry over. |
 | 6 | Question formats | **5-option multiple choice** and **Certo/Errado**. No essays. |
 | 7 | Taxonomy | One **topic tree** (area › matter › topic). **Contest** and **board** become optional tags, not the top-level grouping. Tags live on **collections**; a question's contests are those of the collections that contain it (decided 2026-11-19, because 389 legacy questions belong to both contests). |
@@ -105,7 +105,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 - **Trend:** weekly accuracy from all answers. Each topic also gets a mini trend: the same weekly accuracy over its latest 8 weeks with answers.
 - **Topic table:** area › matter › topic expands in place, weakest first or in alphabetical order, with an achievement bar per row, the topic's mini trend and a "Treinar" action that opens the topic session dialog. Achievement leads the summary cards.
 - **Filters:** contest tag, board tag (both from the collections a question belongs to), feedback mode.
-- **Other views:** history per collection and per session, a home dashboard, and CSV export.
+- **Other views:** history per collection and per session, a home dashboard (with the first-use checklist from decision 4), and CSV export.
 - **All attempts are kept** (drops `U-E1`).
 
 ### 3.5 Learning (*Erros e revisões*)

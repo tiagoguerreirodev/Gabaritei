@@ -37,6 +37,7 @@ const summary: HomeSummary = {
   dueReviews: 3,
   dueInOpenAttempt: 2,
   draftsWaiting: 2,
+  firstSteps: [],
 };
 
 function backend(home: HomeSummary | { error: string }) {
@@ -163,6 +164,43 @@ describe("Início", () => {
         },
       ]),
     );
+  });
+
+  it("shows the first-use checklist above the main action, linking each step to do", async () => {
+    backend({
+      ...emptyHome,
+      firstSteps: [
+        { step: "checkAgents", done: true },
+        { step: "generatePackage", done: true },
+        { step: "reviewPackage", done: false },
+        { step: "finishAttempt", done: false },
+      ],
+    });
+    renderHome();
+
+    const heading = await screen.findByRole("heading", { name: "Primeiros passos" });
+    const checklist = within(heading.parentElement!);
+    expect(checklist.getByText("2 de 4 concluídos")).toBeVisible();
+    expect(checklist.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "✓Confira os agentes (concluído)",
+      "✓Gere o primeiro pacote (concluído)",
+      "○Revise o pacoteRevisar pacote",
+      "○Resolva a primeira tentativaIr para o Banco",
+    ]);
+    expect(checklist.getByRole("link", { name: "Revisar pacote" })).toHaveAttribute(
+      "href",
+      "#/revisar-pacote",
+    );
+    const mainAction = screen.getByRole("heading", { name: /nenhuma tentativa/ });
+    expect(heading.compareDocumentPosition(mainAction)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("hides the first-use checklist once every step is done", async () => {
+    backend(summary);
+    renderHome();
+
+    await screen.findByRole("list", { name: "Resumo" });
+    expect(screen.queryByRole("heading", { name: "Primeiros passos" })).toBeNull();
   });
 
   it("hides what waits when nothing does", async () => {

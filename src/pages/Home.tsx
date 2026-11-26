@@ -8,11 +8,12 @@ import { Loading, ResourceView } from "../components/states";
 import { formatDate, formatNumber, formatPercent, questionCount } from "../format";
 import { modeLabel } from "../labels";
 import { openAttempt } from "../navigation";
+import FirstSteps from "./home/FirstSteps";
 import TodayCard from "./home/TodayCard";
 import { todayAction } from "./home/todayAction";
 
 /**
- * Início, the day's dashboard: one main action on top, a compact strip of numbers, then the
+ * Início, the day's dashboard: the first-use checklist until it's complete, one main action, a compact strip of numbers, then the
  * other open attempts, what waits for the user and achievement per area.
  */
 export default function Home() {
@@ -41,6 +42,7 @@ export default function Home() {
           const otherAttempts = () => summary().activeAttempts.slice(1);
           return (
             <>
+              <FirstSteps steps={summary().firstSteps} />
               <TodayCard action={todayAction(summary())} />
 
               <p class="muted">{questionCount(summary().questions)} no banco.</p>

@@ -105,6 +105,15 @@ pub fn question_count_limits(
     Ok(context.limits())
 }
 
+/// Counts and facets for what Banco has checked. Numbers only, never question text.
+#[tauri::command(async)]
+pub fn selection_summary(
+    db: State<'_, Database>,
+    filter: crate::selection::QuestionFilter,
+) -> AppResult<crate::selection::SelectionSummary> {
+    db.with(|conn| crate::selection::summary(conn, &filter, &crate::clock::now()))
+}
+
 /// Creates a topic ahead of time and returns it with the spelling it was stored under.
 #[tauri::command(async)]
 pub fn create_topic(db: State<'_, Database>, path: TopicPath) -> AppResult<TopicPath> {

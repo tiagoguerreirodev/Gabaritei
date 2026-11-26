@@ -49,6 +49,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src-tauri/src/error.rs` | `AppError`: every command returns `AppResult<T>`; the frontend receives `{ message }` in pt-BR. |
 | `src-tauri/src/attempts/` | Session creation and shuffling, attempt views, response updates, active attempts, and scoring. |
 | `src-tauri/src/metrics.rs`, `metrics/csv.rs` | Performance, home summaries and topic accuracy. CSV formatting and file export live in `csv.rs`. |
+| `src-tauri/src/selection.rs` | Banco's combined question filter: counts with facets (numbers only), allowed orders, and the question pick for a filter session. |
 | `src-tauri/src/ordering.rs` | Portuguese text folding and ordering of optional values. Collection filter options are shared in `bank/tags.rs`. |
 | `src-tauri/src/ai/remnote_probe.rs` | Tests the configured RemNote server and reads its list of tools. |
 | `src-tauri/src/backup.rs`, `backup/` | Backup DTOs and service, with modules for names, computer ownership, folders, probes, old-folder offers, rotation, restore, relocation, snapshots and data files. |

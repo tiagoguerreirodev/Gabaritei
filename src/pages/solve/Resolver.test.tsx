@@ -193,17 +193,12 @@ async function open(mode: FeedbackMode, onLeave = () => {}) {
 
 const card = () => screen.getByRole("article");
 
-/** Opens the question-map drawer, if it isn't open already. */
-async function showMap(user: ReturnType<typeof userEvent.setup>) {
-  const toggle = screen.getByRole("button", { name: /^Mapa de questões/ });
-  if (toggle.getAttribute("aria-expanded") !== "true") await user.click(toggle);
-  return screen.getByRole("navigation", { name: "Mapa de questões" });
-}
+/** The question rail, always on screen beside the sheet. */
+const rail = () => screen.getByRole("navigation", { name: "Questões" });
 const option = (letter: string) =>
   within(card())
-    .getAllByRole("button", { pressed: false })
-    .concat(within(card()).queryAllByRole("button", { pressed: true }))
-    .find((b) => b.querySelector(".option-letter")?.textContent === letter)!;
+    .getAllByRole("button")
+    .find((b) => b.matches(".option") && b.querySelector(".bubble")?.textContent === letter)!;
 
 /** Asserts nothing about the answer is on screen. */
 function expectNoKey() {
@@ -211,7 +206,7 @@ function expectNoKey() {
   expect(screen.queryByText(/Gabarito:/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Explicação secreta/)).not.toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Gabarito e explicação" })).not.toBeInTheDocument();
-  expect(document.querySelector(".option-key, .option-wrong")).toBeNull();
+  expect(card().querySelector(".is-correct, .is-wrong, .is-key")).toBeNull();
 }
 
 describe("Resolver", () => {
@@ -498,7 +493,7 @@ describe("Resolver", () => {
     const dialog = await screen.findByRole("dialog", { name: "Finalizar tentativa?" });
     await user.click(within(dialog).getByRole("button", { name: "Finalizar" }));
     await screen.findByRole("region", { name: "Resultado" });
-    expect(document.querySelector(".option-wrong")).toBeNull();
+    expect(document.querySelector(".option.is-wrong")).toBeNull();
     expect(option("B")).toHaveAttribute("aria-pressed", "false");
   });
 
@@ -573,7 +568,6 @@ describe("Resolver", () => {
     const { user, calls } = await open("exam");
 
     await user.keyboard("f");
-    await showMap(user);
 
     expect(await screen.findByRole("button", { name: /Questão 1, marcada/ })).toBeVisible();
     expect(screen.getByRole("button", { name: "Marcada" })).toBeVisible();
@@ -604,7 +598,6 @@ describe("Resolver", () => {
     expect(calls.filter((c) => c.command !== "attempt")).toEqual([
       { command: "answer", args: { attemptId: "att", position: 1, optionId: "q1-e" } },
     ]);
-    await showMap(user);
     expect(screen.getByRole("button", { name: /Questão 2, respondida/ })).toBeVisible();
     expect(screen.getByTestId("progress")).toHaveTextContent("1 de 3 respondidas");
   });
@@ -615,7 +608,6 @@ describe("Resolver", () => {
     // X, then the question map: the next letter answers on the new question.
     await user.keyboard("x");
     expect(screen.getByRole("status")).toHaveTextContent("Escolha a letra");
-    await showMap(user);
     await user.click(screen.getByRole("button", { name: "Questão 3" }));
     await screen.findByRole("article", { name: "Questão 3 de 3" });
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -687,7 +679,6 @@ describe("Resolver", () => {
     expect(screen.getByRole("region", { name: "Gabarito e explicação" })).toHaveTextContent(
       "Questão anulada",
     );
-    await showMap(user);
     expect(screen.getByRole("button", { name: /Questão 1, respondida, anulada/ })).toBeVisible();
     expect(calls.at(-1)).toEqual({ command: "annul", args: { attemptId: "att", position: 0 } });
   });
@@ -700,6 +691,59 @@ describe("Resolver", () => {
     await user.click(screen.getByRole("button", { name: "Desfazer anulação" }));
     await waitFor(() => expect(reveal).toHaveTextContent("Você acertou."));
     expect(calls.at(-1)).toEqual({ command: "unannul", args: { attemptId: "att", position: 0 } });
+  });
+});
+
+describe("Resolver: sheet outcomes", () => {
+  const outcomeMarks = () => document.querySelectorAll(".is-correct, .is-wrong, .is-key");
+
+  it("a_selected_option_shows_no_outcome_before_confirming", async () => {
+    const { user } = await open("study");
+    await user.click(option("B"));
+    expect(option("B")).toHaveClass("is-selected");
+    expect(outcomeMarks()).toHaveLength(0);
+    expect(screen.queryByRole("region", { name: "Gabarito e explicação" })).toBeNull();
+  });
+
+  it("exam_mode_shows_no_outcomes_until_finish", async () => {
+    const { user } = await open("exam");
+    await user.keyboard("b");
+    await waitFor(() => expect(option("B")).toHaveAttribute("aria-pressed", "true"));
+    expect(outcomeMarks()).toHaveLength(0);
+    expectNoKey();
+
+    await user.click(screen.getByRole("button", { name: "Finalizar" }));
+    const dialog = await screen.findByRole("dialog", { name: "Finalizar tentativa?" });
+    await user.click(within(dialog).getByRole("button", { name: "Finalizar" }));
+    await screen.findByRole("region", { name: "Gabarito e explicação" });
+    expect(option("B")).toHaveClass("is-correct");
+  });
+
+  it("the_missed_key_is_marked_gabarito_after_reveal", async () => {
+    const { user } = await open("study");
+    await user.click(option("A"));
+    await user.keyboard("{Enter}");
+    await screen.findByRole("region", { name: "Gabarito e explicação" });
+
+    expect(option("B")).toHaveClass("is-correct");
+    expect(within(option("B")).getByText("Gabarito", { exact: false })).toHaveClass("option-note");
+    expect(option("A")).toHaveClass("is-wrong");
+    expect(within(option("A")).getByText("Sua resposta", { exact: false })).toHaveClass(
+      "option-note",
+    );
+  });
+
+  it("an_annulled_question_shows_no_outcome_marks", async () => {
+    const { user } = await open("study");
+    await user.click(option("A"));
+    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("button", { name: "Anular questão" }));
+    await screen.findByRole("button", { name: "Desfazer anulação" });
+
+    expect(card().querySelectorAll(".is-correct, .is-wrong, .is-key, .option-note")).toHaveLength(
+      0,
+    );
+    expect(screen.getByRole("button", { name: /Questão 1.*anulada/ })).toHaveClass("is-annulled");
   });
 });
 
@@ -749,28 +793,24 @@ describe("Resolver: answer-sheet UI", () => {
     expect(live()).not.toHaveTextContent(/errou/);
 
     const wrong = within(card()).getByText("Sua resposta", { exact: false });
-    expect(wrong.querySelector("[aria-hidden=true]")).toHaveTextContent("✕");
-    const key = within(card()).getByText("Gabarito", { selector: ".option-mark", exact: false });
+    expect(wrong.querySelector("[aria-hidden=true]")).toHaveTextContent("✗");
+    const key = within(card()).getByText("Gabarito", { selector: ".option-note", exact: false });
     expect(key.querySelector("[aria-hidden=true]")).toHaveTextContent("✓");
-    await showMap(user);
     const nav = screen.getByRole("button", { name: "Questão 1, respondida, errada" });
-    expect(nav.querySelector(".nav-mark")).toHaveTextContent("✕");
+    expect(nav.querySelector(".bubble-mark")).toHaveTextContent("✗");
   });
 
   it("marks flagged and annulled questions in the navigator with shapes", async () => {
     const { user } = await open("study");
     await user.keyboard("f");
-    await showMap(user);
     const flagged = await screen.findByRole("button", { name: "Questão 1, marcada" });
-    expect(flagged.querySelector(".nav-flag")).toHaveTextContent("⚑");
-    await user.keyboard("{Escape}");
+    expect(flagged.querySelector(".bubble-mark.is-flag")).toHaveTextContent("⚑");
 
     await user.keyboard("b");
     await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("button", { name: "Anular questão" }));
-    await showMap(user);
     const annulled = await screen.findByRole("button", { name: /Questão 1.*anulada/ });
-    expect(annulled).toHaveClass("outcome-annulled");
+    expect(annulled).toHaveClass("is-annulled");
   });
 
   it("ignores letter shortcuts with modifier keys and while typing in a field", async () => {
@@ -870,20 +910,19 @@ describe("Resolver: answer-sheet UI", () => {
     await user.keyboard("{Enter}");
     await screen.findByRole("region", { name: "Gabarito e explicação" });
     await waitFor(() =>
-      expect(document.querySelector(".option-correct.option-pop")).not.toBeNull(),
+      expect(document.querySelector(".bubble.is-correct.is-popping")).not.toBeNull(),
     );
     await user.keyboard("{ArrowRight}");
     await user.keyboard("{ArrowLeft}");
-    expect(document.querySelector(".option-correct")).not.toBeNull();
-    expect(document.querySelector(".option-pop")).toBeNull();
+    expect(document.querySelector(".option.is-correct")).not.toBeNull();
+    expect(document.querySelector(".is-popping")).toBeNull();
   });
 
   it("does not hint at outcomes in the navigator before reveal, in Estudo or Simulado", async () => {
-    const words = /certa|errada|em branco|anulada|correct|wrong|blank|annulled|✓|✕/i;
+    const words = /certa|errada|em branco|anulada|correct|wrong|blank|annulled|✓|✗/i;
     for (const mode of ["study", "exam"] as const) {
       const { user } = await open(mode);
       await user.keyboard("a");
-      await showMap(user);
       if (mode === "study") {
         // Marked but not confirmed: still nothing to reveal.
         expect(screen.getByRole("button", { name: "Questão 1" })).toBeInTheDocument();
@@ -892,12 +931,11 @@ describe("Resolver: answer-sheet UI", () => {
           expect(screen.getByRole("button", { name: "Questão 1, respondida" })).toBeInTheDocument(),
         );
       }
-      const nav = await showMap(user);
-      for (const bubble of within(nav).getAllByRole("button")) {
+      for (const bubble of within(rail()).getAllByRole("button")) {
         expect(bubble.getAttribute("aria-label")).not.toMatch(words);
         expect(bubble.className).not.toMatch(words);
         expect(bubble.textContent).not.toMatch(words);
-        expect(bubble.className).toContain("outcome-hidden");
+        expect(bubble.className).not.toMatch(/is-correct|is-wrong|is-annulled/);
       }
       cleanup();
     }
@@ -1029,25 +1067,38 @@ describe("Navigator", () => {
   const many = (count: number): ResponseView[] =>
     Array.from({ length: count }, (_, position) => multiple(position));
 
-  it("groups large sets in blocks of ten with visible labels, every bubble keyboard-reachable", async () => {
+  it("the_rail_groups_questions_by_twenty, every bubble keyboard-reachable", async () => {
     const onSelect = vi.fn();
     const user = userEvent.setup();
-    render(() => <Navigator questions={many(25)} current={0} onSelect={onSelect} />);
+    render(() => <Navigator questions={many(45)} current={0} onSelect={onSelect} />);
 
-    for (const label of ["1–10", "11–20", "21–25"]) {
-      expect(screen.getByRole("group", { name: `Questões ${label}` })).toHaveTextContent(label);
+    for (const label of ["1–20", "21–40", "41–45"]) {
+      expect(screen.getByRole("group", { name: `Questões ${label}` })).toHaveTextContent(
+        `Q ${label}`,
+      );
     }
-    expect(screen.getAllByRole("button")).toHaveLength(25);
-    const last = screen.getByRole("button", { name: "Questão 25" });
+    expect(screen.getAllByRole("button")).toHaveLength(45);
+    const last = screen.getByRole("button", { name: "Questão 45" });
     last.focus();
     await user.keyboard("{Enter}");
-    expect(onSelect).toHaveBeenCalledWith(24);
+    expect(onSelect).toHaveBeenCalledWith(44);
   });
 
-  it("is a single ungrouped sheet for small sets", () => {
+  it("the_rail_stays_a_labelled_nav with its progress and a legend in words", () => {
     render(() => <Navigator questions={many(8)} current={0} onSelect={() => {}} />);
-    expect(screen.queryByRole("group")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button")).toHaveLength(8);
+    const nav = screen.getByRole("navigation", { name: "Questões" });
+    expect(within(nav).getByRole("progressbar")).toHaveAttribute("aria-valuemax", "8");
+    expect(nav).toHaveTextContent("Marcada para revisar");
+    expect(screen.getAllByRole("group")).toHaveLength(1);
+  });
+
+  it("rail_bubbles_name_their_state", () => {
+    const questions = many(5);
+    questions[3] = { ...questions[3]!, choice: "q3-o0", flagged: true };
+    render(() => <Navigator questions={questions} current={3} onSelect={() => {}} />);
+    const bubble = screen.getByRole("button", { name: "Questão 4, respondida, marcada" });
+    expect(bubble).toHaveAttribute("aria-current", "step");
+    expect(bubble).toHaveClass("is-filled", "is-current");
   });
 });
 
@@ -1084,42 +1135,5 @@ describe("Resolver: focus mode", () => {
 
     await open("exam");
     expect(focusMode()).toBe(true);
-  });
-});
-
-describe("Resolver: question map drawer", () => {
-  const toggle = () => screen.getByRole("button", { name: /^Mapa de questões/ });
-  const map = () => screen.queryByRole("navigation", { name: "Mapa de questões" });
-
-  it("starts closed and shows the answered count on its toggle", async () => {
-    const { user } = await open("exam");
-    expect(map()).not.toBeInTheDocument();
-    expect(toggle()).toHaveAttribute("aria-expanded", "false");
-    expect(toggle()).toHaveTextContent("(0/3)");
-    await user.keyboard("b");
-    await waitFor(() => expect(toggle()).toHaveTextContent("(1/3)"));
-  });
-
-  it("opens on the current question and closes on Escape, returning focus", async () => {
-    const { user } = await open("exam");
-    await user.click(toggle());
-    expect(toggle()).toHaveAttribute("aria-expanded", "true");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Questão 1" })).toHaveFocus());
-
-    await user.keyboard("{Escape}");
-    expect(map()).not.toBeInTheDocument();
-    expect(toggle()).toHaveFocus();
-  });
-
-  it("closes once a question is picked, or on a click outside", async () => {
-    const { user } = await open("exam");
-    await user.click(toggle());
-    await user.click(screen.getByRole("button", { name: "Questão 2" }));
-    await screen.findByRole("article", { name: "Questão 2 de 3" });
-    expect(map()).not.toBeInTheDocument();
-
-    await user.click(toggle());
-    await user.click(card());
-    expect(map()).not.toBeInTheDocument();
   });
 });

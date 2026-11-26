@@ -1,0 +1,109 @@
+/* ---- Bubble: the answer-sheet mark, shared by options and the navigator ---- */
+.bubble {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--bubble-size);
+  height: var(--bubble-size);
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+.bubble-lg {
+  width: var(--bubble-size-lg);
+  height: var(--bubble-size-lg);
+  font-weight: 400;
+  font-size: 1rem;
+  cursor: pointer;
+}
+.bubble.is-filled {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.bubble.is-correct {
+  border-color: var(--success);
+  background: var(--success-soft);
+  color: var(--text);
+}
+.bubble.is-wrong {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--text);
+}
+.bubble.is-key {
+  border-color: var(--success);
+  color: var(--success);
+}
+.bubble.is-filled.is-correct,
+.bubble.is-filled.is-key {
+  background: var(--success);
+  color: var(--on-accent);
+}
+.bubble.is-filled.is-wrong {
+  background: var(--danger);
+  color: var(--on-accent);
+}
+.bubble.is-current {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+.bubble.is-annulled {
+  text-decoration: line-through;
+}
+.bubble-mark {
+  position: absolute;
+  right: -0.3rem;
+  bottom: -0.3rem;
+  display: grid;
+  place-items: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.is-correct > .bubble-mark {
+  color: var(--success);
+}
+.is-wrong > .bubble-mark {
+  color: var(--danger);
+}
+.bubble-mark.is-flag {
+  top: -0.3rem;
+  bottom: auto;
+  color: var(--flag);
+}
+
+/* A confirmed right answer pops once as its bubble fills; the class is set only right after the
+   confirmation, never when navigating or reviewing. */
+.bubble.is-popping {
+  animation: bubble-pop var(--dur-base) var(--ease);
+}
+@keyframes bubble-pop {
+  from {
+    transform: scale(0.8);
+  }
+  60% {
+    transform: scale(1.12);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bubble.is-popping {
+    animation: none;
+  }
+}

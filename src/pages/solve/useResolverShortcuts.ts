@@ -55,7 +55,7 @@ export default function useResolverShortcuts(options: ShortcutOptions) {
         // Estudo: keep the focus on the marked option, so Enter confirms it.
         if (options.feedbackMode() === "study") {
           document
-            .querySelectorAll<HTMLElement>(".option-choose")
+            .querySelectorAll<HTMLElement>(".option")
             .forEach((button) => button.dataset.optionId === option.id && button.focus());
         }
         return true;
@@ -65,7 +65,7 @@ export default function useResolverShortcuts(options: ShortcutOptions) {
   const handleConfirm = (target: EventTarget | null): boolean => {
     // A focused button keeps Enter for its own action, except the option that was just marked.
     const onOtherButton =
-      target instanceof HTMLButtonElement && !target.matches(".option-choose[aria-pressed=true]");
+      target instanceof HTMLButtonElement && !target.matches(".option[aria-pressed=true]");
     if (options.pending() === null || onOtherButton) return false;
     options.confirm();
     return true;

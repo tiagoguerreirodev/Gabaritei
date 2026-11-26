@@ -74,16 +74,11 @@ input[type="radio"] {
   }
 
   .nav-item[aria-current="page"],
-  .option.selected,
-  .navigator .current,
+  .option.is-selected,
+  .bubble.is-current,
   .tab[aria-selected="true"] {
     outline: 2px solid Highlight;
     outline-offset: -2px;
-  }
-
-  .navigator .flagged {
-    box-shadow: none;
-    border-bottom: 4px solid Highlight;
   }
 
   .meter-fill {

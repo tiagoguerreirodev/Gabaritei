@@ -1,0 +1,69 @@
+/* ---- Option: a row of the answer sheet ---- */
+.options {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+.option {
+  align-items: flex-start;
+}
+.option > .bubble {
+  margin-top: 0.1rem;
+}
+.option:hover {
+  border-color: var(--border-strong);
+}
+.option-text {
+  flex: 1;
+  font-family: var(--font-reading);
+  font-size: 1.125rem;
+  line-height: 1.7;
+}
+.option-note {
+  align-self: center;
+}
+.option-note {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.option.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.option.is-correct {
+  border-color: var(--success);
+  background: var(--success-soft);
+}
+.option.is-correct .option-note {
+  color: var(--success);
+}
+.option.is-wrong {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+.option.is-wrong .option-note {
+  color: var(--danger);
+}
+.option.is-eliminated .option-text {
+  color: var(--muted);
+  text-decoration: line-through;
+}

@@ -99,7 +99,7 @@ export default function RecheckPanel(props: {
               <p>{result().reasoning}</p>
               <Show when={result().sources.length > 0}>
                 <h4>Fontes</h4>
-                <ul class="refs">
+                <ul class="explanation-refs">
                   <For each={result().sources}>{(source) => <li>{source}</li>}</For>
                 </ul>
               </Show>
@@ -124,7 +124,7 @@ export default function RecheckPanel(props: {
                 }
               >
                 {(key) => (
-                  <div class="reveal-actions">
+                  <div class="explanation-actions">
                     <button
                       type="button"
                       class="btn btn-primary"

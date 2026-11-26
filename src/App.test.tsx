@@ -51,6 +51,7 @@ describe("App shell", () => {
       "Banco",
       "Gerar",
       "Desempenho",
+      "Histórico",
       "Erros e revisões",
     ]);
     expect(linkLabels("Menu secundário")).toEqual(["Configurações"]);

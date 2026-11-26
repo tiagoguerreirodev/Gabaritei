@@ -24,12 +24,14 @@ use crate::learning::ErrorFilter;
 use crate::selection::{QuestionFilter, SessionOrder};
 
 mod active;
+mod history;
 mod response;
 mod scoring;
 mod session;
 mod view;
 
 pub use active::{ActiveAttempt, abandon, active};
+pub use history::{HistoryItem, HistoryPage, HistoryQuery, HistorySource, history};
 pub use response::{annul, answer, eliminate, finish, flag, restore, revealed_question};
 pub(crate) use scoring::{ANSWERED_RESPONSE_SQL, HIT_SQL, MISS_SQL};
 pub use scoring::{Outcome, QuestionStatus, RESPONSE_TIME_SQL, Score, outcome};

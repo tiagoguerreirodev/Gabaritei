@@ -4,6 +4,8 @@ const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
 export default function AttachmentList(props: {
   paths: string[];
+  styleReferences: string[];
+  onToggleStyle: (path: string, isStyle: boolean) => void;
   onRemove: (path: string) => void;
 }) {
   return (
@@ -13,6 +15,15 @@ export default function AttachmentList(props: {
           {(path) => (
             <li>
               {fileName(path)}{" "}
+              <label>
+                <input
+                  type="checkbox"
+                  aria-label={`Referência de estilo: ${fileName(path)}`}
+                  checked={props.styleReferences.includes(path)}
+                  onChange={(event) => props.onToggleStyle(path, event.currentTarget.checked)}
+                />{" "}
+                prova de referência de estilo
+              </label>{" "}
               <button
                 type="button"
                 class="link-button"

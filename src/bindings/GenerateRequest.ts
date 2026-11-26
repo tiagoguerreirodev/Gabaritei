@@ -17,11 +17,19 @@ topic: TopicPath,
  */
 count: number, 
 /**
- * Board style, e.g. "Cebraspe". Optional.
+ * Exam board, e.g. "Cebraspe". Optional.
  */
 board: string | null, 
 /**
- * `None` lets the generator mix both formats.
+ * The exam the questions aim at, e.g. "TRF 1ª Região 2024". Optional.
+ */
+contest: string | null, 
+/**
+ * The job position of that exam, e.g. "Analista Judiciário". Optional.
+ */
+position: string | null, 
+/**
+ * `None` follows a reliable reference exam, or mixes both formats without one.
  */
 format: QuestionType | null, instructions: string | null, sources: GenerateSources, 
 /**

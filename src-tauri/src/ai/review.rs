@@ -16,7 +16,7 @@ use super::agent::{Agent, Effort};
 use super::blind_check::{BlindCheck, VerdictState};
 use super::draft::{self, Draft, DraftStatus};
 use super::draft_files;
-use super::generate::{DraftCheck, DraftProblem, check_draft, draft_inputs};
+use super::generate::{DraftCheck, DraftProblem, GenerateRequest, check_draft, draft_inputs};
 use super::jobs::{GenerationManager, GenerationStatus};
 use super::runner::{CancelToken, Progress};
 use crate::bank::catalog::CollectionKind;
@@ -452,8 +452,7 @@ fn write_import(
     let chosen = selected_questions(states, check, mode)?;
     let (outcome, local_ids) = import_selected(conn, draft, states, &chosen, now)?;
     let title = collection_title(draft);
-    let collection_id =
-        create_collection(conn, &title, draft.request.request.board.as_deref(), now)?;
+    let collection_id = create_collection(conn, &title, &draft.request.request, now)?;
     place_questions(conn, &collection_id, &local_ids, &outcome)?;
     draft::set_status(conn, &draft.id, DraftStatus::Imported)?;
     Ok(ImportResult {
@@ -550,14 +549,21 @@ fn collection_title(draft: &Draft) -> String {
 fn create_collection(
     conn: &Connection,
     title: &str,
-    board: Option<&str>,
+    request: &GenerateRequest,
     now: &str,
 ) -> AppResult<CollectionId> {
     let collection_id = ids::generate::<CollectionId>(&mut rand::rng());
     conn.execute(
         "INSERT INTO collections (id, title, kind, contest, board, created_at)
-         VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
-        params![collection_id, title, CollectionKind::Generated, board, now],
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            collection_id,
+            title,
+            CollectionKind::Generated,
+            request.contest,
+            request.board,
+            now
+        ],
     )?;
     Ok(collection_id)
 }

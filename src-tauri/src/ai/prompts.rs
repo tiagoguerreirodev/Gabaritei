@@ -35,10 +35,91 @@ fn format_rules(format: Option<QuestionType>) -> &'static str {
             "Todas as questões devem ser do tipo Certo/Errado (type \"boolean\")."
         }
         None => {
-            "Você pode misturar os dois formatos: múltipla escolha (type \"multiple\") e \
-Certo/Errado (type \"boolean\")."
+            "O usuário não escolheu o formato. Se houver uma prova de referência confiável do alvo, \
+siga o tipo de questão dela (Certo/Errado ou múltipla escolha). Sem essa referência, você pode \
+misturar os dois: múltipla escolha (type \"multiple\") e Certo/Errado (type \"boolean\")."
         }
     }
+}
+
+/// The target of the questions as the user described it, one line per filled field.
+fn target_lines(request: &GenerateRequest) -> String {
+    [
+        ("Banca", &request.board),
+        ("Concurso", &request.contest),
+        ("Cargo", &request.position),
+    ]
+    .into_iter()
+    .filter_map(|(label, value)| {
+        let value = value.as_deref().map(str::trim).filter(|v| !v.is_empty())?;
+        Some(format!("- {label}: {value}\n"))
+    })
+    .collect()
+}
+
+/// How the agent should imitate the exam the user is aiming at. Empty without a target, a
+/// style reference or web research.
+fn style_section(request: &GenerateRequest) -> String {
+    let target = target_lines(request);
+    let references = &request.sources.style_references;
+    if target.is_empty() && references.is_empty() {
+        return String::new();
+    }
+    let mut text = String::from("\nESTILO DA PROVA\n");
+    if !target.is_empty() {
+        text.push_str("Alvo informado pelo usuário:\n");
+        text.push_str(&target);
+    }
+    if request.board.is_some() {
+        text.push_str(
+            "- Use a banca para orientar a redação formal dos enunciados, variar os comandos \
+conforme as provas dessa banca e reproduzir as estruturas de questão e os tipos de distratores \
+que ela costuma usar.\n",
+        );
+    }
+    if request.contest.is_some() || request.position.is_some() {
+        text.push_str(
+            "- Use o concurso e o cargo para ajustar a dificuldade e a profundidade da cobrança, \
+sempre dentro do assunto selecionado. Não mude de assunto.\n",
+        );
+    }
+    if !references.is_empty() {
+        let numbers = style_reference_numbers(request);
+        text.push_str(&format!(
+            "- Anexos de referência de estilo: os arquivos de `anexos/` cujo nome começa por {numbers} \
+são provas anteriores. Estude a redação, os comandos, as estruturas e os distratores deles e \
+imite-os, sem copiar questões. Os demais anexos são material de conteúdo.\n"
+        ));
+    }
+    if request.sources.web {
+        text.push_str(
+            "- Pesquise na web provas oficiais do alvo (banca, concurso e cargo) para confirmar o \
+estilo, os comandos e o nível.\n",
+        );
+    }
+    text.push_str(
+        "- Os campos preenchidos pelo usuário têm prioridade: se um anexo ou prova encontrada \
+apontar para outra banca, concurso ou cargo, use-o só como referência geral de estilo.\n\
+- Se faltar uma referência confiável para o alvo exato, use uma referência mais ampla (a mesma \
+banca, ou concursos parecidos). Se ela também faltar, use o estilo geral de concursos públicos \
+brasileiros. Nunca invente uma prova de referência.\n\
+- Questões de múltipla escolha continuam com exatamente 5 alternativas.\n",
+    );
+    text
+}
+
+/// The `anexos/` prefixes of the style references, e.g. "1- ou 3-" (the runner numbers the
+/// attachments in order).
+fn style_reference_numbers(request: &GenerateRequest) -> String {
+    request
+        .sources
+        .attachments
+        .iter()
+        .enumerate()
+        .filter(|(_, file)| request.sources.style_references.contains(file))
+        .map(|(index, _)| format!("\"{}-\"", index + 1))
+        .collect::<Vec<_>>()
+        .join(" ou ")
 }
 
 /// The task for the generate role.
@@ -70,12 +151,7 @@ houver.\n\n{DATA_RULE}\n",
         count = request.count,
         format = format_rules(request.format),
     );
-    if let Some(board) = request.board.as_deref().filter(|b| !b.trim().is_empty()) {
-        text.push_str(&format!(
-            "\nESTILO DA BANCA: imite o estilo, o nível de dificuldade e as pegadinhas típicas da \
-banca {board}.\n"
-        ));
-    }
+    text.push_str(&style_section(request));
     if let Some(extra) = request
         .instructions
         .as_deref()

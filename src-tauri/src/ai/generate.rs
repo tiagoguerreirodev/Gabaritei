@@ -24,6 +24,8 @@ use crate::ids::{self, DraftId, QuestionId};
 
 pub const MAX_COUNT: u32 = 30;
 const MAX_BOARD: usize = 100;
+const MAX_CONTEST: usize = 150;
+const MAX_POSITION: usize = 150;
 const MAX_INSTRUCTIONS: usize = 4_000;
 const MAX_ATTACHMENTS: usize = 5;
 const MAX_ATTACHMENT_BYTES: u64 = 20 * 1024 * 1024;
@@ -38,6 +40,9 @@ pub struct GenerateSources {
     pub web: bool,
     /// Paths of PDF, Markdown or text files. Stored in the draft by file name only.
     pub attachments: Vec<String>,
+    /// The attachments (a subset of `attachments`) that are past exams to imitate in style.
+    #[serde(default)]
+    pub style_references: Vec<String>,
 }
 
 /// The generation form (spec §3.2).
@@ -49,9 +54,15 @@ pub struct GenerateRequest {
     pub topic: TopicPath,
     /// 1 to 30 questions.
     pub count: u32,
-    /// Board style, e.g. "Cebraspe". Optional.
+    /// Exam board, e.g. "Cebraspe". Optional.
     pub board: Option<String>,
-    /// `None` lets the generator mix both formats.
+    /// The exam the questions aim at, e.g. "TRF 1ª Região 2024". Optional.
+    #[serde(default)]
+    pub contest: Option<String>,
+    /// The job position of that exam, e.g. "Analista Judiciário". Optional.
+    #[serde(default)]
+    pub position: Option<String>,
+    /// `None` follows a reliable reference exam, or mixes both formats without one.
     pub format: Option<QuestionType>,
     pub instructions: Option<String>,
     pub sources: GenerateSources,
@@ -98,33 +109,24 @@ impl GenerateRequest {
     }
 
     fn validate_text_fields(&mut self) -> AppResult<()> {
-        self.board = self
-            .board
-            .take()
-            .filter(|b| !blank(b))
-            .map(|b| b.trim().to_owned());
-        if self
-            .board
-            .as_ref()
-            .is_some_and(|b| b.chars().count() > MAX_BOARD)
-        {
-            return Err(AppError::Invalid(format!(
-                "O nome da banca tem mais de {MAX_BOARD} caracteres."
-            )));
-        }
-        self.instructions = self
-            .instructions
-            .take()
-            .filter(|i| !blank(i))
-            .map(|i| i.trim().to_owned());
-        if self
-            .instructions
-            .as_ref()
-            .is_some_and(|i| i.chars().count() > MAX_INSTRUCTIONS)
-        {
-            return Err(AppError::Invalid(format!(
-                "As instruções têm mais de {MAX_INSTRUCTIONS} caracteres."
-            )));
+        for (value, label, max) in [
+            (&mut self.board, "O nome da banca", MAX_BOARD),
+            (&mut self.contest, "O nome do concurso", MAX_CONTEST),
+            (&mut self.position, "O nome do cargo", MAX_POSITION),
+            (&mut self.instructions, "As instruções", MAX_INSTRUCTIONS),
+        ] {
+            *value = value
+                .take()
+                .filter(|text| !blank(text))
+                .map(|text| text.trim().to_owned());
+            if value
+                .as_ref()
+                .is_some_and(|text| text.chars().count() > max)
+            {
+                return Err(AppError::Invalid(format!(
+                    "{label} tem mais de {max} caracteres."
+                )));
+            }
         }
         Ok(())
     }
@@ -141,7 +143,7 @@ impl GenerateRequest {
         Ok(())
     }
 
-    fn validate_attachments(&self) -> AppResult<()> {
+    fn validate_attachments(&mut self) -> AppResult<()> {
         let files = &self.sources.attachments;
         if files.len() > MAX_ATTACHMENTS {
             return Err(AppError::Invalid(format!(
@@ -173,24 +175,39 @@ impl GenerateRequest {
                 )));
             }
         }
+        let sources = &mut self.sources;
+        let attachments = &sources.attachments;
+        if !sources
+            .style_references
+            .iter()
+            .all(|r| attachments.contains(r))
+        {
+            return Err(AppError::Invalid(
+                "Só é possível marcar como referência de estilo um arquivo anexado.".into(),
+            ));
+        }
+        sources.style_references.dedup();
         Ok(())
     }
 
     /// The request as kept in the draft: attachments by file name, not by path.
     fn for_storage(&self) -> Self {
         let mut stored = self.clone();
-        stored.sources.attachments = self
-            .sources
-            .attachments
-            .iter()
-            .map(|file| {
-                Path::new(file)
-                    .file_name()
-                    .map_or_else(|| file.clone(), |n| n.to_string_lossy().into_owned())
-            })
-            .collect();
+        stored.sources.attachments = file_names(&self.sources.attachments);
+        stored.sources.style_references = file_names(&self.sources.style_references);
         stored
     }
+}
+
+fn file_names(paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|file| {
+            Path::new(file)
+                .file_name()
+                .map_or_else(|| file.clone(), |n| n.to_string_lossy().into_owned())
+        })
+        .collect()
 }
 
 /// One problem found in a draft. The message never quotes question text, so it is safe to show

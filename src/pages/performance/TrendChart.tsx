@@ -1,3 +1,4 @@
+import { A } from "@solidjs/router";
 import { For, Show } from "solid-js";
 import type { WeekPoint } from "../../bindings/WeekPoint";
 import { EmptyState } from "../../components/states";
@@ -49,7 +50,14 @@ export default function TrendChart(props: { weeks: WeekPoint[] }) {
     <Show
       when={props.weeks.length > 0}
       fallback={
-        <EmptyState title="Ainda não há respostas para mostrar a evolução.">
+        <EmptyState
+          title="Ainda não há respostas para mostrar a evolução."
+          action={
+            <A class="btn btn-primary" href="/banco">
+              Ir para o Banco
+            </A>
+          }
+        >
           <p class="muted">Finalize uma tentativa para ver o acerto semanal.</p>
         </EmptyState>
       }

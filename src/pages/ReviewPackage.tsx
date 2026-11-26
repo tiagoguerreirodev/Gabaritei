@@ -2,7 +2,7 @@ import { A, useSearchParams } from "@solidjs/router";
 import { For, Show, createMemo, createResource } from "solid-js";
 import { api } from "../api";
 import type { DraftSummary } from "../bindings/DraftSummary";
-import { InlineError, ResourceView } from "../components/states";
+import { EmptyState, InlineError, ResourceView } from "../components/states";
 import { formatDuration, formatNumber } from "../format";
 import { generationRunRevision } from "../generation";
 import { agentLabels, effortLabels } from "../labels";
@@ -38,9 +38,14 @@ function WaitingList() {
       retrying={drafts.loading}
       onRetry={() => refetch()}
       empty={
-        <p class="muted">
-          Nenhum pacote esperando revisão. <A href="/gerar">Gerar um pacote</A>.
-        </p>
+        <EmptyState
+          title="Nenhum pacote esperando revisão."
+          action={
+            <A class="btn btn-primary" href="/gerar">
+              Gerar questões
+            </A>
+          }
+        />
       }
     >
       {(list) => (

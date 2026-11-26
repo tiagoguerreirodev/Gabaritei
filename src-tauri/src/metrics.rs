@@ -323,6 +323,19 @@ impl StrengthGroups {
             .or_insert_with(|| (topic_id, Acc::default()));
         topic.add(id, row);
     }
+
+    /// Lists a topic even when it has no questions yet.
+    fn add_topic(&mut self, topic_id: TopicId, path: TopicPath) {
+        self.areas
+            .entry(path.area)
+            .or_default()
+            .matters
+            .entry(path.matter)
+            .or_default()
+            .topics
+            .entry(path.topic)
+            .or_insert_with(|| (topic_id, Acc::default()));
+    }
 }
 
 /// Folds the groups into areas, giving each topic its trend from `trends` (none if absent).
@@ -393,9 +406,23 @@ fn sort_areas(areas: &mut [AreaStats]) {
 }
 
 /// Strength of every area, matter and topic for the Banco tree, over all finished attempts
-/// in either mode. Unlike [`performance`], groups keep name order.
+/// in either mode, including topics created ahead of time that have no questions yet.
+/// Unlike [`performance`], groups keep name order.
 pub fn bank_strength(conn: &Connection) -> AppResult<Vec<AreaStats>> {
     let mut groups = StrengthGroups::default();
+    let mut statement = conn.prepare("SELECT id, area, matter, topic FROM topics")?;
+    let topics = statement.query_map([], |row| {
+        let path = TopicPath {
+            area: row.get(1)?,
+            matter: row.get(2)?,
+            topic: row.get(3)?,
+        };
+        Ok((row.get(0)?, path))
+    })?;
+    for topic in topics {
+        let (topic_id, path) = topic?;
+        groups.add_topic(topic_id, path);
+    }
     visit_topic_results(
         conn,
         &PerformanceQuery::default(),

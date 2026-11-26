@@ -105,17 +105,15 @@ function backend(
     switch (command) {
       case "question_count_limits":
         return counts;
-      case "topic_choices": {
-        const path = args.path as { area: string; matter: string; topic: string };
-        const match = ["Controle de constitucionalidade", "CONTROLE"].includes(path.topic);
+      case "collections":
         return {
-          path,
-          matters: ["Constitucional"],
-          topics: ["Controle de constitucionalidade"],
-          questions: match ? 5 : null,
-          isNew: Boolean(path.area && path.matter && path.topic && !match),
+          items: [],
+          total: 0,
+          page: 0,
+          pageSize: 1,
+          contests: [],
+          boards: ["Cebraspe", "FGV"],
         };
-      }
       case "topics_tree":
         return tree;
       case "ai_catalog":
@@ -180,9 +178,9 @@ function renderPage(path = "/gerar") {
 }
 
 async function fillTopic(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(await screen.findByLabelText("Área"), "Direito");
-  await user.type(screen.getByLabelText("Matéria"), "Constitucional");
-  await user.type(screen.getByLabelText("Assunto"), "Controle de constitucionalidade");
+  await user.selectOptions(await screen.findByLabelText("Área"), "Direito");
+  await user.selectOptions(screen.getByLabelText("Matéria"), "Constitucional");
+  await user.selectOptions(screen.getByLabelText("Assunto"), "Controle de constitucionalidade");
 }
 
 /** Opens the "Opções avançadas" disclosure (it starts collapsed). */
@@ -213,7 +211,9 @@ describe("Gerar", () => {
     await fillTopic(user);
     await user.clear(screen.getByLabelText("Quantidade"));
     await user.type(screen.getByLabelText("Quantidade"), "7");
-    await user.type(screen.getByLabelText("Estilo da banca"), "Cebraspe");
+    await user.selectOptions(screen.getByLabelText("Banca"), "Cebraspe");
+    await user.type(screen.getByLabelText("Concurso"), "TRF 1");
+    await user.type(screen.getByLabelText("Cargo"), "Analista");
     await user.selectOptions(screen.getByLabelText("Formato"), "boolean");
     await user.type(screen.getByLabelText("Instruções"), "Foque em jurisprudência");
     await user.type(screen.getByLabelText("Modelo: Conferente"), "-x");
@@ -236,9 +236,47 @@ describe("Gerar", () => {
       },
       count: 7,
       board: "Cebraspe",
+      contest: "TRF 1",
+      position: "Analista",
       format: "boolean",
       instructions: "Foque em jurisprudência",
-      sources: { remnote: false, web: false, attachments: [] },
+      sources: { remnote: false, web: false, attachments: [], styleReferences: [] },
+    });
+  });
+
+  it("lets the user type a board that is not in the list", async () => {
+    const calls = backend();
+    const user = userEvent.setup();
+    renderPage();
+    await fillTopic(user);
+    await user.selectOptions(await screen.findByLabelText("Banca"), "Outra…");
+    await user.type(screen.getByLabelText("Nome da banca"), "Instituto X");
+    await user.click(screen.getByRole("button", { name: "Gerar" }));
+    const start = await waitFor(() => {
+      const call = calls.find((c) => c.command === "generation_start");
+      expect(call).toBeDefined();
+      return call!;
+    });
+    expect((start.args.request as GenerateRequest).board).toBe("Instituto X");
+  });
+
+  it("submits attachments marked as style references", async () => {
+    const calls = backend();
+    const user = userEvent.setup();
+    renderPage();
+    await fillTopic(user);
+    await user.click(await screen.findByText(/Opções avançadas/));
+    await user.click(screen.getByRole("button", { name: "Anexar arquivos" }));
+    await user.click(await screen.findByLabelText("Referência de estilo: Lei 8.112.md"));
+    await user.click(screen.getByRole("button", { name: "Gerar" }));
+    const start = await waitFor(() => {
+      const call = calls.find((c) => c.command === "generation_start");
+      expect(call).toBeDefined();
+      return call!;
+    });
+    expect((start.args.request as GenerateRequest).sources).toMatchObject({
+      attachments: ["/tmp/Lei 8.112.md"],
+      styleReferences: ["/tmp/Lei 8.112.md"],
     });
   });
 
@@ -276,26 +314,23 @@ describe("Gerar", () => {
     expect(screen.getByText(/De 2 a 7/)).toBeVisible();
   });
 
-  it("notes whether the topic is new or already has questions", async () => {
+  it("notes how many questions the selected topic already has", async () => {
     backend();
     const user = userEvent.setup();
     renderPage();
     await fillTopic(user);
     expect(await screen.findByText(/Já existem 5 questões neste assunto/)).toBeVisible();
-    await user.type(screen.getByLabelText("Assunto"), " novo");
-    expect(await screen.findByText(/Assunto novo: será criado/)).toBeVisible();
   });
 
-  it("renders an existing topic even when the returned name differs from the typed path", async () => {
+  it("only offers the matters and topics of the selected area", async () => {
     backend();
     const user = userEvent.setup();
     renderPage();
-    await fillTopic(user);
-    const topic = screen.getByLabelText("Assunto");
-    await user.clear(topic);
-    await user.type(topic, "CONTROLE");
-    expect(await screen.findByText(/Já existem 5 questões/)).toBeVisible();
-    expect(screen.queryByText(/Assunto novo:/)).toBeNull();
+    expect(await screen.findByLabelText("Matéria")).toBeDisabled();
+    expect(screen.getByLabelText("Assunto")).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText("Área"), "Direito");
+    expect(screen.getByLabelText("Matéria")).toBeEnabled();
+    expect(screen.getByLabelText("Assunto")).toBeDisabled();
   });
 
   it("lets the web be combined with attachments and RemNote", async () => {
@@ -318,6 +353,7 @@ describe("Gerar", () => {
       remnote: true,
       web: true,
       attachments: ["/tmp/Lei 8.112.md"],
+      styleReferences: [],
     });
   });
 
@@ -448,10 +484,10 @@ describe("Gerar", () => {
     expect(details).not.toHaveAttribute("open");
     expect(screen.getByLabelText("Quantidade")).toBeVisible();
     expect(screen.getByLabelText("Quantidade")).toBeRequired();
-    expect(screen.getByLabelText("Estilo da banca")).not.toBeVisible();
+    expect(screen.getByLabelText("Instruções")).not.toBeVisible();
     await user.click(summary);
     expect(details).toHaveAttribute("open");
-    expect(screen.getByLabelText("Estilo da banca")).toBeVisible();
+    expect(screen.getByLabelText("Instruções")).toBeVisible();
   });
 
   async function submitEmptyForm() {
@@ -464,14 +500,14 @@ describe("Gerar", () => {
 
   it("links the missing topic error to the first invalid field", async () => {
     const { calls } = await submitEmptyForm();
-    const message = await screen.findByText("Informe a área, a matéria e o assunto.");
+    const message = await screen.findByText("Selecione a área, a matéria e o assunto.");
     expect(message).toBeVisible();
     // Only the summary is an alert; the per-field text is not.
     expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(screen.getByLabelText("Área")).toHaveFocus();
     expect(screen.getByLabelText("Área")).toBeInvalid();
     expect(screen.getByLabelText("Área")).toHaveAccessibleDescription(
-      "Informe a área, a matéria e o assunto.",
+      "Selecione a área, a matéria e o assunto.",
     );
     expect(calls.some((c) => c.command === "generation_start")).toBe(false);
   });
@@ -479,8 +515,8 @@ describe("Gerar", () => {
   it("keeps the topic error while typing between validation events", async () => {
     const { user } = await submitEmptyForm();
     // Typing does not make the message flicker; it is re-checked on submit or blur.
-    await user.type(screen.getByLabelText("Área"), "Direito");
-    expect(screen.getByText("Informe a área, a matéria e o assunto.")).toBeVisible();
+    await user.selectOptions(screen.getByLabelText("Área"), "Direito");
+    expect(screen.getByText("Selecione a área, a matéria e o assunto.")).toBeVisible();
   });
 
   it("moves focus to the empty count after a valid topic", async () => {
@@ -491,7 +527,7 @@ describe("Gerar", () => {
     expect(
       await screen.findByText("A quantidade deve ser um número inteiro de 1 a 30."),
     ).toBeVisible();
-    expect(screen.queryByText("Informe a área, a matéria e o assunto.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Selecione a área, a matéria e o assunto.")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Quantidade")).toBeInvalid();
     expect(screen.getByLabelText("Quantidade")).toHaveFocus();
     expect(screen.getByLabelText("Quantidade")).toHaveAccessibleDescription(
@@ -508,7 +544,7 @@ describe("Gerar", () => {
     backend(idle, stale, listed);
     renderPage();
     expect(await screen.findByText(/Corrija em “Opções avançadas”/)).toBeVisible();
-    expect(screen.getByLabelText("Estilo da banca")).toBeVisible();
+    expect(screen.getByLabelText("Instruções")).toBeVisible();
   });
 
   it("links to the finished package", async () => {

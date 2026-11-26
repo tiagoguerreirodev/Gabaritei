@@ -1,4 +1,4 @@
-import { useNavigate, useSearchParams } from "@solidjs/router";
+import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import { EmptyState, ResourceView } from "../components/states";
 import Resolver from "./solve/Resolver";
 
@@ -15,7 +15,14 @@ export default function Solve() {
         empty={
           <>
             <h1>Resolver</h1>
-            <EmptyState title="Nenhuma tentativa aberta.">
+            <EmptyState
+              title="Nenhuma tentativa aberta."
+              action={
+                <A class="btn btn-primary" href="/banco">
+                  Ir para o Banco
+                </A>
+              }
+            >
               <p class="muted">Comece um caderno ou um assunto no Banco.</p>
             </EmptyState>
           </>

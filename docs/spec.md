@@ -27,7 +27,7 @@ All UI text is in Portuguese. There are no accounts and no server.
 | 5 | History migration | **Bank only.** Import questions, collections, topics and images once from this repo's `biblioteca/`. There is no attempt history to carry over. |
 | 6 | Question formats | **5-option multiple choice** and **Certo/Errado**. No essays. |
 | 7 | Taxonomy | One **topic tree** (area › matter › topic). **Contest** and **board** become optional tags, not the top-level grouping. Tags live on **collections**; a question's contests are those of the collections that contain it (decided 2026-11-19, because 389 legacy questions belong to both contests). |
-| 8 | Generation scope | **One topic per generation**, picked from the tree or typed as a new path. Every generated question gets exactly that topic. |
+| 8 | Generation scope | **One topic per generation**, picked from the topics created ahead of time in Banco › Assuntos (Gerar never creates one). Every generated question gets exactly that topic. |
 | 9 | Generation form | Topic and count are required. Optional: **board style**, **format** (blank means the AI may mix both formats), **free-text instructions**. Sources: **RemNote**, **attached files**, **web**. The generator also gets **that topic's existing stems** so it avoids near-duplicates. |
 | 10 | No spoilers | **No screen shows a question's answer before you've answered it.** That includes the package preview. |
 | 11 | Package review | Preview shows the **summary and blind-check verdicts**: count, topic, validation problems, and agrees/disputed per question. A question the blind check **flagged** (disputed, or with a validation problem) also shows its **stem and options**, so you can judge it; **never** its answer key, explanation or references. A question with no verdict problem and no validation problem shows no content; a flagged line (disputed, or with a validation problem) expands to its stem and options whatever its verdict. You approve or discard. |
@@ -60,17 +60,18 @@ All UI text is in Portuguese. There are no accounts and no server.
 
 ### 3.2 Generation (*Gerar*)
 **Form**
-- Topic (tree picker or new path)
+- Topic (picker over the topics created in Banco › Assuntos)
 - Count
-- Board style (optional)
-- Format (optional; blank means the AI may mix)
+- Board (optional): a list of the boards of existing collections, plus "Outra" to type any board. Guides the formal wording, the command verbs, the question structures and the distractor types.
+- Contest and position (optional, free text): tune difficulty and depth within the topic.
+- Format (optional; an explicit choice is always respected. Blank follows the question type of a reliable reference exam, or lets the AI mix without one. Multiple choice always has 5 options.)
 - Free-text instructions (optional)
-- Sources: RemNote on/off, attached files (PDF, MD, TXT), web on/off
+- Sources: RemNote on/off, attached files (PDF, MD, TXT), web on/off. Each attachment can be marked as a style reference (a past exam). With web on, the generator also looks up official exams of the target. The user's board, contest and position win over what an attachment points to; without a reliable reference for the exact target it uses a broader one, then the general style of Brazilian public exams.
 - Generator agent, model and effort, prefilled from Settings
 - Checker agent, model and effort, prefilled from Settings
 
 **Pipeline**
-1. **Generate.** Run the generator CLI with the package JSON schema. The input includes the topic path, count, board, format, instructions, the topic's existing stems and the source settings.
+1. **Generate.** Run the generator CLI with the package JSON schema. The input includes the topic path, count, board, contest, position, format, instructions, the topic's existing stems and the source settings.
 2. **Validate.** Check the schema, option rules, duplicates and answer-key conflicts.
 3. **Blind check.** Run the checker CLI with **stems and options only**. It returns its chosen option, confidence and short justification per question.
 4. **Resolve disputes once.** Send each disagreement (the checker's choice and reasoning) back to the generator, which revises or defends the question. The checker re-checks the revised questions. Whatever still disagrees is marked **disputed**.
@@ -180,7 +181,7 @@ The patterns below were **verified against the installed CLIs** (Claude Code 2.1
 
 **Tauri commands, about 25:**
 - `home`
-- `topics_tree`
+- `topics_tree`, `create_topic`
 - `collections`, `collection`
 - `session_start`, `attempt`, `answer`, `eliminate`, `flag`, `finish`, `abandon`
 - `annul`, `recheck`, `apply_recheck`, `explain`

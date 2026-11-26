@@ -1,3 +1,4 @@
+import { HashRouter, Route } from "@solidjs/router";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -87,6 +88,7 @@ function backend(
 ) {
   const queries: CollectionQuery[] = [];
   const started: unknown[] = [];
+  const created: unknown[] = [];
   mockIPC((command, args) => {
     if (command === "session_start") {
       started.push((args as { request: unknown }).request);
@@ -95,6 +97,10 @@ function backend(
     if (command === "question_count_limits") {
       const { available } = (args as { context: { available: number } }).context;
       return { min: 1, max: Math.min(200, available), initial: Math.min(10, available) };
+    }
+    if (command === "create_topic") {
+      created.push((args as { path: unknown }).path);
+      return (args as { path: unknown }).path;
     }
     if (command === "topics_tree") return options.tree ?? tree;
     if (command === "collections") {
@@ -138,7 +144,7 @@ function backend(
     }
     throw new Error(`Unexpected command: ${command}`);
   });
-  return Object.assign(queries, { started });
+  return Object.assign(queries, { started, created });
 }
 
 const listedTitles = () =>
@@ -174,6 +180,51 @@ describe("Banco", () => {
       expect(within(treeList).getByText("Controle de constitucionalidade")).toBeVisible();
     });
 
+    it("does not offer to solve a topic without questions", async () => {
+      const user = userEvent.setup();
+      backend({
+        tree: {
+          questions: 0,
+          areas: [
+            {
+              name: "Direito",
+              stats: stats(0, 0, 0, 0),
+              matters: [
+                {
+                  name: "Penal",
+                  stats: stats(0, 0, 0, 0),
+                  topics: [{ topicId: 1, name: "Dolo", stats: stats(0, 0, 0, 0), trend: [] }],
+                },
+              ],
+            },
+          ],
+        },
+      });
+      render(() => <Bank />);
+
+      const treeList = await screen.findByRole("list", { name: "Assuntos" });
+      await user.click(within(treeList).getByText("Direito"));
+      await user.click(within(treeList).getByText("Penal"));
+      expect(within(treeList).getByText("Dolo")).toBeVisible();
+      expect(screen.queryByRole("button", { name: "Resolver Dolo" })).toBeNull();
+    });
+
+    it("creates a topic ahead of time", async () => {
+      const user = userEvent.setup();
+      const calls = backend();
+      render(() => <Bank />);
+
+      await user.type(await screen.findByLabelText("Nova área"), "Direito");
+      await user.type(screen.getByLabelText("Nova matéria"), "Penal");
+      await user.type(screen.getByLabelText("Novo assunto"), "Dolo");
+      await user.click(screen.getByRole("button", { name: "Criar assunto" }));
+
+      await waitFor(() =>
+        expect(calls.created).toEqual([{ area: "Direito", matter: "Penal", topic: "Dolo" }]),
+      );
+      await waitFor(() => expect(screen.getByLabelText("Novo assunto")).toHaveValue(""));
+    });
+
     it("shows coverage and an achievement bar on every level", async () => {
       backend();
       const user = userEvent.setup();
@@ -197,9 +248,17 @@ describe("Banco", () => {
 
     it("explains an empty bank", async () => {
       backend({ tree: { areas: [], questions: 0 } });
-      render(() => <Bank />);
+      render(() => (
+        <HashRouter>
+          <Route path="/" component={Bank} />
+        </HashRouter>
+      ));
 
       expect(await screen.findByText("Nenhuma questão no banco ainda.")).toBeVisible();
+      expect(screen.getByRole("link", { name: "Gerar questões" })).toHaveAttribute(
+        "href",
+        "#/gerar",
+      );
     });
   });
 

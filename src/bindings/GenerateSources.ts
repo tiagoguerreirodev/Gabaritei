@@ -7,4 +7,8 @@ export type GenerateSources = { remnote: boolean, web: boolean,
 /**
  * Paths of PDF, Markdown or text files. Stored in the draft by file name only.
  */
-attachments: Array<string>, };
+attachments: Array<string>, 
+/**
+ * The attachments (a subset of `attachments`) that are past exams to imitate in style.
+ */
+styleReferences: Array<string>, };

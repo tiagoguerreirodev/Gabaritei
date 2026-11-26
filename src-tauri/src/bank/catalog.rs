@@ -32,7 +32,7 @@ pub struct TopicTree {
 }
 
 /// Area › matter › topic with distinct question counts and strength at every level, in
-/// Portuguese name order. A question filed under two topics of the same matter counts once
+/// Portuguese name order, including topics created ahead of time that have no questions yet. A question filed under two topics of the same matter counts once
 /// for that matter.
 pub fn topic_tree(conn: &Connection) -> AppResult<TopicTree> {
     let mut areas = metrics::bank_strength(conn)?;
@@ -436,6 +436,21 @@ mod tests {
             })
             .unwrap();
         (db, ids)
+    }
+
+    #[test]
+    fn the_tree_lists_topics_created_ahead_with_zero_questions() {
+        let (db, _) = bank();
+        db.with(|conn| {
+            crate::bank::create_topic(conn, &TopicPath::new("História", "Brasil", "Império"))?;
+            let tree = topic_tree(conn)?;
+            let area = tree.areas.iter().find(|a| a.name == "História").unwrap();
+            assert_eq!(area.stats.questions, 0);
+            assert_eq!(area.matters[0].topics[0].name, "Império");
+            assert_eq!(area.matters[0].topics[0].stats.questions, 0);
+            Ok(())
+        })
+        .unwrap();
     }
 
     fn add_collection(

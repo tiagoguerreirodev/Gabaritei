@@ -1,10 +1,10 @@
-import { For, Show, createResource } from "solid-js";
-import { api } from "../../api";
+import { For, Show } from "solid-js";
+import { A } from "@solidjs/router";
 import { formatNumber } from "../../format";
 import type { TopicPath } from "../../bindings/TopicPath";
 import type { TopicTree } from "../../bindings/TopicTree";
 
-/** Area › matéria › assunto: pick from the bank or type a new path. */
+/** Área › matéria › assunto: pick from the topics created in Banco. */
 export default function TopicPicker(props: {
   tree: TopicTree;
   value: TopicPath;
@@ -17,16 +17,10 @@ export default function TopicPicker(props: {
 }) {
   const invalid = (text: string) => (props.error && !text.trim() ? "true" : undefined);
   const describedBy = (text: string) => (props.error && !text.trim() ? props.errorId : undefined);
-  const [choices] = createResource(
-    () => ({ ...props.value }),
-    (path) => api.topicChoices(path),
-  );
-  const current = () => (choices.loading || choices.error ? undefined : choices());
+  const area = () => props.tree.areas.find((candidate) => candidate.name === props.value.area);
+  const matter = () => area()?.matters.find((candidate) => candidate.name === props.value.matter);
+  const topic = () => matter()?.topics.find((candidate) => candidate.name === props.value.topic);
 
-  const existingQuestions = () => {
-    const count = current()?.questions;
-    return count == null ? undefined : { count };
-  };
   return (
     <div
       class="topic-path"
@@ -34,64 +28,73 @@ export default function TopicPicker(props: {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) props.onLeave?.();
       }}
     >
-      <input
-        class="input"
-        type="text"
-        id="gen-topic-area"
-        aria-label="Área"
-        aria-required="true"
-        aria-invalid={invalid(props.value.area)}
-        aria-describedby={describedBy(props.value.area)}
-        placeholder="Área (ex.: Direito)"
-        list="topic-areas"
-        value={props.value.area}
-        onInput={(event) => props.onChange({ ...props.value, area: event.currentTarget.value })}
-      />
-      <datalist id="topic-areas">
-        <For each={props.tree.areas}>{(area) => <option value={area.name} />}</For>
-      </datalist>
-      <input
-        class="input"
-        type="text"
-        id="gen-topic-matter"
-        aria-label="Matéria"
-        aria-required="true"
-        aria-invalid={invalid(props.value.matter)}
-        aria-describedby={describedBy(props.value.matter)}
-        placeholder="Matéria (ex.: Constitucional)"
-        list="topic-matters"
-        value={props.value.matter}
-        onInput={(event) => props.onChange({ ...props.value, matter: event.currentTarget.value })}
-      />
-      <datalist id="topic-matters">
-        <For each={current()?.matters}>{(matter) => <option value={matter} />}</For>
-      </datalist>
-      <input
-        class="input"
-        type="text"
-        id="gen-topic-topic"
-        aria-label="Assunto"
-        aria-required="true"
-        aria-invalid={invalid(props.value.topic)}
-        aria-describedby={describedBy(props.value.topic)}
-        placeholder="Assunto (ex.: Controle de constitucionalidade)"
-        list="topic-topics"
-        value={props.value.topic}
-        onInput={(event) => props.onChange({ ...props.value, topic: event.currentTarget.value })}
-      />
-      <datalist id="topic-topics">
-        <For each={current()?.topics}>{(topic) => <option value={topic} />}</For>
-      </datalist>
-      <Show when={current()?.isNew}>
-        <p class="muted" role="note">
-          Assunto novo: será criado quando você importar o pacote.
-        </p>
+      <Show
+        when={props.tree.areas.length > 0}
+        fallback={
+          <p class="muted" role="note">
+            Nenhum assunto criado ainda. Crie a área, a matéria e o assunto em{" "}
+            <A href="/banco">Banco</A>.
+          </p>
+        }
+      >
+        <select
+          class="input"
+          id="gen-topic-area"
+          aria-label="Área"
+          aria-required="true"
+          aria-invalid={invalid(props.value.area)}
+          aria-describedby={describedBy(props.value.area)}
+          value={props.value.area}
+          onChange={(event) =>
+            props.onChange({ area: event.currentTarget.value, matter: "", topic: "" })
+          }
+        >
+          <option value="">Área</option>
+          <For each={props.tree.areas}>
+            {(item) => <option value={item.name}>{item.name}</option>}
+          </For>
+        </select>
+        <select
+          class="input"
+          id="gen-topic-matter"
+          aria-label="Matéria"
+          aria-required="true"
+          aria-invalid={invalid(props.value.matter)}
+          aria-describedby={describedBy(props.value.matter)}
+          disabled={!area()}
+          value={props.value.matter}
+          onChange={(event) =>
+            props.onChange({ ...props.value, matter: event.currentTarget.value, topic: "" })
+          }
+        >
+          <option value="">Matéria</option>
+          <For each={area()?.matters}>
+            {(item) => <option value={item.name}>{item.name}</option>}
+          </For>
+        </select>
+        <select
+          class="input"
+          id="gen-topic-topic"
+          aria-label="Assunto"
+          aria-required="true"
+          aria-invalid={invalid(props.value.topic)}
+          aria-describedby={describedBy(props.value.topic)}
+          disabled={!matter()}
+          value={props.value.topic}
+          onChange={(event) => props.onChange({ ...props.value, topic: event.currentTarget.value })}
+        >
+          <option value="">Assunto</option>
+          <For each={matter()?.topics}>
+            {(item) => <option value={item.name}>{item.name}</option>}
+          </For>
+        </select>
       </Show>
-      <Show when={existingQuestions()}>
+      <Show when={topic()}>
         {(found) => (
           <p class="muted" role="note">
-            Já existem {formatNumber(found().count)} questões neste assunto; a IA vai evitar
-            repeti-las.
+            {found().stats.questions > 0
+              ? `Já existem ${formatNumber(found().stats.questions)} questões neste assunto; a IA vai evitar repeti-las.`
+              : "Este assunto ainda não tem questões."}
           </p>
         )}
       </Show>

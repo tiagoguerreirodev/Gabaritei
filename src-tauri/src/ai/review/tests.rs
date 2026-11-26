@@ -45,6 +45,8 @@ fn draft_of(id: &str, questions: Vec<Value>, verdicts: Option<Vec<Verdict>>) -> 
                 topic: topic(),
                 count: u32::try_from(questions.len()).unwrap(),
                 board: Some("Cebraspe".into()),
+                contest: None,
+                position: None,
                 format: None,
                 instructions: None,
                 sources: GenerateSources::default(),

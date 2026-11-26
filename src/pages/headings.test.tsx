@@ -4,6 +4,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import { describe, expect, it } from "vitest";
 import { emptyHome, emptyPerformance } from "../test/fixtures";
 import Bank from "./Bank";
+import History from "./History";
 import Home from "./Home";
 import Learning from "./Learning";
 import Performance from "./Performance";
@@ -14,6 +15,7 @@ const pages = [
   ["Início", Home],
   ["Banco", Bank],
   ["Desempenho", Performance],
+  ["Histórico", History],
   ["Erros e revisões", Learning],
   ["Configurações", Settings],
 ] as const;
@@ -47,6 +49,10 @@ describe("page headings", () => {
           return emptyHome;
         case "performance":
           return emptyPerformance;
+        case "active_attempts":
+          return [];
+        case "attempt_history":
+          return { items: [], total: 0, page: 0, pageSize: 20 };
         case "learning_overview":
           return {
             due: 0,

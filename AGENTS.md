@@ -47,7 +47,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src-tauri/` | Rust backend (Tauri 2). All business logic: database, scoring, metrics, learning, AI runner, backups. |
 | `src-tauri/src/commands.rs` | Tauri commands (thin wrappers). Register each one in `register()` in `lib.rs`. |
 | `src-tauri/src/error.rs` | `AppError`: every command returns `AppResult<T>`; the frontend receives `{ message }` in pt-BR. |
-| `src-tauri/src/attempts/` | Session creation and shuffling, attempt views, response updates, active attempts, and scoring. |
+| `src-tauri/src/attempts/` | Session creation and shuffling, attempt views, response updates, active attempts, paged history of finished attempts, and scoring. |
 | `src-tauri/src/metrics.rs`, `metrics/csv.rs` | Performance, home summaries and topic accuracy. CSV formatting and file export live in `csv.rs`. |
 | `src-tauri/src/selection.rs` | Banco's combined question filter: counts with facets (numbers only), allowed orders, and the question pick for a filter session. |
 | `src-tauri/src/ordering.rs` | Portuguese text folding and ordering of optional values. Collection filter options are shared in `bank/tags.rs`. |
@@ -69,6 +69,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src/styles/ds/` | Design-system component families (base, button, card, badge, field, tabs, meter, modal, toast, nav), one file each, copied from `docs/design-system/components/bundle.css`. Screen-only styles stay in the other files in `src/styles/`. |
 | `src/bindings/` | TypeScript types **generated** from Rust by `cargo test` (ts-rs). Committed; never edit by hand. |
 | `src/routes.ts`, `src/pages/` | Route table (pt-BR labels, menu placement) and one component per page. |
+| `src/pages/History.tsx` | Histórico: open attempts, finished attempts with derived scores, *Abrir* and *Refazer*. |
 | `src/pages/generate/` | Generation form fields for the topic, roles, quantity and sources. |
 | `src/pages/bank/` | Banco: filter panels, caderno picker, result panel, URL state (`filterUrl.ts`) and presets. |
 | `src/pages/review/` | Package verdict counts, question preview lines and import or discard actions. |

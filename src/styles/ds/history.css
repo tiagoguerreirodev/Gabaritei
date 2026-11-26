@@ -1,0 +1,60 @@
+/* ---- Histórico: open attempts, then finished ones ---- */
+.history-section {
+  display: grid;
+  gap: var(--space-2);
+  max-width: var(--content-width-wide);
+}
+.history-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-4);
+}
+.history-row + .history-row {
+  border-top: 1px solid var(--border);
+}
+.history-title {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+.history-score {
+  color: var(--text);
+  font-weight: 600;
+}
+.history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+@media (max-width: 40rem) {
+  .history-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .history-actions {
+    justify-content: flex-start;
+  }
+}
+.history-sections {
+  display: grid;
+  gap: var(--space-6);
+}

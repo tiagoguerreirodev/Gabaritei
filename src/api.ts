@@ -26,6 +26,9 @@ import type { GenerationStatus } from "./bindings/GenerationStatus";
 import type { DraftListItem } from "./bindings/DraftListItem";
 import type { DraftSummary } from "./bindings/DraftSummary";
 import type { LearningOverview } from "./bindings/LearningOverview";
+import type { ActiveAttempt } from "./bindings/ActiveAttempt";
+import type { HistoryPage } from "./bindings/HistoryPage";
+import type { HistoryQuery } from "./bindings/HistoryQuery";
 import type { HomeSummary } from "./bindings/HomeSummary";
 import type { ImportAllOutcome } from "./bindings/ImportAllOutcome";
 import type { ImportMode } from "./bindings/ImportMode";
@@ -103,6 +106,10 @@ export const api = {
   collection: (id: string) => call<CollectionDetail>("collection", { id }),
   /** Home page: summary numbers, attempts to resume, due reviews and pending drafts. */
   home: () => call<HomeSummary>("home"),
+  /** Unfinished attempts, newest first. Counts only. */
+  activeAttempts: () => call<ActiveAttempt[]>("active_attempts"),
+  /** One page of finished attempts, with scores from the current keys. */
+  attemptHistory: (query: HistoryQuery) => call<HistoryPage>("attempt_history", { query }),
   /** Erros e revisões: counts and the list of reviews and errors (no answer keys). */
   learningOverview: (includeBlanks: boolean) =>
     call<LearningOverview>("learning_overview", { includeBlanks }),

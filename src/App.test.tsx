@@ -46,13 +46,7 @@ describe("App shell", () => {
   it("lists the main destinations and settings in the sidebar, in pt-BR", () => {
     render(() => <App />);
 
-    expect(linkLabels("Menu principal")).toEqual([
-      "Início",
-      "Banco",
-      "Gerar",
-      "Desempenho",
-      "Erros e revisões",
-    ]);
+    expect(linkLabels("Menu principal")).toEqual(["Início", "Banco", "Gerar", "Desempenho"]);
     expect(linkLabels("Menu secundário")).toEqual(["Configurações"]);
   });
 
@@ -117,5 +111,13 @@ describe("App shell", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "Página não encontrada" }),
     ).toBeVisible();
+  });
+
+  it("redirects the old learning route to the reviews shortcut in Banco", async () => {
+    window.location.hash = "#/erros-e-revisoes";
+    render(() => <App />);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Banco" })).toBeVisible();
+    expect(window.location.hash).toBe("#/banco?status=due,wrong&ordem=dueFirst");
   });
 });

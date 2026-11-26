@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import { emptyHome, emptyPerformance } from "../test/fixtures";
 import Bank from "./Bank";
 import Home from "./Home";
-import Learning from "./Learning";
 import Performance from "./Performance";
 import Settings from "./Settings";
 
@@ -14,7 +13,6 @@ const pages = [
   ["Início", Home],
   ["Banco", Bank],
   ["Desempenho", Performance],
-  ["Erros e revisões", Learning],
   ["Configurações", Settings],
 ] as const;
 
@@ -47,16 +45,6 @@ describe("page headings", () => {
           return emptyHome;
         case "performance":
           return emptyPerformance;
-        case "learning_overview":
-          return {
-            due: 0,
-            dueInOpenAttempt: 0,
-            upcoming: 0,
-            errors: 0,
-            practice: 0,
-            practiceErrors: 0,
-            items: [],
-          };
         case "question_count_limits":
           return { min: 1, max: 30, initial: 10 };
         case "topics_tree":

@@ -1,3 +1,4 @@
+import { A } from "@solidjs/router";
 import { For, Show, createResource, createSignal } from "solid-js";
 import { api } from "../../api";
 import { EmptyState, Loading, ResourceView } from "../../components/states";
@@ -30,7 +31,14 @@ export default function TopicTreeView() {
         onRetry={() => refetch()}
         placeholder={<Loading variant="skeleton" label="Carregando assuntos…" />}
         empty={
-          <EmptyState title="Nenhuma questão no banco ainda.">
+          <EmptyState
+            title="Nenhuma questão no banco ainda."
+            action={
+              <A class="button-link primary" href="/gerar">
+                Gerar questões
+              </A>
+            }
+          >
             <p class="muted">Importe o banco do Caderno Local em Início ou em Configurações.</p>
           </EmptyState>
         }

@@ -1,3 +1,4 @@
+import { HashRouter, Route } from "@solidjs/router";
 import { render, screen, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -167,9 +168,17 @@ describe("Erros e revisões", () => {
       practiceErrors: 0,
       items: [],
     }));
-    render(() => <Learning />);
+    render(() => (
+      <HashRouter>
+        <Route path="/" component={Learning} />
+      </HashRouter>
+    ));
 
     expect(await screen.findByText("Nada para revisar por enquanto.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Ir para o Banco" })).toHaveAttribute(
+      "href",
+      "#/banco",
+    );
     expect(screen.getByRole("button", { name: "Praticar agora (0)" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Praticar erros (0)" })).toBeDisabled();
   });

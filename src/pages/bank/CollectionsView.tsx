@@ -1,3 +1,4 @@
+import { A } from "@solidjs/router";
 import FilterSelect from "../../components/FilterSelect";
 import { For, Show, createResource, createSignal } from "solid-js";
 import { api } from "../../api";
@@ -40,6 +41,11 @@ export default function CollectionsView() {
   };
 
   const pages = () => Math.max(1, Math.ceil((current()?.total ?? 0) / PAGE_SIZE));
+  const clearFilters = () => {
+    setSearch("");
+    setContest("");
+    setBoard("");
+  };
   const filtering = () => search().trim() !== "" || contest() !== "" || board() !== "";
 
   return (
@@ -78,7 +84,23 @@ export default function CollectionsView() {
         onRetry={() => refetch()}
         placeholder={<Loading variant="skeleton" label="Carregando cadernos…" />}
         empty={
-          <EmptyState title={filtering() ? "Nenhum caderno encontrado." : "Nenhum caderno ainda."}>
+          <EmptyState
+            title={filtering() ? "Nenhum caderno encontrado." : "Nenhum caderno ainda."}
+            action={
+              <Show
+                when={filtering()}
+                fallback={
+                  <A class="button-link primary" href="/gerar">
+                    Gerar questões
+                  </A>
+                }
+              >
+                <button type="button" class="secondary" onClick={clearFilters}>
+                  Limpar filtros
+                </button>
+              </Show>
+            }
+          >
             <Show when={filtering()}>
               <p class="muted">Tente outra busca ou limpe os filtros.</p>
             </Show>

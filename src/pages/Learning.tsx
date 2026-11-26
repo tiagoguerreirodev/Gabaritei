@@ -1,3 +1,4 @@
+import { A } from "@solidjs/router";
 import { For, Show, createEffect, createResource, createSignal, onCleanup } from "solid-js";
 import { api } from "../api";
 import type { LearningItem } from "../bindings/LearningItem";
@@ -123,7 +124,14 @@ export default function Learning() {
             <Show
               when={data().items.length > 0}
               fallback={
-                <EmptyState title="Nada para revisar por enquanto.">
+                <EmptyState
+                  title="Nada para revisar por enquanto."
+                  action={
+                    <A class="button-link primary" href="/banco">
+                      Ir para o Banco
+                    </A>
+                  }
+                >
                   <p class="muted">
                     Finalize uma tentativa: as questões entram aqui conforme você responde.
                   </p>

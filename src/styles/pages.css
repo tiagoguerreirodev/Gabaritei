@@ -207,36 +207,12 @@
   display: block;
 }
 
-.mastery {
-  display: grid;
-  grid-template-columns: minmax(7rem, 1fr) minmax(6rem, 2fr) 4rem;
-  align-items: center;
-  gap: var(--space-1) var(--space-3);
+.meter {
   width: 100%;
 }
 
-.mastery-name {
+.meter-name {
   overflow-wrap: anywhere;
-}
-
-.mastery-track {
-  height: 0.75rem;
-  overflow: hidden;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-}
-
-.mastery-fill {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-  transition: width var(--dur-base) var(--ease);
-}
-
-.mastery-value {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
 }
 
 /*
@@ -245,11 +221,11 @@
  * below apply at any width; the media query only matters if the minimum window width is lowered.
  */
 @media (max-width: 40rem) {
-  .mastery {
+  .meter {
     grid-template-columns: 1fr 4rem;
   }
 
-  .mastery-name {
+  .meter-name {
     grid-column: 1 / -1;
   }
 
@@ -266,11 +242,11 @@
   }
 }
 
-:root[data-text-size="xl"] .mastery {
+:root[data-text-size="xl"] .meter {
   grid-template-columns: 1fr 4rem;
 }
 
-:root[data-text-size="xl"] .mastery-name {
+:root[data-text-size="xl"] .meter-name {
   grid-column: 1 / -1;
 }
 

@@ -44,8 +44,8 @@
 }
 
 /* The node's name is already on the row, so the bar keeps only its track and number. */
-.mastery.compact,
-:root[data-text-size="xl"] .mastery.compact {
+.meter.compact,
+:root[data-text-size="xl"] .meter.compact {
   grid-template-columns: 6rem 4rem;
   width: auto;
 }

@@ -2,9 +2,8 @@ button {
   font: inherit;
 }
 
-/* Targets that take focus from code only (route change, dialogs): no ring. */
-main:focus,
-.modal:focus {
+/* Targets that take focus from code only (route change): no ring. The modal does the same. */
+main:focus {
   outline: none;
 }
 
@@ -87,7 +86,7 @@ input[type="radio"] {
     border-bottom: 4px solid Highlight;
   }
 
-  .mastery-fill {
+  .meter-fill {
     background: Highlight;
     forced-color-adjust: none;
   }

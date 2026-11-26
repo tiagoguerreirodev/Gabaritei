@@ -80,7 +80,19 @@ describe("toasts", () => {
     const toast = screen.getByRole("status");
     expect(toast).toHaveClass("toast-success");
     expect(toast).toHaveTextContent("Configurações salvas.");
-    expect(toast.querySelector(".toast-glyph")).toHaveAttribute("aria-hidden", "true");
+    expect(toast.querySelector(".toast-mark")).toHaveAttribute("aria-hidden", "true");
+    expect(toast.querySelector(".toast-mark")).toHaveTextContent("✓");
+    vi.advanceTimersByTime(TOAST_DURATION);
+  });
+
+  it("marks an error with an exclamation that screen readers skip", () => {
+    vi.useFakeTimers();
+    render(() => <Toaster />);
+
+    showError(new Error("Falhou."));
+    const mark = screen.getByRole("alert").querySelector(".toast-mark");
+    expect(mark).toHaveAttribute("aria-hidden", "true");
+    expect(mark).toHaveTextContent("!");
     vi.advanceTimersByTime(TOAST_DURATION);
   });
 

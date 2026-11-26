@@ -46,13 +46,10 @@ function MasteryBar(props: { stats: GroupStats }) {
   const achievement = () => props.stats.score.achievement;
   return (
     <span class="table-mastery">
-      <span class="mastery-bar" aria-hidden="true">
-        <span
-          class="mastery-fill"
-          style={{ width: `${Math.round((achievement() ?? 0) * 100)}%` }}
-        />
+      <span class="meter-track mastery-bar" aria-hidden="true">
+        <span class="meter-fill" style={{ width: `${Math.round((achievement() ?? 0) * 100)}%` }} />
       </span>
-      <span class="mastery-value">{formatPercent(achievement())}</span>
+      <span class="meter-value">{formatPercent(achievement())}</span>
     </span>
   );
 }

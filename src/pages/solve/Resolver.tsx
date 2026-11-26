@@ -259,7 +259,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
         {(attempt) => (
           <div class="resolver">
             <div
-              class="progress-bar"
+              class="meter-track progress-bar"
               role="progressbar"
               aria-label="Progresso da tentativa"
               aria-valuemin={0}
@@ -268,7 +268,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
               aria-valuetext={`${answered()} de ${total()} respondidas`}
             >
               <div
-                class="progress-fill"
+                class="meter-fill"
                 style={{ width: `${total() === 0 ? 0 : (answered() / total()) * 100}%` }}
               />
             </div>

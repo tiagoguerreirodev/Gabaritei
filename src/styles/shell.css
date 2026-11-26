@@ -78,8 +78,7 @@
   margin: var(--space-4) 0 var(--space-5);
 }
 
-.card h2,
-.modal-header h2 {
+.card h2 {
   margin: 0 0 var(--space-2);
   font-size: var(--text-md);
   line-height: var(--leading-tight);
@@ -100,49 +99,16 @@
 
 /* ---- Shell: modal, toasts, states ---- */
 
+/* What the shared Modal does not say: it covers the window and scrolls when it is tall. */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  display: grid;
-  place-items: center;
-  background: var(--scrim);
   z-index: 10;
 }
 
 .modal {
-  width: min(36rem, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
   overflow: auto;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-overlay);
-}
-
-.modal:focus {
-  outline: none;
-}
-
-.modal-header,
-.modal-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-4) var(--space-5);
-}
-
-.modal-header h2 {
-  margin: 0;
-}
-
-.modal-body {
-  padding: 0 var(--space-5);
-}
-
-.modal-footer {
-  border-top: 1px solid var(--border);
 }
 
 .toasts {
@@ -156,16 +122,6 @@
 }
 
 .toast {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  max-width: 28rem;
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-raised);
   animation: toast-in var(--dur-base) var(--ease);
 }
 
@@ -175,19 +131,6 @@
     opacity: 0;
     transform: translateY(var(--space-2));
   }
-}
-
-.toast-success {
-  border-left-color: var(--success);
-}
-
-.toast-glyph {
-  color: var(--success);
-  font-weight: 700;
-}
-
-.toast-error {
-  border-left-color: var(--danger);
 }
 
 .state {

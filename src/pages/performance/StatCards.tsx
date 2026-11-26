@@ -31,9 +31,9 @@ export default function StatCards(props: { stats: GroupStats; label: string }) {
       <li class="card card-compact stat stat-card-main">
         <span class="stat-name">Aproveitamento</span>
         <strong class="stat-value">{formatPercent(achievement())}</strong>
-        <span class="mastery-bar" aria-hidden="true">
+        <span class="meter-track mastery-bar" aria-hidden="true">
           <span
-            class="mastery-fill"
+            class="meter-fill"
             style={{ width: `${Math.round((achievement() ?? 0) * 100)}%` }}
           />
         </span>

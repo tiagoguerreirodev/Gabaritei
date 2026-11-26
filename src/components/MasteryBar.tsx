@@ -10,8 +10,8 @@ type MasteryProps = { name: string; achievement: number | null };
  */
 export default function MasteryBar(props: MasteryProps) {
   return (
-    <div class="mastery">
-      <span class="mastery-name" aria-hidden="true">
+    <div class="meter">
+      <span class="meter-name" aria-hidden="true">
         {props.name}
       </span>
       <MasteryMeter name={props.name} achievement={props.achievement} />
@@ -22,7 +22,7 @@ export default function MasteryBar(props: MasteryProps) {
 /** The bar and number alone, for rows that already show the group's name. */
 export function CompactMasteryBar(props: MasteryProps) {
   return (
-    <span class="mastery compact">
+    <span class="meter compact">
       <MasteryMeter name={props.name} achievement={props.achievement} />
     </span>
   );
@@ -34,7 +34,7 @@ function MasteryMeter(props: MasteryProps) {
   return (
     <>
       <div
-        class="mastery-track"
+        class="meter-track"
         role="meter"
         aria-label={`Aproveitamento em ${props.name}`}
         aria-valuemin={0}
@@ -46,9 +46,9 @@ function MasteryMeter(props: MasteryProps) {
             : `${formatPercent(props.achievement)} de aproveitamento`
         }
       >
-        <span class="mastery-fill" style={{ width: `${percent()}%` }} />
+        <span class="meter-fill" style={{ width: `${percent()}%` }} />
       </div>
-      <strong class="mastery-value" aria-hidden="true">
+      <strong class="meter-value" aria-hidden="true">
         {formatPercent(props.achievement)}
       </strong>
     </>

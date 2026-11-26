@@ -1,0 +1,104 @@
+<!-- @dsCard group="Screens" height=640 width=1100 -->
+<style>
+  body {
+    padding: 32px 40px;
+    background: var(--bg);
+  }
+  h1 {
+    margin: 0;
+    font-size: 1.5rem;
+    line-height: 1.25;
+  }
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    max-width: var(--content-width-wide);
+    margin-bottom: 24px;
+  }
+</style>
+<div class="head">
+  <h1>Histórico</h1>
+  <div class="form-row" style="min-width: 26rem">
+    <label class="field"
+      ><span class="field-label">Origem</span
+      ><select class="input">
+        <option>Todas</option>
+        <option>Cadernos</option>
+        <option>Filtros do Banco</option>
+        <option>Anteriores</option>
+      </select></label
+    >
+    <label class="field"
+      ><span class="field-label">Modo</span
+      ><select class="input">
+        <option>Estudo e Simulado</option>
+        <option>Estudo</option>
+        <option>Simulado</option>
+      </select></label
+    >
+  </div>
+</div>
+<div style="display: grid; gap: 24px">
+  <section class="history-section">
+    <h2 class="label">Em andamento</h2>
+    <ul class="history-list">
+      <li class="history-row">
+        <div>
+          <p class="history-title">Direito Administrativo + 1</p>
+          <p class="history-meta">
+            <span>Estudo</span><span>8/20 respondidas</span><span>25/11 14:02</span>
+          </p>
+        </div>
+        <div class="history-actions"><button class="btn btn-primary">Continuar</button></div>
+      </li>
+    </ul>
+  </section>
+  <section class="history-section">
+    <h2 class="label">Finalizadas</h2>
+    <ul class="history-list">
+      <li class="history-row">
+        <div>
+          <p class="history-title">Caderno TRF5 2024</p>
+          <p class="history-meta">
+            <span>Simulado</span><span>34/40</span><span class="history-score">72%</span
+            ><span>24/11 21:10</span>
+          </p>
+        </div>
+        <div class="history-actions">
+          <button class="btn">Abrir</button><button class="btn">Refazer</button>
+        </div>
+      </li>
+      <li class="history-row">
+        <div>
+          <p class="history-title">Revisões de hoje</p>
+          <p class="history-meta">
+            <span>Estudo</span><span>12/12</span><span class="history-score">83%</span
+            ><span>24/11 08:30</span>
+          </p>
+        </div>
+        <div class="history-actions">
+          <button class="btn">Abrir</button><button class="btn">Refazer</button>
+        </div>
+      </li>
+      <li class="history-row">
+        <div>
+          <p class="history-title">Direito Constitucional › Controle de constitucionalidade</p>
+          <p class="history-meta">
+            <span>Estudo</span><span>10/10</span><span class="history-score">—</span
+            ><span>23/11 19:45</span>
+          </p>
+        </div>
+        <div class="history-actions">
+          <button class="btn">Abrir</button><button class="btn">Refazer</button>
+        </div>
+      </li>
+    </ul>
+    <div class="pager">
+      <button class="btn" disabled>Anterior</button><span>Página 1 de 3</span
+      ><button class="btn">Próxima</button>
+    </div>
+  </section>
+</div>

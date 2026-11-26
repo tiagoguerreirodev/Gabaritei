@@ -55,8 +55,19 @@ How the current stylesheets (`src/styles/*.css`, about 2,240 lines) map onto thi
 | `.question-lines` chips, `.line-disputed`, `.line-unchecked` | `.review-list` > `details.review-row` with verdict badges |
 | `.verdict-counts` | `.card.card-compact.stat` tiles |
 | `.curate-toolbar` | `.filters` > `.filter[aria-pressed]` |
+| `.tabs` on Banco (*Assuntos* / *Cadernos*), `.tree*`, `.tree-leaf .primary`, `.tree-stats`, `.mastery.compact` | Banco FilterPanel: `.filter-panel`, `.filter-group`, `.check-tree`, `.check-item`, `.check-count` |
+| `.filters` (Cadernos list search, contest and board) | the caderno picker inside a Modal, opened from the FilterPanel; the chosen caderno shows as a `.filter-chip` |
+| `.chip` (uppercase caderno meta) | `.badge` |
+| `.score-chip[data-band]` | the printed percentage in `.history-score` (no colour band) |
+| `.collection-card*`, `.facts` (collection detail) | caderno picker rows; a caderno's attempts move to Histórico `.history-row` |
+| `StartSessionModal`: `.mode-choice`, `.count-field` | Banco ResultPanel: `.result-settings` with a number `.field`, an order select and `.radio-row` |
+| `.learning-actions`, `.learning-list`, `.learning-topic`, `.learning-blanks` and the Learning tabs | removed with Erros e revisões; the lists are the Banco presets *Revisões de hoje* and *Caderno de erros* |
+| `.pager` (Banco) | `.pager` (Histórico and any paged list) |
+| `.state` empty texts, `.empty-title` | `.empty-state`, `.empty-state-title` |
 
 ## Intentional changes
+
+- **Navigation rethink (#226):** Banco becomes filters plus a result panel and replaces the start-session dialog; Erros e revisões is removed (its lists are Banco presets); Histórico is new; the sidebar order is Início, Banco, Gerar, Desempenho, Histórico, Revisar pacote, Configurações. New families: FilterPanel, FilterChip, ResultPanel, HistoryRow, EmptyState, Pager; default buttons gain a pressed state for the presets. Banco's new class names avoid today's `.chip`, `.check-row` and `.empty-title`, so the screens can switch one at a time.
 
 - **Version 2, Resolver and Gerar/Revisar redesign:** stems and options grow to 18px (`reading-lg`) with more space between options; the question card becomes a printed Sheet; the explanation gets its own panel; the navigator moves to a side rail; Gerar's two-column grid becomes stacked numbered sections; Revisar's chips become filterable rows. `title` grows to 24px, `heading` to 18px, `display` to 32px; `measure` tightens from 68ch to 65ch.
 

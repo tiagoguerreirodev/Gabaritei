@@ -1,11 +1,25 @@
-<!-- @dsCard group="Navigation" height=360 -->
+<!-- @dsCard group="Navigation" height=440 -->
 <style>
   body {
     margin: 0;
     background: var(--bg);
   }
+  .nav {
+    min-height: 420px;
+  }
+  .nav-footer {
+    margin-top: auto;
+    display: grid;
+    gap: 4px;
+  }
+  .nav-version {
+    margin: 0;
+    padding: 0 var(--space-3);
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
 </style>
-<nav class="nav" style="min-height: 340px">
+<nav class="nav" aria-label="Menu principal">
   <div class="nav-brand">Gabaritei</div>
   <a class="nav-item" href="#" aria-current="page"
     ><svg
@@ -63,9 +77,8 @@
       stroke-linejoin="round"
       aria-hidden="true"
     >
-      <circle cx="12" cy="12" r="8" />
-      <path d="M8.5 12.5l2.5 2.5 4.5-5" /></svg
-    >Resolver</a
+      <path d="M5 20V12M12 20V5M19 20v-5" /></svg
+    >Desempenho</a
   >
   <a class="nav-item" href="#"
     ><svg
@@ -80,7 +93,7 @@
     >
       <path d="M20 12a8 8 0 1 1-2.5-5.8" />
       <path d="M20 4v4h-4M12 8v4l3 2" /></svg
-    >Erros e revisões<span class="badge badge-count">8</span></a
+    >Histórico</a
   >
   <a class="nav-item" href="#"
     ><svg
@@ -93,7 +106,27 @@
       stroke-linejoin="round"
       aria-hidden="true"
     >
-      <path d="M5 20V12M12 20V5M19 20v-5" /></svg
-    >Desempenho</a
+      <path d="M12 3l8 4v10l-8 4-8-4V7z" />
+      <path d="M4 7l8 4 8-4M12 11v10" /></svg
+    >Revisar pacote<span class="badge badge-count">1</span></a
   >
+  <div class="nav-footer">
+    <a class="nav-item" href="#"
+      ><svg
+        class="icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.75"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M5 7h2M11 7h8M5 17h8M17 17h2" />
+        <circle cx="9" cy="7" r="2" />
+        <circle cx="15" cy="17" r="2" /></svg
+      >Configurações</a
+    >
+    <p class="nav-version">v0.4.0</p>
+  </div>
 </nav>

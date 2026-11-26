@@ -1,0 +1,92 @@
+<!-- @dsCard group="Choosing" height=560 -->
+<style>
+  body {
+    padding: 16px;
+    background: var(--bg);
+  }
+</style>
+<form class="card filter-panel" style="max-width: 20rem" onsubmit="return false;">
+  <fieldset class="filter-group">
+    <legend class="label">Assuntos</legend>
+    <ul class="check-tree">
+      <li>
+        <details>
+          <summary>
+            <label class="check-item"
+              ><input type="checkbox" checked /><span class="check-label"
+                >Direito Administrativo</span
+              ><span class="check-count">96</span></label
+            >
+          </summary>
+        </details>
+      </li>
+      <li>
+        <details open>
+          <summary>
+            <label class="check-item"
+              ><input type="checkbox" id="partial" /><span class="check-label"
+                >Direito Constitucional</span
+              ><span class="check-count">44</span></label
+            >
+          </summary>
+          <ul>
+            <li>
+              <label class="check-item"
+                ><input type="checkbox" /><span class="check-label"
+                  >Controle de constitucionalidade</span
+                ><span class="check-count">18</span></label
+              >
+            </li>
+            <li>
+              <label class="check-item"
+                ><input type="checkbox" checked /><span class="check-label"
+                  >Direitos fundamentais</span
+                ><span class="check-count">26</span></label
+              >
+            </li>
+          </ul>
+        </details>
+      </li>
+    </ul>
+  </fieldset>
+  <fieldset class="filter-group">
+    <legend class="label">Status</legend>
+    <label class="check-item"
+      ><input type="checkbox" /><span class="check-label">Nunca resolvidas</span
+      ><span class="check-count">61</span></label
+    >
+    <label class="check-item"
+      ><input type="checkbox" checked /><span class="check-label">Erradas</span
+      ><span class="check-count">22</span></label
+    >
+    <label class="check-item"
+      ><input type="checkbox" /><span class="check-label">Em branco</span
+      ><span class="check-count">4</span></label
+    >
+    <label class="check-item"
+      ><input type="checkbox" /><span class="check-label">Revisão vencida</span
+      ><span class="check-count">9</span></label
+    >
+    <label class="check-item"
+      ><input type="checkbox" /><span class="check-label">Sinalizadas</span
+      ><span class="check-count">3</span></label
+    >
+  </fieldset>
+  <fieldset class="filter-group">
+    <legend class="label">Caderno</legend>
+    <span
+      ><span class="filter-chip"
+        ><span class="filter-chip-text">TRF5 2024 · Cebraspe</span
+        ><button class="filter-chip-remove" type="button" aria-label="Remover caderno">
+          ✕
+        </button></span
+      ></span
+    >
+  </fieldset>
+  <div class="filter-panel-footer">
+    <button class="btn btn-link is-inline" type="button">Limpar filtros</button>
+  </div>
+</form>
+<script>
+  document.getElementById("partial").indeterminate = true;
+</script>

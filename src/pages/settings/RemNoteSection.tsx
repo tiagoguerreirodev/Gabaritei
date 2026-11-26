@@ -4,7 +4,7 @@ import type { RemNoteMode } from "../../bindings/RemNoteMode";
 import type { RemNoteSettings } from "../../bindings/RemNoteSettings";
 import type { RemNoteTest } from "../../bindings/RemNoteTest";
 import { errorMessage } from "../../components/states";
-import { showError, showToast } from "../../components/toasts";
+import { showError, showSuccess } from "../../components/toasts";
 
 const modes: { value: RemNoteMode; label: string }[] = [
   { value: "off", label: "Desligado" },
@@ -28,7 +28,7 @@ export default function RemNoteSection(props: {
     try {
       props.onTokenSaved(await api.setRemnoteToken(value));
       setToken("");
-      showToast(value ? "Token guardado no chaveiro do sistema." : "Token removido.");
+      showSuccess(value ? "Token guardado no chaveiro do sistema." : "Token removido.");
     } catch (error) {
       showError(error);
     }
@@ -106,13 +106,14 @@ export default function RemNoteSection(props: {
           />
           <button
             type="button"
+            class="secondary"
             disabled={token().trim() === ""}
             onClick={() => void saveToken(token())}
           >
             Guardar token
           </button>
           <Show when={props.hasToken}>
-            <button type="button" onClick={() => void saveToken(null)}>
+            <button type="button" class="secondary" onClick={() => void saveToken(null)}>
               Remover token
             </button>
           </Show>
@@ -121,7 +122,7 @@ export default function RemNoteSection(props: {
       </Show>
 
       <Show when={props.remnote.mode === "server"}>
-        <button type="button" disabled={testing()} onClick={() => void test()}>
+        <button type="button" class="secondary" disabled={testing()} onClick={() => void test()}>
           {testing() ? "Testando…" : "Testar conexão"}
         </button>
         <Show when={result()}>

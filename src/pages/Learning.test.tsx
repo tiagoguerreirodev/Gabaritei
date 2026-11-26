@@ -22,18 +22,20 @@ const overview: LearningOverview = {
     {
       questionId: "q-secret-id",
       topics: [path],
-      review: { at: past, state: "overdue" },
+      review: { at: past, state: "overdue", intervalDays: 7 },
       isError: true,
       lastAttemptId: "att-3",
       lastAnsweredAt: past,
+      accuracy: 0.4,
     },
     {
       questionId: "q2",
       topics: [{ area: "Português", matter: "Gramática", topic: "Crase" }],
-      review: { at: future, state: "upcoming" },
+      review: { at: future, state: "upcoming", intervalDays: 1 },
       isError: false,
       lastAttemptId: "att-4",
       lastAnsweredAt: past,
+      accuracy: 0.9,
     },
   ],
 };
@@ -48,22 +50,28 @@ function backend(calls: unknown[][] = []) {
 }
 
 describe("Erros e revisões", () => {
-  it("shows the counts and the list with topic and due date, and no answer key", async () => {
+  it("opens on the first tab with rows and counts every tab", async () => {
     backend();
     const { container } = render(() => <Learning />);
 
-    const cards = await screen.findByRole("list", { name: "Resumo" });
-    expect(within(cards).getByText("Para revisar agora").nextElementSibling).toHaveTextContent("1");
-    expect(within(cards).getByText("Próximas").nextElementSibling).toHaveTextContent("1");
-    expect(within(cards).getByText("Caderno de erros").nextElementSibling).toHaveTextContent("1");
+    const tabs = await screen.findByRole("tablist");
+    expect(within(tabs).getByRole("tab", { name: /Para hoje\s*0/ })).toBeVisible();
+    expect(within(tabs).getByRole("tab", { name: /Atrasadas\s*1/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(within(tabs).getByRole("tab", { name: /Próximas\s*1/ })).toBeVisible();
+    expect(within(tabs).getByRole("tab", { name: /Caderno de erros\s*1/ })).toBeVisible();
 
     const rows = within(screen.getByRole("list", { name: "Questões" })).getAllByRole("listitem");
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveTextContent("Direito › Constitucional › Controle");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent("Controle");
+    expect(rows[0]).toHaveTextContent("Direito › Constitucional");
+    expect(rows[0]).toHaveTextContent("revisão de 7 dias");
     expect(rows[0]).toHaveTextContent(/Venceu em/);
+    expect(rows[0]).toHaveTextContent("40% de acerto");
     expect(rows[0]).toHaveTextContent("Erro");
-    expect(rows[1]).toHaveTextContent(/Próxima revisão em/);
-    expect(rows[1]).not.toHaveTextContent("Erro");
+    expect(within(rows[0]!).getAllByRole("button")).toHaveLength(1);
 
     // Nothing that could give an answer away, not even in attributes.
     for (const secret of ["gabarito", "answer", "explica", "q-secret-id"]) {
@@ -71,10 +79,30 @@ describe("Erros e revisões", () => {
     }
   });
 
+  it("shows upcoming reviews with the singular interval and a good accuracy", async () => {
+    backend();
+    const user = userEvent.setup();
+    render(() => <Learning />);
+
+    await user.click(await screen.findByRole("tab", { name: /Próximas/ }));
+    const row = within(screen.getByRole("list", { name: "Questões" })).getByRole("listitem");
+    expect(row).toHaveTextContent(/Próxima revisão em/);
+    expect(row).toHaveTextContent("revisão de 1 dia");
+    expect(row).toHaveTextContent("90% de acerto");
+    expect(row).not.toHaveTextContent("Erro");
+  });
+
   it("says a review due later today is due today", async () => {
-    const soon = { ...overview.items[1]!, review: { at: past, state: "today" } };
+    const soon = {
+      ...overview.items[1]!,
+      review: { at: past, state: "today" as const, intervalDays: 3 },
+    };
     mockIPC(() => ({ ...overview, items: [soon] }));
     render(() => <Learning />);
+    expect(await screen.findByRole("tab", { name: /Para hoje\s*1/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     expect(await screen.findByText(/Vence hoje/)).toBeVisible();
   });
 
@@ -97,9 +125,9 @@ describe("Erros e revisões", () => {
     const user = userEvent.setup();
     render(() => <Learning />);
 
-    await screen.findByRole("list", { name: "Resumo" });
+    await user.click(await screen.findByRole("tab", { name: /Caderno de erros/ }));
     await user.click(screen.getByLabelText("Incluir questões em branco"));
-    await screen.findByRole("list", { name: "Resumo" });
+    await screen.findByRole("tab", { name: /Caderno de erros/ });
     const overviewCalls = calls.filter(([c]) => c === "learning_overview").map(([, a]) => a);
     expect(overviewCalls).toEqual([{ includeBlanks: false }, { includeBlanks: true }]);
   });
@@ -110,7 +138,7 @@ describe("Erros e revisões", () => {
     const user = userEvent.setup();
     render(() => <Learning />);
 
-    await user.click(await screen.findByRole("button", { name: "Praticar agora (2)" }));
+    await user.click(await screen.findByRole("button", { name: "Revisar tudo de hoje (2)" }));
     await user.click(await screen.findByRole("button", { name: "Começar" }));
     const started = calls.find(([c]) => c === "session_start");
     expect(started?.[1]).toEqual({
@@ -125,7 +153,7 @@ describe("Erros e revisões", () => {
     const user = userEvent.setup();
     render(() => <Learning />);
 
-    await screen.findByRole("list", { name: "Resumo" });
+    await user.click(await screen.findByRole("tab", { name: /Caderno de erros/ }));
     await user.click(screen.getByLabelText("Incluir questões em branco"));
     await user.click(await screen.findByRole("button", { name: "Praticar erros (1)" }));
     await user.click(await screen.findByRole("button", { name: "Começar" }));
@@ -137,9 +165,10 @@ describe("Erros e revisões", () => {
 
   it("disables and counts error practice by what a session can take, not by the notebook", async () => {
     mockIPC(() => ({ ...overview, errors: 3, practiceErrors: 0 }));
+    const user = userEvent.setup();
     render(() => <Learning />);
 
-    await screen.findByRole("list", { name: "Resumo" });
+    await user.click(await screen.findByRole("tab", { name: /Caderno de erros/ }));
     expect(screen.getByRole("button", { name: "Praticar erros (0)" })).toBeDisabled();
   });
 
@@ -154,7 +183,7 @@ describe("Erros e revisões", () => {
     mockIPC(() => overview);
     render(() => <Learning />);
 
-    await screen.findByRole("list", { name: "Resumo" });
+    await screen.findByRole("tablist");
     expect(screen.queryByText(/em tentativa aberta/)).toBeNull();
   });
 
@@ -174,13 +203,12 @@ describe("Erros e revisões", () => {
       </HashRouter>
     ));
 
-    expect(await screen.findByText("Nada para revisar por enquanto.")).toBeVisible();
+    expect(await screen.findByText("Nenhuma revisão para hoje.")).toBeVisible();
     expect(screen.getByRole("link", { name: "Ir para o Banco" })).toHaveAttribute(
       "href",
       "#/banco",
     );
-    expect(screen.getByRole("button", { name: "Praticar agora (0)" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Praticar erros (0)" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Revisar tudo de hoje (0)" })).toBeDisabled();
   });
 
   it("shows the backend's message when loading fails", async () => {

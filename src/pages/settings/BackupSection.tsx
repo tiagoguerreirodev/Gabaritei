@@ -10,7 +10,7 @@ import type { RelocateOutcome } from "../../bindings/RelocateOutcome";
 import type { RelocateReport } from "../../bindings/RelocateReport";
 import ConfirmModal from "../../components/ConfirmModal";
 import { InlineError, ResourceView } from "../../components/states";
-import { showToast } from "../../components/toasts";
+import { showSuccess } from "../../components/toasts";
 import type { ActionRunner } from "../../actions";
 import { openFolder } from "./openFolder";
 import LeftBehindNotice from "./LeftBehindNotice";
@@ -47,7 +47,7 @@ export default function BackupSection(props: {
   const backupNow = () =>
     run(async () => {
       await api.backupNow();
-      showToast("Backup feito.");
+      showSuccess("Backup feito.");
       mutate(await api.backupStatus());
     });
 
@@ -58,7 +58,7 @@ export default function BackupSection(props: {
         mutate(chosen);
         setLeftBehind(chosen.leftBehind);
         setRelocated(false);
-        showToast("Pasta dos backups salva.");
+        showSuccess("Pasta dos backups salva.");
       }
     });
 
@@ -68,7 +68,7 @@ export default function BackupSection(props: {
       mutate(status);
       setLeftBehind(status.leftBehind);
       setRelocated(false);
-      showToast("Voltou para a pasta padrão.");
+      showSuccess("Voltou para a pasta padrão.");
     });
 
   const relocate = (operation: () => Promise<RelocateOutcome>, verb: "copiado" | "movido") =>
@@ -77,7 +77,7 @@ export default function BackupSection(props: {
       mutate(next);
       setLeftBehind(next.leftBehind);
       setRelocated(true);
-      showToast(relocateSummary(report, verb));
+      showSuccess(relocateSummary(report, verb));
     });
 
   const copyBackups = () => relocate(api.backupCopyLeftBehind, "copiado");
@@ -87,7 +87,7 @@ export default function BackupSection(props: {
     run(async () => {
       await api.backupRestore(backup.name);
       setRestoring(null);
-      showToast("Dados restaurados.");
+      showSuccess("Dados restaurados.");
       if (onRestored) onRestored();
       else window.location.reload();
     });
@@ -267,7 +267,7 @@ function Content(props: {
           {" "}
           <span class="muted">(padrão)</span>
         </Show>{" "}
-        <button type="button" onClick={() => void openFolder("backups")}>
+        <button type="button" class="secondary" onClick={() => void openFolder("backups")}>
           Abrir pasta dos backups
         </button>
       </p>
@@ -277,17 +277,27 @@ function Content(props: {
       <p class="actions">
         <button
           type="button"
-          class="primary"
+          class="secondary"
           disabled={props.busy}
           onClick={() => props.onBackupNow()}
         >
           Fazer backup agora
         </button>
-        <button type="button" disabled={props.busy} onClick={() => props.onChooseFolder()}>
+        <button
+          type="button"
+          class="secondary"
+          disabled={props.busy}
+          onClick={() => props.onChooseFolder()}
+        >
           Escolher pasta…
         </button>
         <Show when={!props.status.isDefaultFolder}>
-          <button type="button" disabled={props.busy} onClick={() => props.onUseDefaultFolder()}>
+          <button
+            type="button"
+            class="secondary"
+            disabled={props.busy}
+            onClick={() => props.onUseDefaultFolder()}
+          >
             Usar a pasta padrão
           </button>
         </Show>
@@ -298,6 +308,7 @@ function Content(props: {
             {current().text}{" "}
             <button
               type="button"
+              class="secondary"
               disabled={props.busy || props.refreshing}
               onClick={() => props.onRefresh()}
             >
@@ -335,6 +346,7 @@ function Content(props: {
                 </span>
                 <button
                   type="button"
+                  class="secondary"
                   disabled={props.busy}
                   aria-label={`Restaurar o backup de ${formatDateTime(backup.createdAt)}`}
                   onClick={() => props.onRestore(backup)}

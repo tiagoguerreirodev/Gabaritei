@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { createSignal, Show } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Modal from "./Modal";
-import { TOAST_DURATION, Toaster, showError, showToast } from "./toasts";
+import { TOAST_DURATION, Toaster, showError, showSuccess, showToast } from "./toasts";
 
 describe("Modal", () => {
   function Harness() {
@@ -70,6 +70,18 @@ describe("toasts", () => {
     vi.advanceTimersByTime(TOAST_DURATION);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("marks a finished save with a check that screen readers skip", () => {
+    vi.useFakeTimers();
+    render(() => <Toaster />);
+
+    showSuccess("Configurações salvas.");
+    const toast = screen.getByRole("status");
+    expect(toast).toHaveClass("toast-success");
+    expect(toast).toHaveTextContent("Configurações salvas.");
+    expect(toast.querySelector(".toast-glyph")).toHaveAttribute("aria-hidden", "true");
+    vi.advanceTimersByTime(TOAST_DURATION);
   });
 
   it("can be dismissed", async () => {

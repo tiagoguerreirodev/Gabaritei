@@ -1,0 +1,129 @@
+<!-- @dsCard group="Screens" height=900 width=1200 -->
+<style>
+  body {
+    padding: 32px 40px;
+    background: var(--bg);
+  }
+  h1 {
+    margin: 0;
+    font-size: 1.5rem;
+    line-height: 1.25;
+  }
+  .top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    max-width: calc(var(--sheet-width) + var(--rail-width) + 2rem);
+    margin: 0 auto 24px;
+  }
+</style>
+<div class="top">
+  <div>
+    <span class="label">Simulado · modo Estudo</span>
+    <h1>Direito Administrativo — revisão</h1>
+  </div>
+  <button class="btn">Encerrar</button>
+</div>
+<div class="solve-layout">
+  <article class="sheet">
+    <header class="sheet-header">
+      <span class="label">Questão 12 · Atos administrativos</span
+      ><span style="display: flex; align-items: center; gap: 12px"
+        ><span class="label">Cebraspe</span
+        ><button class="btn btn-ghost" aria-pressed="true">⚑ Marcada</button></span
+      >
+    </header>
+    <span class="sheet-number" aria-hidden="true">12</span>
+    <p class="sheet-stem">
+      Acerca dos atos administrativos e de seu desfazimento, assinale a opção correta.
+    </p>
+    <ul class="options">
+      <li>
+        <button class="option">
+          <span class="bubble">A</span
+          ><span class="option-text"
+            >O ato vinculado admite juízo de conveniência e oportunidade.</span
+          >
+        </button>
+      </li>
+      <li>
+        <button class="option is-wrong">
+          <span class="bubble is-filled is-wrong">B</span
+          ><span class="option-text">A revogação produz efeitos retroativos.</span
+          ><span class="option-note">Sua resposta</span>
+        </button>
+      </li>
+      <li>
+        <button class="option is-correct">
+          <span class="bubble is-key">C</span
+          ><span class="option-text"
+            >A anulação pode ser feita pela própria Administração, de ofício.</span
+          ><span class="option-note">Gabarito</span>
+        </button>
+      </li>
+      <li>
+        <button class="option">
+          <span class="bubble">D</span
+          ><span class="option-text">A homologação é ato discricionário.</span>
+        </button>
+      </li>
+    </ul>
+    <section class="explanation" aria-label="Correção">
+      <section>
+        <span class="label">Gabarito</span
+        ><span class="explanation-verdict is-wrong"
+          ><span aria-hidden="true">✗</span>Você marcou B; gabarito C</span
+        >
+      </section>
+      <section>
+        <span class="label">Explicação</span>
+        <p class="explanation-body">
+          A Administração pode anular seus próprios atos quando eivados de vício de legalidade, com
+          efeitos ex tunc. A revogação opera efeitos ex nunc.
+        </p>
+      </section>
+      <section>
+        <span class="label">Referências</span>
+        <ul class="explanation-refs">
+          <li>Lei 9.784/1999, art. 53.</li>
+        </ul>
+      </section>
+    </section>
+    <footer class="sheet-footer">
+      <button class="btn">Anterior</button><button class="btn btn-primary">Próxima questão</button>
+    </footer>
+  </article>
+  <nav class="rail" aria-label="Questões">
+    <div class="rail-progress">
+      <span class="label">12 de 20 respondidas</span
+      ><span class="meter-track"><span class="meter-fill" style="width: 60%"></span></span>
+    </div>
+    <div class="rail-group">
+      <span class="label">Q 1–20</span>
+      <div class="rail-grid">
+        <button class="bubble bubble-lg is-correct">1<span class="bubble-mark">✓</span></button
+        ><button class="bubble bubble-lg is-correct">2<span class="bubble-mark">✓</span></button
+        ><button class="bubble bubble-lg is-wrong">3<span class="bubble-mark">✗</span></button
+        ><button class="bubble bubble-lg is-correct">4<span class="bubble-mark">✓</span></button
+        ><button class="bubble bubble-lg is-correct">5<span class="bubble-mark">✓</span></button>
+        <button class="bubble bubble-lg is-correct">6<span class="bubble-mark">✓</span></button
+        ><button class="bubble bubble-lg is-wrong">7<span class="bubble-mark">✗</span></button
+        ><button class="bubble bubble-lg is-correct">8<span class="bubble-mark">✓</span></button
+        ><button class="bubble bubble-lg is-correct">9<span class="bubble-mark">✓</span></button
+        ><button class="bubble bubble-lg is-correct">10<span class="bubble-mark">✓</span></button>
+        <button class="bubble bubble-lg is-correct">11<span class="bubble-mark">✓</span></button
+        ><button class="bubble bubble-lg is-wrong is-current">
+          12<span class="bubble-mark">✗</span></button
+        ><button class="bubble bubble-lg">13</button><button class="bubble bubble-lg">14</button
+        ><button class="bubble bubble-lg">15</button> <button class="bubble bubble-lg">16</button
+        ><button class="bubble bubble-lg">17</button><button class="bubble bubble-lg">18</button
+        ><button class="bubble bubble-lg">19</button><button class="bubble bubble-lg">20</button>
+      </div>
+    </div>
+    <ul class="rail-legend">
+      <li>✓ Certa · ✗ Errada</li>
+      <li>◯ Em branco</li>
+      <li>⚑ Marcada para revisar</li>
+    </ul>
+  </nav>
+</div>

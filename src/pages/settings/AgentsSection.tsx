@@ -49,7 +49,12 @@ export default function AgentsSection(props: {
                 value={props.paths[agent] ?? ""}
                 onInput={(event) => props.onChange(agent, event.currentTarget.value)}
               />
-              <button type="button" disabled={testing() !== null} onClick={() => void test(agent)}>
+              <button
+                type="button"
+                class="secondary"
+                disabled={testing() !== null}
+                onClick={() => void test(agent)}
+              >
                 {testing() === agent ? "Testando…" : "Testar"}
               </button>
               <Show when={status()}>

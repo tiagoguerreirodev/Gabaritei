@@ -622,6 +622,20 @@ fn the_overview_lists_the_due_review_first() {
 }
 
 #[test]
+fn the_overview_row_carries_the_interval_and_the_accuracy() {
+    let b = bank(&["q1"]);
+    b.answer(D0, &[("q1", "o1")]);
+    b.answer(D1, &[("q1", "o0")]);
+    b.answer(D4, &[("q1", "blank")]);
+    let overview = b.db.with(|c| overview(c, D5, WrongOnly)).unwrap();
+    let row = &overview.items[0];
+    assert_eq!(
+        (row.review.as_ref().map(|r| r.interval_days), row.accuracy),
+        (Some(1), Some(0.5))
+    );
+}
+
+#[test]
 fn the_overview_serializes_without_answers() {
     let b = overview_bank();
     let overview = b.db.with(|c| overview(c, D1, WrongOnly)).unwrap();

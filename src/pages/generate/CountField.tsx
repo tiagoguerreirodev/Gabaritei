@@ -9,8 +9,10 @@ export default function CountField(props: {
   onBlur: () => void;
 }) {
   return (
-    <>
-      <label for="gen-count">Quantidade</label>
+    <div class="field">
+      <label class="field-label" for="gen-count">
+        Quantidade
+      </label>
       <input
         class="input"
         id="gen-count"
@@ -26,10 +28,9 @@ export default function CountField(props: {
         onBlur={() => props.onBlur()}
       />
       <p class="field-hint" id="gen-count-hint">
-        Obrigatório. De {props.counts.min} a {props.counts.max}. Cada questão passa pela conferência
-        às cegas.
+        De {props.counts.min} a {props.counts.max}. Cada questão passa pela conferência às cegas.
       </p>
       <FieldError id="gen-count-error">{props.error}</FieldError>
-    </>
+    </div>
   );
 }

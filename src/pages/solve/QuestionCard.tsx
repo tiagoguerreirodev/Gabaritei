@@ -1,11 +1,12 @@
-import { For, Show, createEffect, createSignal, on, onCleanup } from "solid-js";
+import { For, Show, createEffect, createSignal, on, onCleanup, type JSX } from "solid-js";
 import type { FeedbackMode } from "../../bindings/FeedbackMode";
+import type { Outcome } from "../../bindings/Outcome";
 import type { RecheckView } from "../../bindings/RecheckView";
 import type { ResponseView } from "../../bindings/ResponseView";
 import QuestionImage from "../../components/QuestionImage";
 import RichText from "../../components/RichText";
 import { optionLetters } from "../../format";
-import { outcomeText } from "../../labels";
+import { outcomeText, questionTypeLabel } from "../../labels";
 import RecheckPanel from "./RecheckPanel";
 import type { OptionAction } from "./useResolverShortcuts";
 import { showError } from "../../components/toasts";
@@ -13,7 +14,7 @@ import { showError } from "../../components/toasts";
 const ANSWER_POP_MS = 600;
 
 /**
- * One question: stem, image, options with eliminate, flag, and, once revealed, the key and
+ * One question as a sheet of the answer booklet: stem, image, options with eliminate, flag, and, once revealed, the key and
  * explanation. Everything about the answer comes from `question.reveal`, which the backend
  * only fills in after the question is revealed.
  */
@@ -43,6 +44,8 @@ export default function QuestionCard(props: {
   onAiCancel: () => void;
   /** Asks the AI to write the missing explanation. */
   onExplain: () => Promise<void>;
+  /** The sheet footer: previous and next, and the shortcut help. */
+  children?: JSX.Element;
 }) {
   const finished = () => props.finishedAt !== null;
   const locked = () => finished() || props.question.reveal !== null;
@@ -94,6 +97,11 @@ export default function QuestionCard(props: {
   );
   const letters = () => optionLetters(props.question);
   const reveal = () => props.question.reveal;
+  // An annulled question is out of every score, so its options carry no right or wrong marks.
+  const outcomeShown = () => {
+    const revealed = reveal();
+    return revealed !== null && revealed.outcome !== "annulled";
+  };
   const keyLetter = () => {
     const key = reveal()?.answerId;
     const index = props.question.options.findIndex((o) => o.id === key);
@@ -101,24 +109,30 @@ export default function QuestionCard(props: {
   };
 
   return (
-    <article class="question-card" aria-label={`Questão ${props.number} de ${props.total}`}>
-      <header class="question-header">
-        <span class="muted">
+    <article class="sheet" aria-label={`Questão ${props.number} de ${props.total}`}>
+      <header class="sheet-header">
+        <span class="label">
           Questão {props.number} de {props.total}
         </span>
-        <button
-          type="button"
-          class="btn btn-ghost flag-button"
-          aria-pressed={props.question.flagged}
-          disabled={finished()}
-          onClick={() => props.onFlag()}
-          title="Marcar para revisar (F)"
-        >
-          <span aria-hidden="true">⚑ </span>
-          {props.question.flagged ? "Marcada" : "Marcar"}
-        </button>
+        <span class="sheet-header-meta">
+          <span class="label muted">{questionTypeLabel[props.question.type]}</span>
+          <button
+            type="button"
+            class="btn btn-ghost flag-button"
+            aria-pressed={props.question.flagged}
+            disabled={finished()}
+            onClick={() => props.onFlag()}
+            title="Marcar para revisar (F)"
+          >
+            <span aria-hidden="true">⚑ </span>
+            {props.question.flagged ? "Marcada" : "Marcar"}
+          </button>
+        </span>
       </header>
-      <RichText class="question-stem" text={props.question.stem} />
+      <span class="sheet-number" aria-hidden="true">
+        {props.number}
+      </span>
+      <RichText class="sheet-stem" text={props.question.stem} />
       <Show when={props.question.image}>
         {(image) => (
           <QuestionImage name={image()} alt={props.question.imageAlt ?? "Figura de apoio"} />
@@ -137,40 +151,46 @@ export default function QuestionCard(props: {
             const marked = () => !locked() && props.pending === option.id;
             const selected = () => props.question.choice === option.id || marked();
             const eliminated = () => props.question.eliminated.includes(option.id);
-            const isKey = () => reveal()?.answerId === option.id;
+            const isKey = () => outcomeShown() && reveal()?.answerId === option.id;
+            const isWrong = () => outcomeShown() && selected() && !isKey();
             return (
-              <li
-                classList={{
-                  option: true,
-                  selected: selected(),
-                  eliminated: eliminated(),
-                  "option-key": isKey(),
-                  "option-wrong": selected() && reveal() !== null && !isKey(),
-                  // Confirmed right answer: the bubble fills with a small pop.
-                  "option-correct": selected() && isKey(),
-                  "option-pop": popping() && selected() && isKey(),
-                }}
-              >
+              <li>
                 <button
                   type="button"
-                  class="option-choose"
+                  classList={{
+                    option: true,
+                    "is-selected": selected() && !outcomeShown(),
+                    "is-eliminated": eliminated(),
+                    "is-correct": isKey(),
+                    "is-wrong": isWrong(),
+                  }}
                   data-option-id={option.id}
                   aria-pressed={selected()}
                   disabled={locked()}
                   onClick={() => props.onAnswer(option.id)}
                 >
-                  <span class="option-bubble">
-                    <span class="option-letter">{letter()}</span>
+                  <span
+                    classList={{
+                      bubble: true,
+                      "is-filled": selected(),
+                      "is-correct": isKey(),
+                      "is-wrong": isWrong(),
+                      "is-key": isKey() && !selected(),
+                      // Confirmed right answer: the bubble fills with a small pop.
+                      "is-popping": popping() && selected() && isKey(),
+                    }}
+                  >
+                    {letter()}
                   </span>
-                  <RichText text={option.text} />
+                  <RichText class="option-text" text={option.text} />
                   <Show when={isKey()}>
-                    <span class="option-mark">
+                    <span class="option-note">
                       <span aria-hidden="true">✓ </span>Gabarito
                     </span>
                   </Show>
-                  <Show when={selected() && reveal() !== null && !isKey()}>
-                    <span class="option-mark option-mark-wrong">
-                      <span aria-hidden="true">✕ </span>Sua resposta
+                  <Show when={isWrong()}>
+                    <span class="option-note">
+                      <span aria-hidden="true">✗ </span>Sua resposta
                     </span>
                   </Show>
                 </button>
@@ -206,7 +226,7 @@ export default function QuestionCard(props: {
           <section
             ref={revealSection}
             tabindex="-1"
-            class={`reveal reveal-${revealed().outcome}`}
+            class="explanation"
             aria-label="Gabarito e explicação"
           >
             <Show when={revealed().disputed}>
@@ -215,12 +235,26 @@ export default function QuestionCard(props: {
                 parecer errado, use “Pedir revisão à IA” ou “Anular questão”.
               </p>
             </Show>
-            <p class="reveal-outcome">
-              <strong>{outcomeText[revealed().outcome]}</strong>
-              <Show when={revealed().outcome !== "annulled" && keyLetter()}>
-                {(letter) => <> Gabarito: {letter()}.</>}
-              </Show>
-            </p>
+            <section>
+              <span class="label">Gabarito</span>
+              <p
+                classList={{
+                  "explanation-verdict": true,
+                  "is-correct": revealed().outcome === "correct",
+                  "is-wrong": revealed().outcome === "wrong",
+                }}
+              >
+                <Show when={verdictGlyph(revealed().outcome)}>
+                  {(glyph) => <span aria-hidden="true">{glyph()}</span>}
+                </Show>
+                <span>
+                  {outcomeText[revealed().outcome]}
+                  <Show when={revealed().outcome !== "annulled" && keyLetter()}>
+                    {(letter) => <> Gabarito: {letter()}.</>}
+                  </Show>
+                </span>
+              </p>
+            </section>
             <Show
               when={revealed().explanation.trim()}
               fallback={
@@ -242,14 +276,18 @@ export default function QuestionCard(props: {
                 </div>
               }
             >
-              <h3>Explicação</h3>
-              <RichText class="explanation" text={revealed().explanation} />
+              <section>
+                <span class="label">Explicação</span>
+                <RichText class="explanation-body" text={revealed().explanation} />
+              </section>
             </Show>
             <Show when={revealed().refs.length > 0}>
-              <h3>Referências</h3>
-              <ul class="refs">
-                <For each={revealed().refs}>{(ref) => <li>{ref}</li>}</For>
-              </ul>
+              <section>
+                <span class="label">Referências</span>
+                <ul class="explanation-refs">
+                  <For each={revealed().refs}>{(ref) => <li>{ref}</li>}</For>
+                </ul>
+              </section>
             </Show>
             <RecheckPanel
               question={props.question}
@@ -258,7 +296,7 @@ export default function QuestionCard(props: {
               onDismiss={props.onRecheckDismiss}
               onCancel={props.onAiCancel}
             />
-            <div class="reveal-actions">
+            <div class="explanation-actions">
               <button
                 type="button"
                 class="btn"
@@ -275,6 +313,10 @@ export default function QuestionCard(props: {
           </section>
         )}
       </Show>
+      <footer class="sheet-footer">{props.children}</footer>
     </article>
   );
 }
+
+const verdictGlyph = (outcome: Outcome) =>
+  outcome === "correct" ? "✓" : outcome === "wrong" ? "✗" : undefined;

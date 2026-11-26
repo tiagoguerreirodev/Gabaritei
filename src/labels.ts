@@ -2,8 +2,9 @@ import type { Agent } from "./bindings/Agent";
 import type { Effort } from "./bindings/Effort";
 import type { FeedbackMode } from "./bindings/FeedbackMode";
 import type { Outcome } from "./bindings/Outcome";
-import type { SessionOrder } from "./bindings/SessionOrder";
+import type { ResponseView } from "./bindings/ResponseView";
 import type { Role } from "./bindings/Role";
+import type { SessionOrder } from "./bindings/SessionOrder";
 import type { StudyStatus } from "./bindings/StudyStatus";
 
 export const agentLabels: Record<Agent, string> = {
@@ -43,6 +44,11 @@ export const feedbackModes: FeedbackMode[] = ["study", "exam"];
 export const modeLabel: Record<FeedbackMode, string> = {
   study: "Estudo",
   exam: "Simulado",
+};
+
+export const questionTypeLabel: Record<ResponseView["type"], string> = {
+  multiple: "Múltipla escolha",
+  boolean: "Certo/Errado",
 };
 
 export const modeHint: Record<FeedbackMode, string> = {

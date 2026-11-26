@@ -1,0 +1,110 @@
+/* ---- Sheet: the question as a printed answer-sheet page, not a boxed card ---- */
+.solve-layout {
+  display: grid;
+  grid-template-columns: minmax(0, var(--sheet-width)) var(--rail-width);
+  justify-content: center;
+  align-items: start;
+  gap: var(--space-8);
+}
+.sheet {
+  position: relative;
+  padding: var(--space-6) var(--space-8) var(--space-8) calc(var(--gutter-width) + var(--space-6));
+  background: var(--surface);
+  border-top: 3px solid var(--accent);
+}
+.sheet::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--gutter-width);
+  border-left: 1px solid var(--rule);
+}
+.sheet-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-5);
+  border-bottom: 1px solid var(--rule);
+}
+.sheet-header .label:first-child {
+  color: var(--accent);
+}
+.sheet-number {
+  position: absolute;
+  left: 0;
+  width: var(--gutter-width);
+  text-align: center;
+  font-size: 1.125rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.sheet-stem {
+  max-width: var(--measure);
+  margin: 0 0 var(--space-6);
+  font-family: var(--font-reading);
+  font-size: 1.125rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+.sheet .options {
+  max-width: var(--measure);
+}
+.sheet-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--rule);
+}
+
+/* Rich text (RichText.tsx): plain text keeps its line breaks; formulas are MathML. Shared by the
+   Sheet stem and options, the Explanation and the review rows. */
+.rich-text {
+  max-width: var(--measure);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-reading);
+  line-height: var(--leading-reading);
+}
+
+.rich-text code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+
+.rich-text .code-block {
+  display: block;
+  white-space: pre;
+  overflow-x: auto;
+  padding: var(--space-2) var(--space-3);
+  margin: var(--space-2) 0;
+}
+
+.rich-text .math-block {
+  display: block;
+  overflow-x: auto;
+  padding: var(--space-1) 0;
+  white-space: normal;
+}
+
+.rich-text .math-inline {
+  white-space: normal;
+}
+
+.rich-text math {
+  font-size: 1.1em;
+}
+
+.rich-text .math-error {
+  color: var(--danger);
+}

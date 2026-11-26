@@ -2,7 +2,9 @@ import type { Agent } from "./bindings/Agent";
 import type { Effort } from "./bindings/Effort";
 import type { FeedbackMode } from "./bindings/FeedbackMode";
 import type { Outcome } from "./bindings/Outcome";
+import type { SessionOrder } from "./bindings/SessionOrder";
 import type { Role } from "./bindings/Role";
+import type { StudyStatus } from "./bindings/StudyStatus";
 
 export const agentLabels: Record<Agent, string> = {
   claude: "Claude Code",
@@ -64,4 +66,19 @@ export const outcomeText: Record<Outcome, string> = {
   wrong: "Você errou.",
   blank: "Questão em branco.",
   annulled: "Questão anulada: não entra na pontuação.",
+};
+
+export const studyStatusLabels: Record<StudyStatus, string> = {
+  unseen: "Nunca resolvidas",
+  wrong: "Erradas",
+  blank: "Em branco",
+  due: "Revisão vencida",
+  flagged: "Sinalizadas",
+};
+
+export const sessionOrderLabels: Record<SessionOrder, string> = {
+  unseenFirst: "Não vistas primeiro",
+  random: "Aleatória",
+  dueFirst: "Revisões primeiro",
+  recentErrorsFirst: "Mais recentes primeiro",
 };

@@ -1,0 +1,30 @@
+<!-- @dsCard group="Forms" height=250 -->
+<style>
+  body {
+    padding: 16px;
+    background: var(--bg);
+  }
+</style>
+<div style="display: grid; gap: 16px; max-width: 36rem">
+  <label class="field" style="max-width: none"
+    ><span class="field-label">Assunto</span
+    ><input class="input" placeholder="Ex.: Atos administrativos" /><span class="field-hint"
+      >Área › matéria › assunto</span
+    ></label
+  >
+  <div class="form-row">
+    <label class="field"
+      ><span class="field-label">Quantidade</span
+      ><input class="input" value="80" aria-invalid="true" /><span class="field-error"
+        >Informe a quantidade (1 a 50).</span
+      ></label
+    >
+    <label class="field"
+      ><span class="field-label"
+        >Banca <span class="muted" style="font-weight: 400">(opcional)</span></span
+      ><select class="input">
+        <option>Cebraspe</option>
+      </select></label
+    >
+  </div>
+</div>

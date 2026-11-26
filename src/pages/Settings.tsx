@@ -7,7 +7,7 @@ import type { AiSettings } from "../bindings/AiSettings";
 import { cloneJson } from "../json";
 import LegacyImport from "../components/LegacyImport";
 import { ResourceView } from "../components/states";
-import { showToast } from "../components/toasts";
+import { showSuccess } from "../components/toasts";
 import AppearanceSection from "./settings/AppearanceSection";
 import BackupSection from "./settings/BackupSection";
 import DataFolderSection from "./settings/DataFolderSection";
@@ -88,7 +88,7 @@ function Form(props: { initial: AiSettings; onReload: () => void }) {
   };
 
   const saveSettings = async () => {
-    if (await persistSettings()) showToast("Configurações salvas.");
+    if (await persistSettings()) showSuccess("Configurações salvas.");
   };
 
   return (

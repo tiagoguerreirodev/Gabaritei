@@ -22,4 +22,8 @@ isError: boolean,
 /**
  * The attempt holding the question's latest result.
  */
-lastAttemptId: AttemptId, lastAnsweredAt: string, };
+lastAttemptId: AttemptId, lastAnsweredAt: string, 
+/**
+ * Hits over answered responses in finished attempts (0 to 1); `None` when never answered.
+ */
+accuracy: number | null, };

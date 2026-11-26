@@ -69,7 +69,7 @@ export default function TodayCard(props: { action: TodayAction }) {
           <p class="today-kicker">Comece por aqui</p>
           <h2 id="today-title">Você ainda não finalizou nenhuma tentativa.</h2>
           <p class="muted">Comece um caderno ou um assunto no Banco.</p>
-          <A class="primary button-link" href="/banco">
+          <A class="primary" href="/banco">
             Ir para o Banco
           </A>
         </Match>

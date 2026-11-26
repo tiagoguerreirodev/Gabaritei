@@ -23,7 +23,8 @@
 
 .form-grid > label,
 .form-grid > .label {
-  padding-top: 0.35rem;
+  /* Lines the label up with the text inside the input next to it (padding plus border). */
+  padding-top: calc(var(--space-1) + 1px);
   font-weight: 600;
 }
 
@@ -38,7 +39,7 @@
 
 .form-grid .hint {
   grid-column: 2;
-  margin: -0.25rem 0 0;
+  margin: calc(-1 * var(--space-1)) 0 0;
   font-size: var(--text-sm);
 }
 
@@ -97,7 +98,7 @@
 .disputed-badge {
   display: inline-block;
   margin: 0 0 var(--space-2);
-  padding: 0.125rem 0.625rem;
+  padding: var(--space-0-5) var(--space-2);
   border: 1px solid var(--danger);
   border-radius: var(--radius-pill);
   color: var(--danger);
@@ -115,20 +116,20 @@
 .learning-blanks {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-2);
 }
 
 .learning-list {
   margin: 0;
   padding: 0;
-  max-width: 56rem;
+  max-width: var(--width-wide);
   list-style: none;
 }
 
 .learning-list li {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 0.15rem var(--space-4);
+  gap: var(--space-0-5) var(--space-4);
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--border);
 }
@@ -229,25 +230,6 @@
 
 .error-state .error {
   margin: 0;
-}
-
-.secondary,
-.button-link {
-  display: inline-block;
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--text);
-  font-weight: 600;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.button-link.primary {
-  border-color: transparent;
-  background: var(--accent);
-  color: var(--on-accent);
 }
 
 /* ---- Mastery bars (Início): length plus printed number, never color alone ---- */
@@ -515,7 +497,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2) var(--space-6);
-  max-width: 56rem;
+  max-width: var(--width-wide);
   margin: 0 0 var(--space-4);
   padding: 0;
   list-style: none;
@@ -525,4 +507,65 @@
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
+}
+
+.learning-group {
+  display: flex;
+  justify-content: space-between;
+  max-width: var(--width-wide);
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--text-md);
+}
+
+.learning-chip,
+.accuracy-chip {
+  margin-inline-start: var(--space-2);
+}
+
+.accuracy-good {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.accuracy-fair {
+  border-color: var(--flag);
+  color: var(--flag);
+}
+
+.accuracy-poor {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* ---- Início: primeiros passos ---- */
+.first-steps h2 {
+  margin-bottom: var(--space-1);
+}
+
+.first-steps-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.first-steps-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  align-items: baseline;
+}
+
+.first-steps-list li.done {
+  color: var(--muted);
+}
+
+.first-step-mark {
+  width: 1.25em;
+  font-weight: 600;
+}
+
+.first-steps-list li.done .first-step-mark {
+  color: var(--success);
 }

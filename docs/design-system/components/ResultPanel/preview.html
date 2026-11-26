@@ -1,0 +1,50 @@
+<!-- @dsCard group="Choosing" height=560 -->
+<style>
+  body {
+    padding: 16px;
+    background: var(--bg);
+  }
+</style>
+<section class="card result-panel" style="max-width: 36rem" aria-label="Resultado">
+  <div>
+    <p class="result-count">140 questões</p>
+    <p class="result-note">3 em tentativa aberta ficam de fora.</p>
+  </div>
+  <ul class="breakdown" aria-label="Por área e status">
+    <li class="card card-compact stat">
+      <span class="stat-name">Administrativo</span><span class="stat-value">96</span>
+    </li>
+    <li class="card card-compact stat">
+      <span class="stat-name">Constitucional</span><span class="stat-value">44</span>
+    </li>
+    <li class="card card-compact stat">
+      <span class="stat-name">Nunca resolvidas</span><span class="stat-value">61</span>
+    </li>
+    <li class="card card-compact stat">
+      <span class="stat-name">Erradas</span><span class="stat-value">22</span>
+    </li>
+  </ul>
+  <form class="result-settings" onsubmit="return false;">
+    <div class="form-row">
+      <label class="field"
+        ><span class="field-label">Quantas</span
+        ><input class="input" type="number" value="20" /><span class="field-hint"
+          >Até 137.</span
+        ></label
+      >
+      <label class="field"
+        ><span class="field-label">Ordem</span
+        ><select class="input">
+          <option>Não vistas primeiro</option>
+          <option>Aleatória</option>
+        </select></label
+      >
+    </div>
+    <fieldset class="radio-row">
+      <legend>Modo</legend>
+      <label><input type="radio" name="m" checked />Estudo</label>
+      <label><input type="radio" name="m" />Simulado</label>
+    </fieldset>
+    <div class="result-actions"><button class="btn btn-primary">Resolver estas</button></div>
+  </form>
+</section>

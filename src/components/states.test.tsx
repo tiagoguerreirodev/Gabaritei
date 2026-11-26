@@ -6,13 +6,8 @@ import MasteryBar from "./MasteryBar";
 import { EmptyState, ErrorState, Loading, ResourceView } from "./states";
 
 describe("Loading", () => {
-  it("keeps the text variant as a status message", () => {
-    render(() => <Loading label="Carregando cadernos…" />);
-    expect(screen.getByRole("status")).toHaveTextContent("Carregando cadernos…");
-  });
-
-  it("announces the label once in the skeleton variant and hides the placeholder lines", () => {
-    const { container } = render(() => <Loading variant="skeleton" label="Calculando…" />);
+  it("announces the label once and hides the placeholder lines", () => {
+    const { container } = render(() => <Loading label="Calculando…" />);
     const status = screen.getByRole("status");
     expect(status).toHaveTextContent("Calculando…");
     expect(status).not.toHaveAttribute("aria-busy");

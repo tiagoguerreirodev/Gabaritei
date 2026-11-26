@@ -1,0 +1,79 @@
+<!-- @dsCard group="Review" height=420 -->
+<style>
+  body {
+    padding: 24px;
+    background: var(--bg);
+  }
+</style>
+<ul class="filters" style="margin-bottom: 16px">
+  <li>
+    <button class="filter" aria-pressed="true">Todas <span class="filter-count">10</span></button>
+  </li>
+  <li>
+    <button class="filter" aria-pressed="false">
+      Contestadas <span class="filter-count">2</span>
+    </button>
+  </li>
+  <li>
+    <button class="filter" aria-pressed="false">
+      Com problemas <span class="filter-count">1</span>
+    </button>
+  </li>
+  <li>
+    <button class="filter" aria-pressed="false">
+      Aprovadas <span class="filter-count">7</span>
+    </button>
+  </li>
+</ul>
+<ul class="review-list">
+  <li>
+    <details class="review-row">
+      <summary>
+        <span class="review-row-number">1</span
+        ><span class="review-row-topic">Administrativo › Atos administrativos</span
+        ><span class="badge badge-success">Aprovada</span
+        ><span class="review-row-chevron" aria-hidden="true">›</span>
+      </summary>
+    </details>
+  </li>
+  <li>
+    <details class="review-row" open>
+      <summary>
+        <span class="review-row-number">2</span
+        ><span class="review-row-topic">Administrativo › Licitações</span
+        ><span class="badge badge-danger badge-dashed">Contestada</span
+        ><span class="review-row-chevron" aria-hidden="true">›</span>
+      </summary>
+      <div class="review-row-body">
+        <p class="sheet-stem">
+          Julgue o item: a dispensa de licitação pode ocorrer em caso de emergência.
+        </p>
+        <ol class="review-row-options" type="A">
+          <li>Certo</li>
+          <li>Errado</li>
+        </ol>
+        <span class="review-row-note">Verificação cega discordou do gabarito proposto.</span>
+      </div>
+    </details>
+  </li>
+  <li>
+    <details class="review-row">
+      <summary>
+        <span class="review-row-number">3</span
+        ><span class="review-row-topic">Administrativo › Poderes administrativos</span
+        ><span class="badge badge-danger">Com problemas</span
+        ><span class="review-row-chevron" aria-hidden="true">›</span>
+      </summary>
+    </details>
+  </li>
+  <li>
+    <details class="review-row">
+      <summary>
+        <span class="review-row-number">4</span
+        ><span class="review-row-topic">Administrativo › Serviços públicos</span
+        ><span class="badge">Não verificada</span
+        ><span class="review-row-chevron" aria-hidden="true">›</span>
+      </summary>
+    </details>
+  </li>
+</ul>

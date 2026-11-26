@@ -16,10 +16,45 @@ const idle = {
   outcome: null,
 };
 
+/** An open Simulado attempt with one unanswered question. */
+const openAttempt = {
+  id: "att",
+  sourceKind: "collection",
+  sourceRef: "c1",
+  title: "Caderno de teste",
+  feedbackMode: "exam",
+  startedAt: "2026-11-20T10:00:00.000Z",
+  finishedAt: null,
+  revision: 0,
+  questions: [
+    {
+      position: 0,
+      questionId: "q0",
+      type: "boolean",
+      stem: "Enunciado",
+      options: [
+        { id: "c", text: "Certo" },
+        { id: "e", text: "Errado" },
+      ],
+      image: null,
+      imageAlt: null,
+      choice: null,
+      eliminated: [],
+      flagged: false,
+      reveal: null,
+    },
+  ],
+  score: null,
+};
+
 function backend(waiting: unknown[] = []) {
   mockIPC(
     (command) => {
       switch (command) {
+        case "attempt":
+          return openAttempt;
+        case "keyboard_shortcuts":
+          return true;
         case "generation_status":
           return idle;
         case "drafts_waiting":
@@ -143,6 +178,30 @@ describe("Sidebar", () => {
     await user.click(screen.getByRole("link", { name: "Gerar" }));
     expect(screen.getByRole("link", { name: "Gerar" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Banco" })).not.toHaveAttribute("aria-current");
+  });
+});
+
+describe("Focus mode", () => {
+  const sidebar = () => document.querySelector("aside.sidebar");
+
+  it("hides the sidebar while an attempt is open, until Modo foco is turned off", async () => {
+    const user = userEvent.setup();
+    renderAt("/resolver?tentativa=att");
+    const button = await screen.findByRole("button", { name: "Modo foco" });
+    expect(sidebar()).toHaveAttribute("hidden");
+    expect(document.querySelector(".shell")).toHaveClass("focus-mode");
+    expect(screen.queryByRole("navigation", { name: "Menu principal" })).not.toBeInTheDocument();
+
+    await user.click(button);
+    expect(sidebar()).not.toHaveAttribute("hidden");
+    expect(document.querySelector(".shell")).not.toHaveClass("focus-mode");
+    expect(screen.getByRole("navigation", { name: "Menu principal" })).toBeInTheDocument();
+  });
+
+  it("keeps the sidebar on other pages", () => {
+    renderAt("/banco");
+    expect(sidebar()).not.toHaveAttribute("hidden");
+    expect(document.querySelector(".shell")).not.toHaveClass("focus-mode");
   });
 });
 

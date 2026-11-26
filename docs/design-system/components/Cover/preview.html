@@ -1,0 +1,121 @@
+<!-- @dsCard height=288 -->
+<style>
+  html,
+  body {
+    margin: 0;
+    height: 288px;
+    background: var(--bg);
+    overflow: hidden;
+  }
+  .wrap {
+    position: relative;
+    width: 960px;
+    height: 288px;
+  }
+  svg {
+    position: absolute;
+    inset: 0;
+  }
+  .ink {
+    fill: var(--text);
+  }
+  .accent {
+    fill: var(--accent);
+  }
+  .soft {
+    fill: var(--accent-soft);
+  }
+  .ring {
+    fill: var(--surface);
+    stroke: var(--border-strong);
+    stroke-width: 2;
+  }
+  .ring-on-ink {
+    fill: none;
+    stroke: var(--bg);
+    stroke-width: 2;
+  }
+  .mark {
+    fill: var(--accent);
+    stroke: var(--accent);
+    stroke-width: 2;
+  }
+  .rule {
+    stroke: var(--rule);
+    stroke-width: 1;
+  }
+  .num {
+    fill: var(--bg);
+    font-family: var(--font-ui);
+    font-weight: 700;
+    font-size: 18px;
+  }
+  .txt {
+    position: absolute;
+    left: 48px;
+    bottom: 40px;
+    max-width: 440px;
+  }
+  .name {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-weight: 700;
+    font-size: 80px;
+    line-height: 0.95;
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+  .tag {
+    margin: 16px 0 0;
+    font-family: var(--font-ui);
+    font-size: 14px;
+    color: var(--muted);
+  }
+</style>
+<div class="wrap">
+  <!--
+    blocks: text (ink slab 400×176), accent (240×112), accent-soft (160×112): ground bg
+    arrangement: ink slab bleeding off the top-right, accent and soft bands bleeding off the bottom
+    pattern: the literal motif, answer-sheet bubbles (radius-pill, r = bubble-size/2 = 16), one marked per row,
+      "the answer sheet: rings that fill when chosen" (README)
+    print: rule hairlines between bubble rows and a numbered gutter (bg numerals on the ink slab), as on the Sheet
+    scales: pitch 56 = space-10 + space-4, ring stroke 2px as .bubble, gaps space-6 / space-10
+  -->
+  <svg viewBox="0 0 960 288" width="960" height="288" aria-hidden="true">
+    <rect class="ink" x="560" y="0" width="400" height="176" />
+    <rect class="accent" x="480" y="200" width="240" height="88" />
+    <rect class="soft" x="744" y="200" width="216" height="88" />
+    <line class="rule" x1="600" y1="68" x2="960" y2="68" />
+    <line class="rule" x1="600" y1="124" x2="960" y2="124" />
+    <line class="rule" x1="600" y1="0" x2="600" y2="176" />
+    <text class="num" x="580" y="46" text-anchor="middle">1</text>
+    <text class="num" x="580" y="102" text-anchor="middle">2</text>
+    <text class="num" x="580" y="158" text-anchor="middle">3</text>
+    <g>
+      <circle class="ring-on-ink" cx="640" cy="40" r="16" />
+      <circle class="mark" cx="696" cy="40" r="16" />
+      <circle class="ring-on-ink" cx="752" cy="40" r="16" />
+      <circle class="ring-on-ink" cx="808" cy="40" r="16" />
+      <circle class="ring-on-ink" cx="864" cy="40" r="16" />
+      <circle class="ring-on-ink" cx="640" cy="96" r="16" />
+      <circle class="ring-on-ink" cx="696" cy="96" r="16" />
+      <circle class="ring-on-ink" cx="752" cy="96" r="16" />
+      <circle class="mark" cx="808" cy="96" r="16" />
+      <circle class="ring-on-ink" cx="864" cy="96" r="16" />
+      <circle class="mark" cx="640" cy="152" r="16" />
+      <circle class="ring-on-ink" cx="696" cy="152" r="16" />
+      <circle class="ring-on-ink" cx="752" cy="152" r="16" />
+      <circle class="ring-on-ink" cx="808" cy="152" r="16" />
+      <circle class="ring-on-ink" cx="864" cy="152" r="16" />
+      <circle class="ring" cx="792" cy="244" r="16" />
+      <circle class="ring" cx="848" cy="244" r="16" />
+      <circle class="mark" cx="904" cy="244" r="16" />
+    </g>
+  </svg>
+  <div class="txt">
+    <h1 class="name">Gabaritei</h1>
+    <p class="tag">
+      The answer sheet: cool paper, blue-black ink and the pink of optical-mark print.
+    </p>
+  </div>
+</div>

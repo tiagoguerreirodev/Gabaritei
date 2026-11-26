@@ -61,6 +61,8 @@ pub struct PerformanceQuery {
 pub struct GroupStats {
     /// Outcomes of the latest answers: achievement and accuracy live here.
     pub score: Score,
+    /// Distinct questions in the group, annulled ones included.
+    pub questions: u32,
     /// Questions answered (correct + wrong) under the current key.
     pub answered: u32,
     /// Questions in the group that aren't annulled.
@@ -169,6 +171,7 @@ impl Acc {
             coverage: Score::ratio(answered, self.available),
             small_sample: answered < SMALL_SAMPLE,
             score: self.score,
+            questions: u32::try_from(self.seen.len()).unwrap_or(u32::MAX),
             answered,
             available: self.available,
         }
@@ -320,6 +323,19 @@ impl StrengthGroups {
             .or_insert_with(|| (topic_id, Acc::default()));
         topic.add(id, row);
     }
+
+    /// Lists a topic even when it has no questions yet.
+    fn add_topic(&mut self, topic_id: TopicId, path: TopicPath) {
+        self.areas
+            .entry(path.area)
+            .or_default()
+            .matters
+            .entry(path.matter)
+            .or_default()
+            .topics
+            .entry(path.topic)
+            .or_insert_with(|| (topic_id, Acc::default()));
+    }
 }
 
 /// Folds the groups into areas, giving each topic its trend from `trends` (none if absent).
@@ -389,19 +405,32 @@ fn sort_areas(areas: &mut [AreaStats]) {
     areas.sort_by(|a, b| weakest_first((&a.stats, &a.name), (&b.stats, &b.name)));
 }
 
-/// *Acerto entre respondidas* per topic id for the Banco tree, over all finished attempts.
-/// Topics without an answer are absent.
-pub fn topic_accuracy(conn: &Connection) -> AppResult<HashMap<TopicId, f64>> {
-    let mut topics = HashMap::<TopicId, Score>::new();
-    visit_topic_results(conn, &PerformanceQuery::default(), |_, topic_id, _, row| {
-        if let Some(outcome) = row.outcome {
-            topics.entry(topic_id).or_default().record(outcome);
-        }
+/// Strength of every area, matter and topic for the Banco tree, over all finished attempts
+/// in either mode, including topics created ahead of time that have no questions yet.
+/// Unlike [`performance`], groups keep name order.
+pub fn bank_strength(conn: &Connection) -> AppResult<Vec<AreaStats>> {
+    let mut groups = StrengthGroups::default();
+    let mut statement = conn.prepare("SELECT id, area, matter, topic FROM topics")?;
+    let topics = statement.query_map([], |row| {
+        let path = TopicPath {
+            area: row.get(1)?,
+            matter: row.get(2)?,
+            topic: row.get(3)?,
+        };
+        Ok((row.get(0)?, path))
     })?;
-    Ok(topics
-        .into_iter()
-        .filter_map(|(id, score)| Some((id, score.accuracy?)))
-        .collect())
+    for topic in topics {
+        let (topic_id, path) = topic?;
+        groups.add_topic(topic_id, path);
+    }
+    visit_topic_results(
+        conn,
+        &PerformanceQuery::default(),
+        |id, topic_id, path, row| {
+            groups.add(id, topic_id, path, row);
+        },
+    )?;
+    Ok(build_areas(groups.areas, HashMap::new()))
 }
 
 fn trend(conn: &Connection, query: &PerformanceQuery) -> AppResult<Vec<WeekPoint>> {
@@ -551,6 +580,8 @@ pub struct HomeSummary {
     pub due_in_open_attempt: u32,
     /// Generated packages waiting for review.
     pub drafts_waiting: u32,
+    /// The first-use checklist; empty once every step is done.
+    pub first_steps: Vec<FirstStepStatus>,
 }
 
 /// The home summary at `now` (an RFC 3339 UTC timestamp).
@@ -589,11 +620,14 @@ pub fn home(conn: &Connection, now: &str) -> AppResult<HomeSummary> {
             "SELECT COUNT(*) FROM drafts WHERE status = ?1",
             &[&DraftStatus::Review],
         )?,
+        first_steps: first_steps(conn)?,
     })
 }
 
 mod csv;
 pub use csv::export_csv;
+mod first_steps;
+pub use first_steps::{FirstStep, FirstStepStatus, first_steps};
 
 #[cfg(test)]
 mod tests;

@@ -1,18 +1,15 @@
+import { A } from "@solidjs/router";
 import FilterSelect from "../../components/FilterSelect";
 import { For, Show, createResource, createSignal } from "solid-js";
 import { api } from "../../api";
 import type { CollectionSummary } from "../../bindings/CollectionSummary";
 import { EmptyState, Loading, ResourceView } from "../../components/states";
 import CollectionDetailModal from "./CollectionDetailModal";
-import { formatDate, formatNumber, questionCount } from "../../format";
+import { formatNumber } from "../../format";
+import StartSessionModal from "../solve/StartSessionModal";
+import CollectionCard from "./CollectionCard";
 
 export const PAGE_SIZE = 20;
-
-function status(collection: CollectionSummary) {
-  if (collection.inProgress) return "Em andamento";
-  if (collection.lastFinishedAt) return `Concluído em ${formatDate(collection.lastFinishedAt)}`;
-  return "Não iniciado";
-}
 
 /** Collections with search, contest and board filters, and pagination. */
 export default function CollectionsView() {
@@ -21,6 +18,7 @@ export default function CollectionsView() {
   const [board, setBoard] = createSignal("");
   const [page, setPage] = createSignal(0);
   const [selected, setSelected] = createSignal<CollectionSummary>();
+  const [starting, setStarting] = createSignal<CollectionSummary>();
 
   const query = () => ({
     search: search(),
@@ -40,6 +38,11 @@ export default function CollectionsView() {
   };
 
   const pages = () => Math.max(1, Math.ceil((current()?.total ?? 0) / PAGE_SIZE));
+  const clearFilters = () => {
+    setSearch("");
+    setContest("");
+    setBoard("");
+  };
   const filtering = () => search().trim() !== "" || contest() !== "" || board() !== "";
 
   return (
@@ -76,9 +79,25 @@ export default function CollectionsView() {
         pending={!current()}
         retrying={result.loading}
         onRetry={() => refetch()}
-        placeholder={<Loading variant="skeleton" label="Carregando cadernos…" />}
+        placeholder={<Loading label="Carregando cadernos…" />}
         empty={
-          <EmptyState title={filtering() ? "Nenhum caderno encontrado." : "Nenhum caderno ainda."}>
+          <EmptyState
+            title={filtering() ? "Nenhum caderno encontrado." : "Nenhum caderno ainda."}
+            action={
+              <Show
+                when={filtering()}
+                fallback={
+                  <A class="button-link primary" href="/gerar">
+                    Gerar questões
+                  </A>
+                }
+              >
+                <button type="button" class="secondary" onClick={clearFilters}>
+                  Limpar filtros
+                </button>
+              </Show>
+            }
+          >
             <Show when={filtering()}>
               <p class="muted">Tente outra busca ou limpe os filtros.</p>
             </Show>
@@ -93,30 +112,21 @@ export default function CollectionsView() {
             <ul class="collection-list" aria-label="Cadernos">
               <For each={loaded().items}>
                 {(collection) => (
-                  <li>
-                    <button
-                      type="button"
-                      class="collection-row"
-                      onClick={() => setSelected(collection)}
-                    >
-                      <span class="collection-title">{collection.title}</span>
-                      <span class="collection-meta">
-                        <Show when={collection.contest}>
-                          <span class="tag">{collection.contest}</span>
-                        </Show>
-                        <Show when={collection.board}>
-                          <span class="tag">{collection.board}</span>
-                        </Show>
-                        <span>{questionCount(collection.questions)}</span>
-                        <span class="muted">{status(collection)}</span>
-                      </span>
-                    </button>
-                  </li>
+                  <CollectionCard
+                    collection={collection}
+                    onDetails={() => setSelected(collection)}
+                    onStart={() => setStarting(collection)}
+                  />
                 )}
               </For>
             </ul>
             <nav class="pager" aria-label="Páginas">
-              <button type="button" disabled={page() === 0} onClick={() => setPage(page() - 1)}>
+              <button
+                type="button"
+                class="secondary"
+                disabled={page() === 0}
+                onClick={() => setPage(page() - 1)}
+              >
                 Anterior
               </button>
               <span>
@@ -124,6 +134,7 @@ export default function CollectionsView() {
               </span>
               <button
                 type="button"
+                class="secondary"
                 disabled={page() + 1 >= pages()}
                 onClick={() => setPage(page() + 1)}
               >
@@ -140,6 +151,15 @@ export default function CollectionsView() {
             id={collection().id}
             title={collection().title}
             onClose={() => setSelected(undefined)}
+          />
+        )}
+      </Show>
+      <Show when={starting()}>
+        {(collection) => (
+          <StartSessionModal
+            title={collection().title}
+            source={{ kind: "collection", collectionId: collection().id }}
+            onClose={() => setStarting(undefined)}
           />
         )}
       </Show>

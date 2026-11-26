@@ -1,13 +1,15 @@
+import { A } from "@solidjs/router";
 import { For, Show, createResource, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import { api } from "../../api";
 import { EmptyState, Loading, ResourceView } from "../../components/states";
 import { showError, showToast } from "../../components/toasts";
 import type { TopicPath } from "../../bindings/TopicPath";
+import type { TopicStats } from "../../bindings/TopicStats";
 import type { TopicTree } from "../../bindings/TopicTree";
-import type { TopicNode } from "../../bindings/TopicNode";
-import { formatPercent, questionCount } from "../../format";
+import { questionCount } from "../../format";
 import StartSessionModal from "../solve/StartSessionModal";
+import NodeSummary from "./NodeSummary";
 
 /** Creates a topic (and the area and matter above it, if new) so Gerar can offer it. */
 function NewTopicForm(props: { tree?: TopicTree; onCreated: () => void }) {
@@ -65,17 +67,20 @@ function NewTopicForm(props: { tree?: TopicTree; onCreated: () => void }) {
         value={path.topic}
         onInput={(event) => setPath("topic", event.currentTarget.value)}
       />
-      <button type="submit" disabled={saving()}>
+      <button type="submit" class="secondary" disabled={saving()}>
         Criar assunto
       </button>
     </form>
   );
 }
 
-/** Area › matter › topic, each with its number of questions and a button to solve it. */
+/**
+ * Area › matter › topic, each with its question count, coverage and achievement bar, and a
+ * button on each topic to solve it.
+ */
 export default function TopicTreeView() {
   const [tree, { refetch }] = createResource(() => api.topicsTree());
-  const [solving, setSolving] = createSignal<{ topic: TopicNode; path: string }>();
+  const [solving, setSolving] = createSignal<{ topic: TopicStats; path: string }>();
 
   return (
     <>
@@ -83,8 +88,8 @@ export default function TopicTreeView() {
         {(target) => (
           <StartSessionModal
             title={target().path}
-            source={{ kind: "topic", topicId: target().topic.id }}
-            available={target().topic.questions}
+            source={{ kind: "topic", topicId: target().topic.topicId }}
+            available={target().topic.stats.questions}
             onClose={() => setSolving(undefined)}
           />
         )}
@@ -99,9 +104,16 @@ export default function TopicTreeView() {
         pending={tree.loading}
         retrying={tree.loading}
         onRetry={() => refetch()}
-        placeholder={<Loading variant="skeleton" label="Carregando assuntos…" />}
+        placeholder={<Loading label="Carregando assuntos…" />}
         empty={
-          <EmptyState title="Nenhuma questão no banco ainda.">
+          <EmptyState
+            title="Nenhuma questão no banco ainda."
+            action={
+              <A class="button-link primary" href="/gerar">
+                Gerar questões
+              </A>
+            }
+          >
             <p class="muted">
               Crie um assunto acima ou importe o banco do Caderno Local em Início ou em
               Configurações.
@@ -121,8 +133,7 @@ export default function TopicTreeView() {
                   <li>
                     <details>
                       <summary>
-                        <span class="tree-name">{area.name}</span>
-                        <span class="count">{questionCount(area.questions)}</span>
+                        <NodeSummary name={area.name} stats={area.stats} />
                       </summary>
                       <ul>
                         <For each={area.matters}>
@@ -130,24 +141,17 @@ export default function TopicTreeView() {
                             <li>
                               <details>
                                 <summary>
-                                  <span class="tree-name">{matter.name}</span>
-                                  <span class="count">{questionCount(matter.questions)}</span>
+                                  <NodeSummary name={matter.name} stats={matter.stats} />
                                 </summary>
                                 <ul>
                                   <For each={matter.topics}>
                                     {(topic) => (
                                       <li class="tree-leaf">
-                                        <span class="tree-name">{topic.name}</span>
-                                        <span class="count">{questionCount(topic.questions)}</span>
-                                        <Show when={topic.accuracy !== null}>
-                                          <span class="count" title="Acerto entre respondidas">
-                                            acerto {formatPercent(topic.accuracy)}
-                                          </span>
-                                        </Show>
-                                        <Show when={topic.questions > 0}>
+                                        <NodeSummary name={topic.name} stats={topic.stats} />
+                                        <Show when={topic.stats.questions > 0}>
                                           <button
                                             type="button"
-                                            class="link-button"
+                                            class="primary"
                                             aria-label={`Resolver ${topic.name}`}
                                             onClick={() =>
                                               setSolving({

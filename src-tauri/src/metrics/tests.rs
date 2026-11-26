@@ -730,7 +730,7 @@ fn metrics_timing() {
 }
 
 #[test]
-fn topic_accuracy_feeds_the_bank_tree() {
+fn bank_tree_carries_coverage_and_accuracy_at_every_level() {
     let f = fixture(&[("q1", &[D]), ("q2", &[D]), ("q3", &[P])]);
     f.attempt(
         "a1",
@@ -739,17 +739,25 @@ fn topic_accuracy_feeds_the_bank_tree() {
         &[("q1", Some("o0")), ("q2", Some("o1"))],
     );
     let tree = f.db.with(|c| crate::bank::catalog::topic_tree(c)).unwrap();
-    let accuracy = |name: &str| {
-        tree.areas
+    let topic = |name: &str| {
+        let topic = tree
+            .areas
             .iter()
             .flat_map(|a| &a.matters)
             .flat_map(|m| &m.topics)
             .find(|t| t.name == name)
-            .unwrap()
-            .accuracy
+            .unwrap();
+        (topic.stats.score.accuracy, topic.stats.coverage)
     };
-    assert_eq!(accuracy("Controle"), Some(0.5));
-    assert_eq!(accuracy("Crase"), None, "never answered");
+    assert_eq!(topic("Controle"), (Some(0.5), Some(1.0)));
+    assert_eq!(topic("Crase"), (None, Some(0.0)), "never answered");
+    let matters: Vec<_> = tree
+        .areas
+        .iter()
+        .flat_map(|a| &a.matters)
+        .map(|m| (m.name.as_str(), m.stats.questions, m.stats.answered))
+        .collect();
+    assert_eq!(matters, [("Constitucional", 2, 2), ("Gramática", 1, 0)]);
 }
 
 #[test]

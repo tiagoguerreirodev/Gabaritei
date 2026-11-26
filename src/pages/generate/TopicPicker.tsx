@@ -89,8 +89,8 @@ export default function TopicPicker(props: {
       <Show when={topic()}>
         {(found) => (
           <p class="muted" role="note">
-            {found().questions > 0
-              ? `Já existem ${formatNumber(found().questions)} questões neste assunto; a IA vai evitar repeti-las.`
+            {found().stats.questions > 0
+              ? `Já existem ${formatNumber(found().stats.questions)} questões neste assunto; a IA vai evitar repeti-las.`
               : "Este assunto ainda não tem questões."}
           </p>
         )}

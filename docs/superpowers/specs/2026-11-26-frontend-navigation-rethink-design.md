@@ -208,8 +208,9 @@ single *Estudar* hub.
 Each step is one issue and one PR, behavior-preserving outside its screen.
 
 1. **Foundations:** design-system tokens (`tokens.json` → generated `tokens.css`) and
-   `bundle.css` in `src/styles/`, shared Solid wrappers only where a pattern repeats, and the shell
-   (Nav, sidebar with the new entries; Histórico entry hidden until step 4).
+   the shared component families of `bundle.css` (base, Button, Card, Badge, Field, Tabs, Meter,
+   Modal, Toast, Nav) applied app-wide, and the shell restyled. No route changes: those land with
+   their screens (steps 4 and 5).
 2. **Banco backend:** `QuestionFilter`, `bank_filter_summary`, `SessionSource::Filter`, tests.
 3. **Banco screen:** filters, result panel, presets, URL state; delete `StartSessionModal`.
 4. **Entry points:** Início, Desempenho, collection detail link to Banco; remove Erros e revisões

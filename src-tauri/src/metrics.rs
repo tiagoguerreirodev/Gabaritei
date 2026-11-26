@@ -553,6 +553,8 @@ pub struct HomeSummary {
     pub due_in_open_attempt: u32,
     /// Generated packages waiting for review.
     pub drafts_waiting: u32,
+    /// The first-use checklist; empty once every step is done.
+    pub first_steps: Vec<FirstStepStatus>,
 }
 
 /// The home summary at `now` (an RFC 3339 UTC timestamp).
@@ -591,11 +593,14 @@ pub fn home(conn: &Connection, now: &str) -> AppResult<HomeSummary> {
             "SELECT COUNT(*) FROM drafts WHERE status = ?1",
             &[&DraftStatus::Review],
         )?,
+        first_steps: first_steps(conn)?,
     })
 }
 
 mod csv;
 pub use csv::export_csv;
+mod first_steps;
+pub use first_steps::{FirstStep, FirstStepStatus, first_steps};
 
 #[cfg(test)]
 mod tests;

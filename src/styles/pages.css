@@ -536,3 +536,36 @@
   border-color: var(--danger);
   color: var(--danger);
 }
+
+/* ---- Início: primeiros passos ---- */
+.first-steps h2 {
+  margin-bottom: var(--space-1);
+}
+
+.first-steps-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.first-steps-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  align-items: baseline;
+}
+
+.first-steps-list li.done {
+  color: var(--muted);
+}
+
+.first-step-mark {
+  width: 1.25em;
+  font-weight: 600;
+}
+
+.first-steps-list li.done .first-step-mark {
+  color: var(--success);
+}

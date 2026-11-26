@@ -56,7 +56,7 @@
 .learning-list li {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: var(--space-0-5) var(--space-4);
+  gap: var(--space-1) var(--space-4);
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--border);
 }
@@ -245,7 +245,7 @@
   height: 1.6rem;
   border: 2px solid var(--border-strong);
   border-radius: var(--radius-pill);
-  font-size: var(--text-sm);
+  font-size: 0.875rem;
 }
 
 .step-list li.done::before,
@@ -290,12 +290,12 @@
 }
 
 .card.today-card h2 {
-  font-size: var(--text-lg);
+  font-size: 1.125rem;
 }
 
 .today-kicker {
   margin: 0 0 var(--space-1);
-  font-size: var(--text-sm);
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--accent);
 }
@@ -325,7 +325,7 @@
   justify-content: space-between;
   max-width: var(--content-width-wide);
   margin: var(--space-4) 0 var(--space-2);
-  font-size: var(--text-md);
+  font-size: 1.125rem;
 }
 
 .learning-chip,

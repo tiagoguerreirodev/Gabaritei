@@ -1,6 +1,5 @@
 @import "./styles/fonts.css";
 @import "./styles/tokens.css";
-@import "./styles/legacy-aliases.css";
 @import "./styles/theme.css";
 @import "./styles/ds/base.css";
 @import "./styles/ds/button.css";

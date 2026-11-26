@@ -1,0 +1,108 @@
+<!-- @dsCard group="Screens" height=760 width=1000 -->
+<style>
+  body {
+    padding: 32px 40px;
+    background: var(--bg);
+  }
+  h1 {
+    margin: 0 0 4px;
+    font-size: 1.5rem;
+    line-height: 1.25;
+  }
+  .counts {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    max-width: var(--content-width-wide);
+    margin: 24px 0;
+  }
+  .bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: var(--content-width-wide);
+    margin: 0 0 12px;
+  }
+  .end {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    max-width: var(--content-width-wide);
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--rule);
+  }
+</style>
+<span class="label">Pacote de 26 nov · Administrativo</span>
+<h1>Revisar pacote</h1>
+<div class="counts">
+  <div class="card card-compact stat">
+    <span class="stat-name">Questões</span><span class="stat-value">10</span>
+  </div>
+  <div class="card card-compact stat">
+    <span class="stat-name">Aprovadas</span><span class="stat-value">7</span>
+  </div>
+  <div class="card card-compact stat">
+    <span class="stat-name">Contestadas</span><span class="stat-value">2</span>
+  </div>
+  <div class="card card-compact stat">
+    <span class="stat-name">Com problemas</span><span class="stat-value">1</span>
+  </div>
+</div>
+<div class="bar">
+  <ul class="filters">
+    <li>
+      <button class="filter" aria-pressed="false">
+        Todas <span class="filter-count">10</span>
+      </button>
+    </li>
+    <li>
+      <button class="filter" aria-pressed="true">
+        Contestadas <span class="filter-count">2</span>
+      </button>
+    </li>
+    <li>
+      <button class="filter" aria-pressed="false">
+        Com problemas <span class="filter-count">1</span>
+      </button>
+    </li>
+  </ul>
+  <button class="btn btn-link">Expandir todas</button>
+</div>
+<ul class="review-list">
+  <li>
+    <details class="review-row" open>
+      <summary>
+        <span class="review-row-number">2</span
+        ><span class="review-row-topic">Administrativo › Licitações</span
+        ><span class="badge badge-danger badge-dashed">Contestada</span
+        ><span class="review-row-chevron" aria-hidden="true">›</span>
+      </summary>
+      <div class="review-row-body">
+        <p class="sheet-stem">
+          Julgue o item: a dispensa de licitação pode ocorrer em caso de emergência ou calamidade
+          pública.
+        </p>
+        <ol class="review-row-options" type="A">
+          <li>Certo</li>
+          <li>Errado</li>
+        </ol>
+        <span class="review-row-note">Verificação cega discordou do gabarito proposto.</span>
+      </div>
+    </details>
+  </li>
+  <li>
+    <details class="review-row">
+      <summary>
+        <span class="review-row-number">6</span
+        ><span class="review-row-topic">Administrativo › Atos administrativos › Convalidação</span
+        ><span class="badge badge-danger badge-dashed">Contestada</span
+        ><span class="review-row-chevron" aria-hidden="true">›</span>
+      </summary>
+    </details>
+  </li>
+</ul>
+<div class="end">
+  <button class="btn">Descartar pacote</button
+  ><button class="btn btn-primary">Importar 9 questões</button>
+</div>

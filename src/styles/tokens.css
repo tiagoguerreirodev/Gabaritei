@@ -1,56 +1,24 @@
-/*
- * Design tokens: "Cartão-resposta" (the answer sheet).
- *
- * Colours: cool paper, blue-black ink and the pink of OMR answer-sheet print.
- * Light is the default. The dark values appear twice on purpose: once for "follow the system"
- * (no data-theme) and once for an explicit data-theme="dark". src/styles/contrast.test.ts
- * checks that the two copies match and that every pair meets WCAG AA.
- *
- * Role of each colour:
- *   --bg / --surface   page and raised surfaces
- *   --text / --muted   body and secondary text
- *   --accent           fills, links and the focus ring; --on-accent is text on an accent fill
- *   --accent-soft      selected and tinted backgrounds (text on it is --accent)
- *   --border           decorative lines; --border-strong is for controls (3:1)
- *   --danger / --success / --flag   outcomes; --flag-bar is the non-text marker
- */
-:root {
-  color-scheme: light dark;
+/* Generated from docs/design-system/tokens.json by `npm run tokens`. Do not edit. */
 
+:root {
   --bg: #f4f5f9;
   --surface: #ffffff;
   --text: #1b2150;
   --muted: #4a5075;
   --border: #d3d7e6;
   --border-strong: #7a80a6;
+  --rule: #efc1d1;
+  --explain-bg: #eceef8;
   --accent: #c2255c;
   --accent-soft: #fce4ec;
   --on-accent: #ffffff;
-  --danger: #b3261e;
   --success: #1a6e45;
+  --success-soft: #dfebe5;
+  --danger: #b3261e;
+  --danger-soft: #f6e5e4;
   --flag: #7a5200;
-  --flag-bar: #8a5a10;
   --focus: var(--accent);
   --scrim: rgb(10 12 40 / 50%);
-
-  /* Type */
-  --font-ui: "Instrument Sans Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-reading: "Source Serif 4 Variable", Georgia, "Times New Roman", serif;
-  --font-mono: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
-  --text-xs: 0.8rem;
-  --text-sm: 0.875rem;
-  --text-base: 1rem;
-  --text-md: 1.1rem;
-  --text-lg: 1.25rem;
-  --text-xl: 1.6rem;
-  --text-2xl: 2rem;
-  --leading-tight: 1.25;
-  --leading-ui: 1.5;
-  --leading-reading: 1.7;
-  --measure: 68ch;
-
-  /* Space (4px steps at the default text size; they scale with it) */
-  --space-0-5: 0.125rem;
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -59,29 +27,29 @@
   --space-6: 1.5rem;
   --space-8: 2rem;
   --space-10: 2.5rem;
-
-  /* Shape and depth */
   --radius-sm: 6px;
-  --radius: 8px;
+  --radius-md: 8px;
   --radius-pill: 999px;
-  --shadow-toast: 0 6px 20px rgb(10 12 40 / 15%);
-  --shadow-modal: 0 12px 40px rgb(10 12 40 / 25%);
-
-  /* Motion */
+  --shadow-raised: 0 6px 20px rgb(10 12 40 / 15%);
+  --shadow-overlay: 0 12px 40px rgb(10 12 40 / 25%);
+  --measure: 65ch;
+  --content-width: 48rem;
+  --content-width-wide: 56rem;
+  --sidebar-width: 14rem;
+  --sidebar-width-collapsed: 4.25rem;
+  --bubble-size: 2rem;
+  --bubble-size-lg: 2.5rem;
+  --sheet-width: 46rem;
+  --rail-width: 13.5rem;
+  --gutter-width: 3rem;
   --dur-fast: 120ms;
   --dur-base: 200ms;
+  --font-ui:
+    "Instrument Sans Variable", "Instrument Sans", system-ui, -apple-system, "Segoe UI", Roboto,
+    sans-serif;
+  --font-reading: "Source Serif 4 Variable", "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
   --ease: cubic-bezier(0.2, 0, 0, 1);
-
-  /* Layout: how wide a column of cards may grow */
-  --width-content: 48rem;
-  --width-wide: 56rem;
-  --sidebar-width: 14rem;
-
-  font-family: var(--font-ui);
-  font-size: 16px;
-  line-height: var(--leading-ui);
-  color: var(--text);
-  background: var(--bg);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -92,16 +60,19 @@
     --muted: #a6abcf;
     --border: #2e3260;
     --border-strong: #6c72a6;
+    --rule: #5a2c4d;
+    --explain-bg: #22264a;
     --accent: #ff7aa2;
     --accent-soft: #3b2147;
     --on-accent: #12142a;
-    --danger: #ff8a80;
     --success: #5fd39a;
+    --success-soft: #253748;
+    --danger: #ff8a80;
+    --danger-soft: #362b42;
     --flag: #f2c14e;
-    --flag-bar: #d9a21e;
     --scrim: rgb(0 0 0 / 60%);
-    --shadow-toast: 0 6px 20px rgb(0 0 0 / 40%);
-    --shadow-modal: 0 12px 40px rgb(0 0 0 / 55%);
+    --shadow-raised: 0 6px 20px rgb(0 0 0 / 40%);
+    --shadow-overlay: 0 12px 40px rgb(0 0 0 / 55%);
   }
 }
 
@@ -112,35 +83,17 @@
   --muted: #a6abcf;
   --border: #2e3260;
   --border-strong: #6c72a6;
+  --rule: #5a2c4d;
+  --explain-bg: #22264a;
   --accent: #ff7aa2;
   --accent-soft: #3b2147;
   --on-accent: #12142a;
-  --danger: #ff8a80;
   --success: #5fd39a;
+  --success-soft: #253748;
+  --danger: #ff8a80;
+  --danger-soft: #362b42;
   --flag: #f2c14e;
-  --flag-bar: #d9a21e;
   --scrim: rgb(0 0 0 / 60%);
-  --shadow-toast: 0 6px 20px rgb(0 0 0 / 40%);
-  --shadow-modal: 0 12px 40px rgb(0 0 0 / 55%);
-}
-
-:root[data-theme="light"] {
-  color-scheme: light;
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-}
-
-/* Text size (Configurações › Aparência). Everything is in rem, so the whole UI scales. */
-:root[data-text-size="s"] {
-  font-size: 15px;
-}
-
-:root[data-text-size="l"] {
-  font-size: 18px;
-}
-
-:root[data-text-size="xl"] {
-  font-size: 20px;
+  --shadow-raised: 0 6px 20px rgb(0 0 0 / 40%);
+  --shadow-overlay: 0 12px 40px rgb(0 0 0 / 55%);
 }

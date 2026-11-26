@@ -15,6 +15,7 @@
     "format": "prettier --write . && eslint . --fix",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "test": "vitest run",
+    "tokens": "node scripts/generate-tokens.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

@@ -1,13 +1,13 @@
 /* Desempenho and Início */
 .card.wide {
-  max-width: var(--width-wide);
+  max-width: var(--content-width-wide);
 }
 
 .stat-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
   gap: var(--space-3);
-  max-width: var(--width-wide);
+  max-width: var(--content-width-wide);
   margin: var(--space-4) 0;
   padding: 0;
   list-style: none;
@@ -20,7 +20,7 @@
   padding: var(--space-4);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
 }
 
 .stat-name {

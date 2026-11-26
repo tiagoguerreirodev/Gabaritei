@@ -155,7 +155,7 @@
   overflow-y: auto;
   border-left: 1px solid var(--border-strong);
   background: var(--surface);
-  box-shadow: var(--shadow-modal);
+  box-shadow: var(--shadow-overlay);
   animation: drawer-in var(--dur-base) var(--ease);
 }
 
@@ -214,13 +214,13 @@
 
 .navigator .outcome-correct {
   border-color: var(--success);
-  background: color-mix(in srgb, var(--success) 25%, var(--surface));
+  background: var(--success-soft);
   color: var(--text);
 }
 
 .navigator .outcome-wrong {
   border-color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 25%, var(--surface));
+  background: var(--danger-soft);
   color: var(--text);
 }
 
@@ -280,9 +280,9 @@
   padding: var(--space-3) var(--space-4);
   transform: translateX(-50%);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   background: var(--surface);
-  box-shadow: var(--shadow-toast);
+  box-shadow: var(--shadow-raised);
   font-size: var(--text-sm);
 }
 
@@ -311,7 +311,7 @@
   padding: var(--space-5) var(--space-6);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
 }
 
 .question-header {
@@ -356,7 +356,7 @@
   display: flex;
   align-items: stretch;
   border: 2px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   transition:
     background-color var(--dur-fast) var(--ease),
     border-color var(--dur-fast) var(--ease);
@@ -490,12 +490,12 @@
 
 .option.option-key {
   border-color: var(--success);
-  background: color-mix(in srgb, var(--success) 14%, var(--surface));
+  background: var(--success-soft);
 }
 
 .option.option-wrong {
   border-color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  background: var(--danger-soft);
 }
 
 .option-mark {

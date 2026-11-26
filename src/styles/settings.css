@@ -26,7 +26,7 @@
 .settings-modes {
   margin: var(--space-3) 0;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
 }
 
 .settings-modes label {

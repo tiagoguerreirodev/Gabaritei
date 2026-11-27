@@ -11,23 +11,23 @@
   fill: var(--muted);
   font-size: 0.6875rem;
 }
-.trend-chart .line {
+.trend-chart .line,
+.sparkline .line {
+  fill: none;
   stroke: var(--accent);
   stroke-width: 2;
 }
-.trend-chart .dot {
-  fill: var(--accent);
+.sparkline .line {
+  stroke-width: 1.5;
 }
-.chart-note {
-  font-size: 0.875rem;
+.trend-chart .dot,
+.sparkline .dot {
+  fill: var(--accent);
 }
 .sparkline {
   vertical-align: middle;
 }
-.sparkline .line {
-  stroke: var(--accent);
-  stroke-width: 1.5;
-}
-.sparkline .dot {
-  fill: var(--accent);
+.chart-note {
+  color: var(--muted);
+  font-size: 0.875rem;
 }

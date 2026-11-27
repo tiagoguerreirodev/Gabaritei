@@ -40,3 +40,15 @@
 .facts dd {
   margin: 0;
 }
+
+/* Ruled rows stack their content on narrow viewports and at the largest text size. */
+@media (max-width: 40rem) {
+  .item-list.is-ruled > li {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+:root[data-text-size="xl"] .item-list.is-ruled > li {
+  flex-direction: column;
+  align-items: flex-start;
+}

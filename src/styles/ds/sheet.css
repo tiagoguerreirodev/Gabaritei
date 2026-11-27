@@ -108,3 +108,10 @@
 .rich-text .math-error {
   color: var(--danger);
 }
+.question-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: var(--space-4) 0;
+  border-radius: var(--radius-md);
+}

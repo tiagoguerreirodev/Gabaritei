@@ -1,6 +1,6 @@
 /* ---- Recap: the score of a finished attempt ---- */
 
-.card.recap .facts {
+.recap .facts {
   grid-template-columns: repeat(2, max-content);
 }
 
@@ -11,6 +11,7 @@
 
 .recap-headline strong {
   font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .recap-counts {
@@ -20,6 +21,7 @@
   margin: 0 0 var(--space-4);
   padding: 0;
   list-style: none;
+  font-variant-numeric: tabular-nums;
 }
 
 .recap-glyph {

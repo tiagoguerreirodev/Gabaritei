@@ -2,6 +2,7 @@
 
 .shortcuts {
   position: relative;
+  display: inline-block;
 }
 
 .shortcuts-panel {

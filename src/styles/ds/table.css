@@ -1,14 +1,24 @@
+/* Wide tables scroll sideways inside their card instead of the page. */
+.table-scroll {
+  overflow-x: auto;
+}
+.table-scroll:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
 /* ---- DataTable: a numeric table with indented levels and a short meter per row ---- */
 .data-table {
   width: 100%;
   border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
 }
 .data-table th,
 .data-table td {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
+  font-weight: 400;
   text-align: right;
-  font-weight: normal;
+  vertical-align: middle;
 }
 .data-table th:first-child,
 .data-table.is-text th,

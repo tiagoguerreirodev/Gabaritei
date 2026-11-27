@@ -6,6 +6,9 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
+.page > .card {
+  margin: var(--space-6) 0;
+}
 .card > h2 {
   margin: 0 0 var(--space-2);
   font-size: 1.125rem;

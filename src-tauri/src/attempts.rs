@@ -23,6 +23,7 @@ use crate::ids::{AttemptId, CollectionId, QuestionId, TopicId};
 use crate::selection::{QuestionFilter, SessionOrder};
 
 mod active;
+mod closing;
 mod history;
 mod response;
 mod scoring;
@@ -30,6 +31,7 @@ mod session;
 mod view;
 
 pub use active::{ActiveAttempt, abandon, active};
+pub use closing::{AttemptClosing, PreviousAttempt, TopicScore, closing};
 pub use history::{HistoryItem, HistoryPage, HistoryQuery, HistorySource, history};
 pub use response::{annul, answer, eliminate, finish, flag, restore, revealed_question};
 pub(crate) use scoring::{ANSWERED_RESPONSE_SQL, HIT_SQL, MISS_SQL};

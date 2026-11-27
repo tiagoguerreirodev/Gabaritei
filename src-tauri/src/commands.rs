@@ -27,7 +27,9 @@ use crate::ai::roles::{self, Role, RoleConfig};
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, ResolvedClis};
 use crate::appearance::{self, Appearance};
-use crate::attempts::{self, ActiveAttempt, AttemptView, HistoryPage, HistoryQuery, SessionStart};
+use crate::attempts::{
+    self, ActiveAttempt, AttemptClosing, AttemptView, HistoryPage, HistoryQuery, SessionStart,
+};
 use crate::backup::{BackupInfo, BackupService, BackupStatus, OpenableFolder, RelocateOutcome};
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
 use crate::bank::{self, TopicPath};
@@ -368,6 +370,12 @@ pub fn active_attempts(db: State<'_, Database>) -> AppResult<Vec<ActiveAttempt>>
 #[tauri::command(async)]
 pub fn attempt_history(db: State<'_, Database>, query: HistoryQuery) -> AppResult<HistoryPage> {
     db.with(|conn| attempts::history(conn, &query))
+}
+
+/// Previous-attempt comparison and per-topic scores for a finished attempt. No questions or keys.
+#[tauri::command(async)]
+pub fn attempt_closing(db: State<'_, Database>, id: AttemptId) -> AppResult<AttemptClosing> {
+    db.with(|conn| attempts::closing(conn, &id))
 }
 
 /// Asks where to save the performance table as CSV (using the same filters) and writes it.

@@ -20,8 +20,8 @@ export default function RolesSection(props: {
       <h2 id="roles-title">Funções</h2>
       <p class="muted">
         Cada função usa um agente, um modelo e um esforço de raciocínio. Os modelos e esforços vêm
-        dos próprios agentes. Na tela de geração você pode trocar o gerador e o conferente só
-        daquela vez.
+        dos próprios agentes. Na tela de geração dá para trocar o gerador e o conferente só daquela
+        vez.
       </p>
       <p>
         <button type="button" class="btn" onClick={() => void refreshCatalog()}>

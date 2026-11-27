@@ -66,7 +66,7 @@ export default function History() {
               </a>
             }
           >
-            <p>As tentativas que você começar e finalizar aparecem aqui.</p>
+            <p>As tentativas começadas e finalizadas aparecem aqui.</p>
           </EmptyState>
         }
       >

@@ -1,6 +1,6 @@
 [package]
 name = "gabaritei"
-version = "0.7.0"
+version = "0.8.0"
 description = "Gabaritei: generate exam questions with AI agents and track performance by topic"
 edition = "2024"
 publish = false

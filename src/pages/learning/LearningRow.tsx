@@ -51,7 +51,7 @@ export default function LearningRow(props: { item: LearningItem }) {
         {matterName(props.item)}
         <Show when={props.item.review}>
           {(review) => (
-            <span class="badge learning-chip">{intervalText(review().intervalDays)}</span>
+            <span class="badge learning-badge">{intervalText(review().intervalDays)}</span>
           )}
         </Show>
         <Show when={props.item.isError}>
@@ -61,7 +61,7 @@ export default function LearningRow(props: { item: LearningItem }) {
       <span class="muted learning-meta">
         {dueText(props.item.review)} · Última resposta em {formatDate(props.item.lastAnsweredAt)}
         <Show when={props.item.accuracy !== null}>
-          <span class={`badge badge-${accuracyBand(props.item.accuracy ?? 0)}`}>
+          <span class={`badge learning-badge badge-${accuracyBand(props.item.accuracy ?? 0)}`}>
             {formatPercent(props.item.accuracy)} de acerto
           </span>
         </Show>

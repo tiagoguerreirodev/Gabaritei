@@ -2,13 +2,14 @@
 .data-table {
   width: 100%;
   border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
 }
 .data-table th,
 .data-table td {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
   text-align: right;
-  font-weight: normal;
+  font-weight: 400;
 }
 .data-table th:first-child {
   text-align: left;
@@ -39,4 +40,13 @@
 }
 .table-meter .meter-value {
   min-width: 3.5rem;
+}
+
+/* A table that is wider than its card scrolls inside it and can be reached by keyboard. */
+.table-scroll {
+  overflow-x: auto;
+}
+.table-scroll:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
 }

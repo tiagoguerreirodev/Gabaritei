@@ -12,6 +12,7 @@
   font-size: 0.6875rem;
 }
 .trend-chart .line {
+  fill: none;
   stroke: var(--accent);
   stroke-width: 2;
 }
@@ -25,6 +26,7 @@
   vertical-align: middle;
 }
 .sparkline .line {
+  fill: none;
   stroke: var(--accent);
   stroke-width: 1.5;
 }

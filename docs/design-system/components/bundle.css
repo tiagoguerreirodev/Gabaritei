@@ -245,7 +245,11 @@ a {
 }
 
 /* ---- Modal ---- */
+/* Covers the window and scrolls when the dialog is tall. */
 .modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
   display: grid;
   place-items: center;
   padding: var(--space-6);
@@ -253,6 +257,8 @@ a {
 }
 .modal {
   width: min(36rem, 100%);
+  max-height: calc(100vh - 4rem);
+  overflow: auto;
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
@@ -286,7 +292,17 @@ a {
 }
 
 /* ---- Toast ---- */
+.toasts {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
 .toast {
+  animation: toast-in var(--dur-base) var(--ease);
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -314,6 +330,13 @@ a {
 }
 .toast-text {
   flex: 1;
+}
+/* Slides up into place; the reduced-motion rule makes it appear at once. */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
 }
 
 /* ---- Meter: length plus printed number, never colour alone ---- */
@@ -777,6 +800,15 @@ a {
   color: var(--danger);
 }
 
+/* An image inside a stem or an option: never wider than the sheet. */
+.question-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: var(--space-4) 0;
+  border-radius: var(--radius-md);
+}
+
 /* ---- Explanation: after the answer, its own tinted panel ---- */
 .explanation {
   display: grid;
@@ -1085,6 +1117,14 @@ a {
   background: var(--surface);
 }
 
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
 /* ---- Banco: filters on the left, the result on the right ---- */
 .bank-presets {
   display: flex;
@@ -1362,7 +1402,9 @@ a {
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text);
+  font: inherit;
   font-weight: 600;
+  cursor: pointer;
   transform: translateY(-200%);
 }
 .skip-link:focus-visible {
@@ -1373,9 +1415,11 @@ a {
   width: 1px;
   height: 1px;
   margin: -1px;
+  padding: 0;
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+  border: 0;
 }
 @media (max-width: 60rem) {
   .content {
@@ -1487,11 +1531,11 @@ a {
   margin: 0;
 }
 .stat-hint {
-  color: var(--muted);
   font-size: 0.8rem;
 }
 .stat-card-main {
   grid-column: span 2;
+  gap: var(--space-1);
   border-color: var(--accent);
   background: var(--accent-soft);
 }
@@ -1514,7 +1558,8 @@ a {
 }
 
 /* ---- Meter, compact: track and number only, beside a name the row already shows ---- */
-.meter.compact {
+.meter.compact,
+:root[data-text-size="xl"] .meter.compact {
   grid-template-columns: 6rem 4rem;
   width: auto;
 }
@@ -1539,6 +1584,7 @@ a {
   border-bottom: 1px solid var(--border);
 }
 .item-title {
+  display: block;
   font-weight: 600;
 }
 .facts {
@@ -1555,8 +1601,13 @@ a {
 }
 
 /* ---- DataTable: hairline rows, numbers right-aligned, hierarchy by indent ---- */
+/* A table wider than its card scrolls inside it and can be reached by keyboard. */
 .table-scroll {
   overflow-x: auto;
+}
+.table-scroll:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
 }
 .data-table {
   width: 100%;
@@ -1569,7 +1620,6 @@ a {
   border-bottom: 1px solid var(--border);
   font-weight: 400;
   text-align: right;
-  vertical-align: middle;
 }
 .data-table th:first-child,
 .data-table.is-text th,
@@ -1615,7 +1665,7 @@ a {
 }
 .trend-chart .axis {
   fill: var(--muted);
-  font-size: 11px;
+  font-size: 0.6875rem;
 }
 .trend-chart .line,
 .sparkline .line {
@@ -1634,7 +1684,6 @@ a {
   vertical-align: middle;
 }
 .chart-note {
-  color: var(--muted);
   font-size: 0.875rem;
 }
 
@@ -1660,6 +1709,7 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2) var(--space-4);
+  margin: 0 0 var(--space-3);
 }
 .choice-group.is-inline legend {
   float: left;
@@ -1667,6 +1717,10 @@ a {
   color: var(--muted);
   font-size: 0.875rem;
   font-weight: 400;
+}
+.choice-group.is-inline label {
+  align-items: center;
+  gap: var(--space-1);
 }
 input[type="checkbox"],
 input[type="radio"] {
@@ -1795,6 +1849,23 @@ input[type="radio"] {
 }
 .recap .facts {
   grid-template-columns: repeat(2, max-content);
+}
+.recap-comparison {
+  margin: 0 0 var(--space-3);
+  color: var(--muted);
+}
+.recap-topics {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+.recap-next {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 
 /* ---- Shortcuts: a raised panel of keys above its toggle ---- */

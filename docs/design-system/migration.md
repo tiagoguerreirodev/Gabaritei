@@ -103,3 +103,21 @@ How the current stylesheets (`src/styles/*.css`, about 2,240 lines) map onto thi
 - **Selected states use `is-*`** (`is-selected`, `is-correct`) rather than mixing `.selected`, `.answered`, `.outcome-*` and `.option-key`.
 - **Hard-coded paddings** (0.35rem × 0.8rem, 0.45rem × 0.9rem, 0.9rem) are folded into `space-2` × `space-4` and `space-3` × `space-4`.
 - **The collapsed-sidebar rules** are written twice in `shell.css` (`.sidebar-collapsed` and the 60rem media query); write them once on a shared selector.
+
+## v3 follow-up (#48–#53)
+
+Class names and rules that moved or were folded in while the app adopted the v3 families.
+
+| Was | Now |
+| --- | --- |
+| `.tabs`, `.tab` (`ds/tabs.css`, `shell.css`) | removed; no screen uses Tabs |
+| `.pager` in `bank.css` | `.pager` in `ds/history.css` |
+| `.toasts`, `.toast` animation, `toast-in` in `shell.css` | `ds/toast.css` |
+| `.modal-backdrop` position and `.modal` max height in `shell.css` | `ds/modal.css` |
+| `.question-image` in `shell.css` | `ds/sheet.css` |
+| `.table-scroll` in `shell.css` | `ds/table.css` |
+| `input[type="checkbox"], input[type="radio"]` accent in `base.css` | `ds/field.css` |
+| `font-weight: normal`, `border: none` | `400`, `0` (same look, one spelling) |
+| `.trend-chart .line`, `.sparkline .line` without `fill` | `fill: none` in the rule |
+| `.data-table` without tabular numerals | `font-variant-numeric: tabular-nums` |
+| SVG `.axis` at `11px` | `0.6875rem` |

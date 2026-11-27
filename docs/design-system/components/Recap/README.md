@@ -5,3 +5,4 @@ The result card shown in Resolver after *Finalizar*: the score in a sentence, th
 - `ul.recap-counts`: `li.recap-correct` (✓ in `success`), `li.recap-wrong` (✗ in `danger`), `li.recap-blank` (— in muted), and `li.recap-annulled` struck through when any question was annulled.
 - `dl.facts` in two columns: mode, time started and finished, caderno or filters.
 - Then the actions: *Ver erros* (link to Banco with the attempt's errors) and *Refazer*. Scores are derived from the current question state, so a later annulment changes this card.
+- `p.recap-comparison` (muted): one line comparing with the previous attempt, above the counts. `ul.recap-topics` (a grid, no bullets): one Meter row per weakest topic. `div.recap-next`: the actions, wrapping, `space-2` apart, `space-4` from what is above.

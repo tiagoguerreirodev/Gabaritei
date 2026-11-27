@@ -1,5 +1,15 @@
 /* ---- Toast ---- */
+.toasts {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
 .toast {
+  animation: toast-in var(--dur-base) var(--ease);
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -27,4 +37,12 @@
 }
 .toast-text {
   flex: 1;
+}
+
+/* Slides up into place; the reduced-motion rule makes it appear at once. */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
 }

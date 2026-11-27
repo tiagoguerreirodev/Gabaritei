@@ -2,7 +2,7 @@
 
 The visual language of the Gabaritei UI, version 3. Version 2 described a target; the app has since built most of it, plus screens the system never covered (Início, Desempenho, Configurações, the loading and error states, the score recap). Version 3 describes the app as it ships at `main@be1af88` and brings those parts in, with the same identity.
 
-`src/styles/` implements it: `tokens.css` is generated from `tokens.json` with `npm run tokens`, and `src/styles/ds/` holds one file per component family. The v3 families (Shell to Shortcuts below) still live in the per-screen stylesheets under their old names; `migration.md` lists the renames that move them into `ds/`.
+`src/styles/` implements it: `tokens.css` is generated from `tokens.json` with `npm run tokens`, and `src/styles/ds/` holds one file per component family. `src/styles/dsDrift.test.ts` parses `components/bundle.css` and `ds/*.css` and fails when a selector or a declaration differs, so a change goes into both files in the same commit. `migration.md` lists the renames that brought the v3 families into `ds/`.
 
 Gabaritei looks like an answer sheet (*cartão-resposta*): cool paper, blue-black ink and the pink of optical-mark print. The interface stays quiet so the question gets the attention. One accent, flat cards, and rings that fill in when chosen.
 
@@ -52,9 +52,9 @@ Gabaritei looks like an answer sheet (*cartão-resposta*): cool paper, blue-blac
 ## Type
 
 - **Instrument Sans** (`ui`) for everything interactive; **Source Serif 4** (`reading`) for question stems, options and explanations; system mono (`mono`) for code and keys. Both faces are self-hosted variable fonts (`@fontsource-variable`, Latin subset, which covers Portuguese); the CSP allows `font-src 'self'` only.
-- Interface scale: `figure` 48 (the one lead stat), `display` 32, `title` 24, `heading` 18, `body` 16, `small` 14, `caption` 12.8, plus `label` (12px, 600, uppercase, +0.08em) for the answer sheet's printed captions only, and `axis` 11px for chart labels.
+- Interface scale: `figure` 48 (the one lead stat), `display` 32, `title` 24, `heading` 18, `body` 16, `small` 14, `caption` 12.8, plus `label` (12px, 600, uppercase, +0.08em) for the answer sheet's printed captions only, and `axis` 11px (`0.6875rem`) for chart labels.
 - Reading scale, separate from the interface: `reading-lg` 18px for stems and options, `reading` 16px for explanations and previews, `reading-sm` 14px for references. All serif, line-height 1.7 (1.6 for `reading-sm`), max `measure` (65ch).
-- Sizes are rem in code (shown at the 16px default) so everything follows *Tamanho do texto* (15 / 16 / 18 / 20px). SVG chart text is the exception.
+- Sizes are rem in code (shown at the 16px default) so everything follows *Tamanho do texto* (15 / 16 / 18 / 20px). The one exception is SVG chart text, which is `0.6875rem` so it follows the setting with the rest.
 - Headings: the page title is the only `h1` (`title`); every card and dialog title is an `h2` (`heading`).
 - Weights: 400 and 600; 700 only for `title`, question numbers, bubble letters, recap glyphs and the current step.
 
@@ -104,9 +104,24 @@ Thirty-one families in `components/bundle.css`. Each is one base class plus `-va
 - **Data (Desempenho):** StatGrid, DataTable, Chart.
 - **History and settings:** HistoryRow (with the Pager), SettingsRow.
 
-Retired in v3: **Tabs** (no screen has used it since *Erros e revisões* was removed) and the dashed **EmptyState** box (the app shows empty states plain; see State).
+Retired in v3: **Tabs** (no screen used it after *Erros e revisões* was removed, so its styles are gone from `ds/` too) and the dashed **EmptyState** box (the app shows empty states plain; see State).
+
+## App-only rules
+
+Rules the app needs that no family above implies. Each is in `bundle.css` and in the family's README.
+
+- **Recap closing screen:** `.recap-comparison` (previous-attempt line, muted), `.recap-topics` (topic bars list), `.recap-next` (next-step actions). See Recap.
+- **Modal:** `.modal-backdrop` covers the window (`position: fixed`, `z-index: 10`); `.modal` caps at `calc(100vh - 4rem)` and scrolls. Width is `min(36rem, 100%)`.
+- **Toast:** `.toasts` is the fixed stack at the bottom right (`z-index: 20`); `.toast` slides in with `toast-in`.
+- **Pager:** `.pager`, the previous / next row under any paged list.
+- **Sheet:** `.question-image`, an image inside a stem or option, never wider than the sheet.
+- **DataTable:** `.table-scroll` wraps a table wider than its card; it is focusable and shows the focus ring.
+- **ChoiceGroup:** `.choice-group.is-inline label` aligns a radio with its text in the inline layout.
+- **Text helpers:** `.skip-link` (first focusable element, slides in on focus) and `.sr-only`.
+- **Meter:** `.meter.compact` also at the largest text size.
 
 ## Not covered yet
 
-- `src/styles/*.css` outside `ds/` still holds per-screen layout (the Banco collection picker, Gerar's topic path and role picker, the generation banner). Those are arrangements of existing families, not new looks.
+- The families still styled in a per-screen stylesheet rather than `ds/` are listed in `BUNDLE_ONLY` in `dsDrift.test.ts`: Steps, SettingsRow, Recap, Shortcuts and the global motion and forced-colours rules. Moving one into `ds/` means deleting its line there.
+- `src/styles/*.css` outside `ds/` holds screen-only layout (the Banco collection picker, Gerar's topic path and role picker, the generation banner, `.card` stacking). Those are arrangements of existing families, not new looks.
 - The v3 families keep the app's current class names except where `migration.md` lists a rename.

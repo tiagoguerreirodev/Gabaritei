@@ -9,11 +9,6 @@ main:focus {
 
 /* ---- Controls: readable in both themes, with a border that meets 3:1 ---- */
 
-input[type="checkbox"],
-input[type="radio"] {
-  accent-color: var(--accent);
-}
-
 ::placeholder {
   color: var(--muted);
   opacity: 1;
@@ -41,8 +36,7 @@ input[type="radio"] {
 
   .nav-item[aria-current="page"],
   .option.is-selected,
-  .bubble.is-current,
-  .tab[aria-selected="true"] {
+  .bubble.is-current {
     outline: 2px solid Highlight;
     outline-offset: -2px;
   }

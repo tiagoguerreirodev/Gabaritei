@@ -71,7 +71,7 @@ export default function StartSessionModal(props: {
         </>
       }
     >
-      <fieldset class="mode-choice">
+      <fieldset class="choice-group">
         <legend>Modo</legend>
         <For each={feedbackModes}>
           {(m) => (

@@ -82,7 +82,7 @@ export default function StrengthTable(props: { areas: AreaStats[] }) {
 
   return (
     <>
-      <fieldset class="order-choice">
+      <fieldset class="choice-group is-inline">
         <legend>Ordenar</legend>
         <For each={orders}>
           {(value) => (

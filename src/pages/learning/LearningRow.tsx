@@ -61,7 +61,7 @@ export default function LearningRow(props: { item: LearningItem }) {
       <span class="muted learning-meta">
         {dueText(props.item.review)} · Última resposta em {formatDate(props.item.lastAnsweredAt)}
         <Show when={props.item.accuracy !== null}>
-          <span class={`badge accuracy-chip accuracy-${accuracyBand(props.item.accuracy ?? 0)}`}>
+          <span class={`badge badge-${accuracyBand(props.item.accuracy ?? 0)}`}>
             {formatPercent(props.item.accuracy)} de acerto
           </span>
         </Show>

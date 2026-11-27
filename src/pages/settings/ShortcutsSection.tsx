@@ -24,15 +24,17 @@ export default function ShortcutsSection() {
   return (
     <section class="card" aria-labelledby="shortcuts-title">
       <h2 id="shortcuts-title">Resolver</h2>
-      <label class="check-row">
-        <input
-          type="checkbox"
-          checked={(failures(), shortcutsEnabled())}
-          disabled={saving()}
-          onChange={(event) => void change(event.currentTarget.checked)}
-        />
-        Atalhos de teclado
-      </label>
+      <div class="choice-group">
+        <label>
+          <input
+            type="checkbox"
+            checked={(failures(), shortcutsEnabled())}
+            disabled={saving()}
+            onChange={(event) => void change(event.currentTarget.checked)}
+          />
+          Atalhos de teclado
+        </label>
+      </div>
       <p class="muted">
         Letras A–E (ou C/E), X e F respondem, eliminam e marcam questões sem o mouse. Desative se
         usa leitor de tela ou ditado por voz. As setas e o Enter continuam funcionando.

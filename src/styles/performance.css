@@ -167,28 +167,6 @@
   min-width: 3.5rem;
 }
 
-.order-choice {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-4);
-  margin: 0 0 var(--space-3);
-  padding: 0;
-  border: 0;
-}
-
-.order-choice legend {
-  float: left;
-  margin-right: var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-
-.order-choice label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
 .sparkline {
   vertical-align: middle;
 }

@@ -7,20 +7,6 @@
   margin-left: auto;
 }
 
-.flag-button:disabled {
-  cursor: default;
-}
-
-.count-field {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.count-field input {
-  width: 6rem;
-  font: inherit;
-}
-
 /* The sheet and the rail sit side by side; the width follows the two columns and their gap. */
 .resolver {
   max-width: calc(var(--sheet-width) + var(--rail-width) + var(--space-8));
@@ -45,76 +31,6 @@
   flex-shrink: 0;
 }
 
-.score .facts {
-  grid-template-columns: repeat(2, max-content);
-}
-
-.recap-headline {
-  margin: 0 0 var(--space-3);
-  font-size: 1.125rem;
-}
-
-.recap-headline strong {
-  font-size: 1.5rem;
-}
-
-.recap-counts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-5);
-  margin: 0 0 var(--space-4);
-  padding: 0;
-  list-style: none;
-}
-
-.recap-glyph {
-  display: inline-block;
-  width: 1.5rem;
-  margin-right: var(--space-1);
-  font-weight: 700;
-  text-align: center;
-}
-
-.recap-correct .recap-glyph {
-  color: var(--success);
-}
-
-.recap-wrong .recap-glyph {
-  color: var(--danger);
-}
-
-.recap-annulled {
-  text-decoration: line-through;
-}
-
-.recap-annulled .recap-glyph {
-  text-decoration: none;
-}
-
-.recap-comparison {
-  margin: 0 0 var(--space-3);
-  color: var(--muted);
-}
-
-.recap-topics {
-  display: grid;
-  gap: var(--space-2);
-  margin: 0 0 var(--space-4);
-  padding: 0;
-  list-style: none;
-}
-
-.recap-next {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-4);
-}
-
-.score:focus {
-  outline: none;
-}
-
 /* An option row: the option button, then the ghost button that strikes it out. */
 .options > li {
   display: flex;
@@ -137,7 +53,7 @@
 }
 
 .disputed-badge {
-  margin: 0;
+  margin: 0 0 var(--space-2);
 }
 
 /* The AI panels inside the explanation: stacked, with the same rhythm as its sections. */
@@ -145,43 +61,6 @@
   display: grid;
   gap: var(--space-2);
   justify-items: start;
-}
-
-.shortcuts {
-  position: relative;
-}
-
-.shortcuts-panel {
-  position: absolute;
-  bottom: calc(100% + var(--space-2));
-  left: 50%;
-  z-index: 5;
-  width: max-content;
-  max-width: min(22rem, 90vw);
-  padding: var(--space-3) var(--space-4);
-  transform: translateX(-50%);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  box-shadow: var(--shadow-raised);
-  font-size: 0.875rem;
-}
-
-.shortcuts-panel ul {
-  margin: 0 0 var(--space-2);
-  padding-left: var(--space-4);
-}
-
-.shortcuts-panel p {
-  margin: 0;
-}
-
-.shortcuts-panel kbd {
-  padding: 0 var(--space-1);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 0.9em;
 }
 
 .sheet-header-meta {
@@ -192,5 +71,7 @@
 
 /* Estudo: the one primary action sits right under the options. */
 .confirm-row {
+  display: flex;
+  justify-content: flex-end;
   margin-top: var(--space-5);
 }

@@ -21,7 +21,7 @@ export default function ScoreSummary(props: { attemptId: string; score: Score })
   );
   const loaded = () => (closing.state === "ready" ? closing() : undefined);
   return (
-    <section class="card score recap" aria-label="Resultado" tabindex="-1" ref={section}>
+    <section class="card recap" aria-label="Resultado" tabindex="-1" ref={section}>
       <h2>Resultado</h2>
       <p class="recap-headline" data-testid="recap-points">
         <strong>
@@ -52,7 +52,7 @@ export default function ScoreSummary(props: { attemptId: string; score: Score })
           {props.score.blank} {outcomeLabel("blank", props.score.blank)}
         </li>
         <li class="recap-annulled">
-          <span class="recap-glyph recap-struck" aria-hidden="true">
+          <span class="recap-glyph" aria-hidden="true">
             –
           </span>
           {props.score.annulled} {outcomeLabel("annulled", props.score.annulled)}

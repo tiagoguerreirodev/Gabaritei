@@ -81,7 +81,6 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             commands::home,
             commands::active_attempts,
             commands::attempt_history,
-            commands::learning_overview,
             commands::performance,
             commands::export_performance_csv,
             commands::session_start,

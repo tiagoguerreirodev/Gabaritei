@@ -198,7 +198,11 @@ fn errors_of(world: &World) -> Vec<QuestionId> {
     world
         .db
         .with(|conn| {
-            crate::learning::error_questions(conn, crate::learning::ErrorFilter::WrongOnly, 100)
+            Ok(crate::learning::latest_results(conn)?
+                .into_iter()
+                .filter(|latest| latest.status == crate::learning::LatestStatus::Wrong)
+                .map(|latest| latest.question_id)
+                .collect())
         })
         .unwrap()
 }

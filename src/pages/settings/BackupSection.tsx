@@ -320,7 +320,7 @@ function Content(props: {
           </Show>
         }
       >
-        <ul class="backup-list">
+        <ul class="settings-list">
           <For each={backups()}>
             {(backup) => (
               <li>

@@ -10,7 +10,9 @@
   text-align: right;
   font-weight: normal;
 }
-.data-table th:first-child {
+.data-table th:first-child,
+.data-table.is-text th,
+.data-table.is-text td {
   text-align: left;
 }
 .data-table thead th {
@@ -39,4 +41,9 @@
 }
 .table-meter .meter-value {
   min-width: 3.5rem;
+}
+/* Controls inside a text table (the roles table) fill their cell. */
+.data-table.is-text td .input {
+  width: 100%;
+  min-width: 10rem;
 }

@@ -166,12 +166,14 @@ describe("Início", () => {
     const heading = await screen.findByRole("heading", { name: "Primeiros passos" });
     const checklist = within(heading.parentElement!);
     expect(checklist.getByText("2 de 4 concluídos")).toBeVisible();
-    expect(checklist.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
-      "✓Confira os agentes (concluído)",
-      "✓Gere o primeiro pacote (concluído)",
-      "○Revise o pacoteRevisar pacote",
-      "○Resolva a primeira tentativaIr para o Banco",
+    const items = checklist.getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual([
+      "Confira os agentes (concluída)",
+      "Gere o primeiro pacote (concluída)",
+      "Revise o pacote (em andamento)Revisar pacote",
+      "Resolva a primeira tentativa (pendente)Ir para o Banco",
     ]);
+    expect(items.filter((item) => item.hasAttribute("aria-current"))).toEqual([items[2]]);
     expect(checklist.getByRole("link", { name: "Revisar pacote" })).toHaveAttribute(
       "href",
       "#/revisar-pacote",

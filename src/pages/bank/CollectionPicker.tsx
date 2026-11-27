@@ -45,8 +45,8 @@ export default function CollectionPicker(props: {
   return (
     <>
       <div class="filter-bar" role="search">
-        <label>
-          <span>Buscar cadernos</span>
+        <label class="field">
+          <span class="field-label">Buscar cadernos</span>
           <input
             class="input"
             type="search"

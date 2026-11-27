@@ -112,6 +112,7 @@ pub struct WeakTopic {
     pub matter: String,
     pub topic: String,
     pub stats: GroupStats,
+    pub trend: Vec<WeekPoint>,
 }
 
 /// One ISO week of answers.
@@ -382,6 +383,7 @@ fn weakest_topics(areas: &[AreaStats]) -> Vec<WeakTopic> {
                         matter: matter.name.clone(),
                         topic: topic.name.clone(),
                         stats: topic.stats.clone(),
+                        trend: topic.trend.clone(),
                     });
                 }
             }

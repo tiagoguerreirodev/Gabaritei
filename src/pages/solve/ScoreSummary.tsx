@@ -10,7 +10,7 @@ export default function ScoreSummary(props: { score: Score }) {
   let section: HTMLElement | undefined;
   onMount(() => section?.focus());
   return (
-    <section class="card score recap" aria-label="Resultado" tabindex="-1" ref={section}>
+    <section class="card recap" aria-label="Resultado" tabindex="-1" ref={section}>
       <h2>Resultado</h2>
       <p class="recap-headline" data-testid="recap-points">
         <strong>

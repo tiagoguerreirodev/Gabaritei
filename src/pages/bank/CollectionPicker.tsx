@@ -45,8 +45,8 @@ export default function CollectionPicker(props: {
   return (
     <>
       <div class="filter-bar" role="search">
-        <label>
-          <span>Buscar cadernos</span>
+        <label class="field">
+          <span class="field-label">Buscar cadernos</span>
           <input
             class="input"
             type="search"
@@ -102,7 +102,7 @@ export default function CollectionPicker(props: {
             <p class="muted" aria-live="polite">
               {formatNumber(loaded().total)} {loaded().total === 1 ? "caderno" : "cadernos"}
             </p>
-            <ul class="collection-list" aria-label="Cadernos">
+            <ul class="item-list is-ruled" aria-label="Cadernos">
               <For each={loaded().items}>
                 {(collection) => (
                   <li>
@@ -111,11 +111,15 @@ export default function CollectionPicker(props: {
                       class="collection-pick"
                       onClick={() => props.onPick(collection)}
                     >
-                      <span class="collection-title">{collection.title}</span>
-                      <span class="muted">
-                        {[collection.contest, collection.board, questionCount(collection.questions)]
-                          .filter(Boolean)
-                          .join(" · ")}
+                      <span class="item-title">{collection.title}</span>
+                      <span class="collection-meta">
+                        <Show when={collection.contest}>
+                          <span class="badge">{collection.contest}</span>
+                        </Show>
+                        <Show when={collection.board}>
+                          <span class="badge">{collection.board}</span>
+                        </Show>
+                        <span class="muted">{questionCount(collection.questions)}</span>
                       </span>
                     </button>
                   </li>

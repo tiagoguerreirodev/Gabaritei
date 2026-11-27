@@ -277,25 +277,6 @@
   gap: var(--space-2);
 }
 
-.accuracy-chip {
-  margin-inline-start: var(--space-2);
-}
-
-.accuracy-good {
-  border-color: var(--success);
-  color: var(--success);
-}
-
-.accuracy-fair {
-  border-color: var(--flag);
-  color: var(--flag);
-}
-
-.accuracy-poor {
-  border-color: var(--danger);
-  color: var(--danger);
-}
-
 /* ---- Início: primeiros passos ---- */
 .first-steps h2 {
   margin-bottom: var(--space-1);

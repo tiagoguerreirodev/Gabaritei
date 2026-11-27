@@ -32,18 +32,6 @@
   align-self: flex-end;
 }
 
-.chip {
-  padding: 0 var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  color: var(--muted);
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
 /* The printed percentage carries the meaning; the band color only reinforces it. */
 .facts {
   display: grid;

@@ -32,6 +32,7 @@ const summary: HomeSummary = {
     matter: "Gramática",
     topic: "Crase",
     stats: stats(1, 4, 0, 12),
+    trend: [],
   },
   activeAttempts: [openAttempt],
   dueReviews: 3,

@@ -48,8 +48,15 @@ const data: PerformanceData = {
     },
   ],
   weakest: [
-    { topicId: 3, area: "Português", matter: "Gramática", topic: "Crase", stats: crase },
-    { topicId: 1, area: "Direito", matter: "Constitucional", topic: "Controle", stats: direito },
+    { topicId: 3, area: "Português", matter: "Gramática", topic: "Crase", stats: crase, trend: [] },
+    {
+      topicId: 1,
+      area: "Direito",
+      matter: "Constitucional",
+      topic: "Controle",
+      stats: direito,
+      trend: [],
+    },
   ],
   trend: [
     { weekStart: "2026-11-09", answered: 5, correct: 3, accuracy: 0.6 },
@@ -115,6 +122,11 @@ describe("Desempenho", () => {
     expect(items[0]).toHaveTextContent("amostra pequena");
     expect(items[1]).toHaveTextContent("Controle");
     expect(items[1]).not.toHaveTextContent("amostra pequena");
+    expect(within(items[0]!).getByText("33,3%")).toHaveClass("badge", "badge-poor");
+    expect(within(items[0]!).getByRole("link", { name: /Treinar/ })).toHaveAttribute(
+      "href",
+      "#/banco?assuntos=3",
+    );
 
     const chart = screen.getByRole("img", { name: "Acerto semanal" });
     expect(chart.querySelectorAll("circle")).toHaveLength(2);
@@ -212,10 +224,17 @@ describe("Desempenho", () => {
     const { exports } = backend(data, true);
     const user = userEvent.setup();
     render(() => (
-      <>
-        <Performance />
-        <Toaster />
-      </>
+      <HashRouter>
+        <Route
+          path="/"
+          component={() => (
+            <>
+              <Performance />
+              <Toaster />
+            </>
+          )}
+        />
+      </HashRouter>
     ));
     await screen.findByRole("list", { name: "Resumo" });
 
@@ -231,10 +250,17 @@ describe("Desempenho", () => {
     const { exports } = backend(data, false);
     const user = userEvent.setup();
     render(() => (
-      <>
-        <Performance />
-        <Toaster />
-      </>
+      <HashRouter>
+        <Route
+          path="/"
+          component={() => (
+            <>
+              <Performance />
+              <Toaster />
+            </>
+          )}
+        />
+      </HashRouter>
     ));
     await screen.findByRole("list", { name: "Resumo" });
 

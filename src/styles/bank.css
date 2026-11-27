@@ -7,22 +7,9 @@
   margin-bottom: var(--space-4);
 }
 
-.filter-bar label {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  font-size: 0.875rem;
-  color: var(--muted);
-}
-
 .filter-bar input,
 .filter-bar select {
   min-width: 14rem;
-}
-
-/* An action in the filter row (Exportar CSV) sits on the inputs' baseline, not the labels'. */
-.filter-bar > .btn {
-  align-self: flex-end;
 }
 
 .collection-list {

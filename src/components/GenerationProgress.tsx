@@ -23,7 +23,7 @@ export default function GenerationProgress() {
           {(label) => <span class="muted"> {label()}</span>}
         </Show>
       </p>
-      <ol class="stage-list" role="list" aria-label="Etapas da geração">
+      <ol class="steps" role="list" aria-label="Etapas da geração">
         <For each={generationStages()}>
           {(stage, index) => (
             <li

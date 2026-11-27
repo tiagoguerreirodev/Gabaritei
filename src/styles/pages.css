@@ -97,61 +97,6 @@
 
 /* ---- Gerar: etapas, opções avançadas, erros ---- */
 
-.step-list,
-.stage-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-5);
-  margin: var(--space-3) 0;
-  padding: 0;
-  list-style: none;
-  counter-reset: step;
-}
-
-.step-list li,
-.stage-list li {
-  counter-increment: step;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--muted);
-}
-
-/* The marker's shape carries the state: ring = to do, check = done, filled + bold = current. */
-.step-list li::before,
-.stage-list li::before {
-  content: counter(step);
-  display: inline-grid;
-  place-items: center;
-  width: 1.6rem;
-  height: 1.6rem;
-  border: 2px solid var(--border-strong);
-  border-radius: var(--radius-pill);
-  font-size: 0.875rem;
-}
-
-.step-list li.done::before,
-.stage-list li.done::before {
-  content: "✓";
-  color: var(--success);
-  border-color: var(--success);
-}
-
-.step-list li.current,
-.stage-list li.current {
-  color: var(--text);
-  font-weight: 700;
-  text-decoration: underline;
-  text-underline-offset: 0.25em;
-}
-
-.step-list li.current::before,
-.stage-list li.current::before {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
-
 .form > .field-error {
   margin: var(--space-2) 0;
   white-space: pre-line;

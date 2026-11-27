@@ -1,12 +1,5 @@
 /* ---- Banco ---- */
 
-/* The row already names the node, so the bar keeps only its track and number. */
-.meter.compact,
-:root[data-text-size="xl"] .meter.compact {
-  grid-template-columns: 6rem 4rem;
-  width: auto;
-}
-
 .filter-bar {
   display: flex;
   flex-wrap: wrap;

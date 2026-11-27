@@ -11,6 +11,9 @@
 @import "./styles/ds/modal.css";
 @import "./styles/ds/toast.css";
 @import "./styles/ds/meter.css";
+@import "./styles/ds/stat.css";
+@import "./styles/ds/table.css";
+@import "./styles/ds/chart.css";
 @import "./styles/ds/nav.css";
 @import "./styles/ds/bubble.css";
 @import "./styles/ds/option.css";

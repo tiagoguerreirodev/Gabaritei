@@ -1,22 +1,4 @@
-/* Desempenho and Início */
-.stat-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-  gap: var(--space-3);
-  max-width: var(--content-width-wide);
-  margin: var(--space-4) 0;
-  padding: 0;
-  list-style: none;
-}
-
-.stat-cards .card {
-  margin: 0;
-}
-
-.stat-hint {
-  font-size: var(--text-xs);
-}
-
+/* Desempenho and Início lists, until they move to the item-list family */
 .weakest-list,
 .area-list,
 .attempt-list,
@@ -65,108 +47,6 @@
   font-weight: 600;
 }
 
-.trend-chart {
-  width: 100%;
-  height: auto;
-  max-width: 40rem;
-}
-
-.trend-chart .grid {
-  stroke: var(--border);
-}
-
-.trend-chart .axis {
-  fill: var(--muted);
-  font-size: 11px;
-}
-
-.trend-chart .line {
-  stroke: var(--accent);
-  stroke-width: 2;
-}
-
-.trend-chart .dot {
-  fill: var(--accent);
-}
-
-.chart-note {
-  font-size: var(--text-sm);
-}
-
-.strength-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.strength-table th,
-.strength-table td {
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border);
-  text-align: right;
-  font-weight: normal;
-}
-
-.strength-table th:first-child {
-  text-align: left;
-}
-
-.strength-table thead th {
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-
-.strength-table .level-area th {
-  font-weight: 600;
-}
-
-.strength-table .level-matter th {
-  padding-left: var(--space-8);
-}
-
-.strength-table .level-topic th {
-  padding-left: calc(var(--space-8) + var(--space-5));
-}
-
-.stat-card-main {
-  grid-column: span 2;
-  gap: var(--space-1);
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.stat-card-main .stat-name {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.stat-card-main .stat-value {
-  font-size: 3rem;
-  line-height: 1.1;
-}
-
-.stat-card-main .mastery-bar {
-  width: 100%;
-  height: 0.5rem;
-}
-
-.table-mastery {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
-/* A short meter beside a number, in table rows and stat cards. */
-.mastery-bar {
-  display: inline-block;
-  width: 4rem;
-  height: 0.5rem;
-}
-
-.table-mastery .meter-value {
-  min-width: 3.5rem;
-}
-
 .order-choice {
   display: flex;
   flex-wrap: wrap;
@@ -187,23 +67,4 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-}
-
-.sparkline {
-  vertical-align: middle;
-}
-
-.sparkline .line {
-  stroke: var(--accent);
-  stroke-width: 1.5;
-}
-
-.sparkline .dot {
-  fill: var(--accent);
-}
-
-@media (max-width: 30rem) {
-  .stat-card-main {
-    grid-column: auto;
-  }
 }

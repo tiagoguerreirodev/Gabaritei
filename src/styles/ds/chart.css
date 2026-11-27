@@ -1,0 +1,33 @@
+/* ---- Chart: SVG lines with a printed note, no chart library ---- */
+.trend-chart {
+  width: 100%;
+  height: auto;
+  max-width: 40rem;
+}
+.trend-chart .grid {
+  stroke: var(--border);
+}
+.trend-chart .axis {
+  fill: var(--muted);
+  font-size: 0.6875rem;
+}
+.trend-chart .line {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.trend-chart .dot {
+  fill: var(--accent);
+}
+.chart-note {
+  font-size: var(--text-sm);
+}
+.sparkline {
+  vertical-align: middle;
+}
+.sparkline .line {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.sparkline .dot {
+  fill: var(--accent);
+}

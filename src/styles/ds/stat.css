@@ -1,0 +1,39 @@
+/* ---- StatGrid: headline numbers, the main one wider ---- */
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--space-3);
+  max-width: var(--content-width-wide);
+  margin: var(--space-4) 0;
+  padding: 0;
+  list-style: none;
+}
+.stat-cards .card {
+  margin: 0;
+}
+.stat-hint {
+  font-size: var(--text-xs);
+}
+.stat-card-main {
+  grid-column: span 2;
+  gap: var(--space-1);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.stat-card-main .stat-name {
+  color: var(--text);
+  font-weight: 600;
+}
+.stat-card-main .stat-value {
+  font-size: 3rem;
+  line-height: 1.1;
+}
+.stat-card-main .meter-track {
+  width: 100%;
+  height: 0.5rem;
+}
+@media (max-width: 30rem) {
+  .stat-card-main {
+    grid-column: auto;
+  }
+}

@@ -40,6 +40,10 @@
   color: var(--danger);
 }
 
+.recap-blank .recap-glyph {
+  color: var(--muted);
+}
+
 .recap-annulled {
   text-decoration: line-through;
 }

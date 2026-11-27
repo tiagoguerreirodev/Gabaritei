@@ -28,10 +28,6 @@
   margin: var(--space-4) 0;
 }
 
-.disputed-badge {
-  margin: 0 0 var(--space-2);
-}
-
 /* ---- Configurações ---- */
 
 .actions {
@@ -42,12 +38,6 @@
 
 .card-row > p {
   margin: 0;
-}
-
-.confirm-row {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: var(--space-3);
 }
 
 /* ---- Mastery bars (Início): the meter fills its row; rows may wrap ---- */

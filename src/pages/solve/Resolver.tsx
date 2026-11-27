@@ -301,6 +301,7 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
               {(score) => <ScoreSummary attemptId={attempt().id} score={score()} />}
             </Show>
             <div class="solve-layout">
+              {/* No styles: the ref is the focus and slide-transition target. */}
               <div class="question-stage" ref={stage}>
                 <Show when={current()}>
                   {(q) => (

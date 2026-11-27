@@ -118,7 +118,7 @@ export default function QuestionCard(props: {
           <span class="label muted">{questionTypeLabel[props.question.type]}</span>
           <button
             type="button"
-            class="btn btn-ghost flag-button"
+            class="btn btn-ghost"
             aria-pressed={props.question.flagged}
             disabled={finished()}
             onClick={() => props.onFlag()}

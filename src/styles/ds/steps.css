@@ -1,0 +1,48 @@
+/* ---- Steps: numbered stages (Gerar form, generation progress) ---- */
+
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: var(--space-3) 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.steps li {
+  counter-increment: step;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+}
+
+/* The marker's shape carries the state: ring = to do, check = done, filled + bold = current. */
+.steps li::before {
+  content: counter(step);
+  display: inline-grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  font-size: 0.875rem;
+}
+
+.steps li.done::before {
+  content: "✓";
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.steps li.current {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.steps li.current::before {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}

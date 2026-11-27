@@ -1,20 +1,3 @@
-.shell {
-  display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  min-height: 100vh;
-}
-
-.content {
-  padding: var(--space-8) var(--space-10);
-}
-
-/* Heading scale: page title (h1), then one style for every card and dialog title (h2). */
-.page h1 {
-  margin: 0 0 var(--space-4);
-  font-size: var(--text-2xl);
-  line-height: var(--leading-tight);
-}
-
 /* Cards stack with a gap; the design-system card itself has no outer margin. */
 .card {
   margin: var(--space-6) 0;
@@ -22,17 +5,6 @@
 
 .tabs {
   margin: var(--space-4) 0 var(--space-5);
-}
-
-.card h2 {
-  margin: 0 0 var(--space-2);
-  font-size: var(--text-md);
-  line-height: var(--leading-tight);
-}
-
-.error {
-  color: var(--danger);
-  white-space: pre-line;
 }
 
 .question-image {
@@ -79,21 +51,7 @@
   }
 }
 
-.state {
-  margin: var(--space-6) 0;
-}
-
-.empty-title {
-  margin: 0 0 var(--space-1);
-  font-weight: 600;
-}
-
 /* ---- Page area next to the nav (the nav itself is styles/ds/nav.css) ---- */
-
-.content {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
 
 .table-scroll {
   overflow-x: auto;
@@ -102,15 +60,4 @@
 .table-scroll:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
-}
-
-@media (max-width: 60rem) {
-  .content {
-    padding: var(--space-6) var(--space-5);
-  }
-}
-
-/* Focus mode (an unfinished attempt is open): no nav, the page is only the exam. */
-.shell.focus-mode {
-  grid-template-columns: minmax(0, 1fr);
 }

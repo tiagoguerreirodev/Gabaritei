@@ -83,6 +83,10 @@ describe("Início", () => {
     expect(within(strip).getByText("Cobertura").parentElement).toHaveTextContent(
       "Cobertura40%40 de 100",
     );
+    expect(within(strip).getByText("Acerto entre respondidas").nextElementSibling).toHaveClass(
+      "badge",
+      "badge-good",
+    );
     expect(screen.getByText("9.368 questões no banco.")).toBeVisible();
 
     const areas = within(
@@ -94,7 +98,7 @@ describe("Início", () => {
     const waiting = screen.getByRole("heading", { name: "Aguardando você" }).parentElement!;
     expect(within(waiting).getByRole("link", { name: "Revisões pendentes" })).toHaveAttribute(
       "href",
-      "#/erros-e-revisoes",
+      "#/banco?status=due,wrong&ordem=dueFirst",
     );
     expect(
       within(waiting).getByRole("link", { name: "Revisões pendentes" }).parentElement,
@@ -125,44 +129,25 @@ describe("Início", () => {
 
   it("without an open attempt, offers the due reviews", async () => {
     backend({ ...summary, activeAttempts: [], dueInOpenAttempt: 0 });
-    const user = userEvent.setup();
     renderHome();
 
     const today = within(await screen.findByRole("region", { name: "3 revisões pendentes" }));
     expect(screen.queryByRole("region", { name: "Outras tentativas em andamento" })).toBeNull();
-    await user.click(today.getByRole("button", { name: "Fazer revisões" }));
-    await user.click(await screen.findByRole("button", { name: "Começar" }));
-
-    await waitFor(() =>
-      expect(started).toEqual([
-        { request: { source: { kind: "reviews" }, feedbackMode: "study" } },
-      ]),
+    expect(today.getByRole("link", { name: "Fazer revisões" })).toHaveAttribute(
+      "href",
+      "#/banco?status=due,wrong&ordem=dueFirst",
     );
-    expect(window.location.hash).toBe("#/resolver?tentativa=att-new");
   });
 
   it("with nothing open or due, trains the weakest topic", async () => {
     backend({ ...summary, activeAttempts: [], dueReviews: 0, dueInOpenAttempt: 0 });
-    const user = userEvent.setup();
     renderHome();
 
     const today = within(await screen.findByRole("region", { name: "Crase" }));
     expect(today.getByText("Português › Gramática · aproveitamento de 20%")).toBeVisible();
-    await user.click(today.getByRole("button", { name: "Treinar assunto" }));
-    expect(
-      await screen.findByRole("dialog", { name: "Português › Gramática › Crase" }),
-    ).toBeVisible();
-    await user.click(await screen.findByRole("button", { name: "Começar" }));
-
-    await waitFor(() =>
-      expect(started).toEqual([
-        {
-          request: {
-            source: { kind: "topic", topicId: 3, count: 10 },
-            feedbackMode: "study",
-          },
-        },
-      ]),
+    expect(today.getByRole("link", { name: "Treinar assunto" })).toHaveAttribute(
+      "href",
+      "#/banco?assuntos=3",
     );
   });
 

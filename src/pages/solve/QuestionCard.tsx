@@ -139,7 +139,7 @@ export default function QuestionCard(props: {
         )}
       </Show>
       <Show when={props.optionAction === "eliminate"}>
-        <p class="hint" role="status">
+        <p class="field-hint" role="status">
           Escolha a letra da alternativa a eliminar.
         </p>
       </Show>

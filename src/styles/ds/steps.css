@@ -27,7 +27,7 @@
   height: 1.6rem;
   border: 2px solid var(--border-strong);
   border-radius: var(--radius-pill);
-  font-size: var(--text-sm);
+  font-size: 0.875rem;
 }
 
 .steps li.done::before {

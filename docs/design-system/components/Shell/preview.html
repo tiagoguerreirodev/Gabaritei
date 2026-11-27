@@ -1,0 +1,39 @@
+<!-- @dsCard group="Layout" height=300 subtitle="Nav column, content column, one page" -->
+<style>
+  body {
+    margin: 0;
+    background: var(--bg);
+  }
+  .shell {
+    min-height: 280px;
+  }
+  .nav {
+    width: auto;
+  }
+  .skip-link {
+    position: static;
+    transform: none;
+    display: inline-block;
+    margin-bottom: var(--space-4);
+  }
+</style>
+<div class="shell">
+  <aside class="nav" aria-label="Menu principal">
+    <div class="nav-brand"><span class="nav-brand-name">Gabaritei</span></div>
+    <a class="nav-item" href="#" aria-current="page"><span class="nav-label">Início</span></a>
+    <a class="nav-item" href="#"><span class="nav-label">Banco</span></a>
+    <a class="nav-item" href="#"><span class="nav-label">Gerar</span></a>
+    <a class="nav-item" href="#"><span class="nav-label">Desempenho</span></a>
+    <a class="nav-item" href="#"><span class="nav-label">Histórico</span></a>
+  </aside>
+  <main class="content">
+    <a class="skip-link" href="#">Ir para o conteúdo</a>
+    <div class="page">
+      <h1>Início</h1>
+      <section class="card">
+        <h2>Revisões de hoje</h2>
+        <p class="muted" style="margin: 0">8 questões esperam revisão.</p>
+      </section>
+    </div>
+  </main>
+</div>

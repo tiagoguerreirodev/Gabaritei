@@ -11,26 +11,6 @@
   cursor: default;
 }
 
-.mode-choice {
-  display: grid;
-  gap: var(--space-2);
-  margin: 0 0 var(--space-4);
-  padding: 0;
-  border: none;
-}
-
-.mode-choice legend {
-  margin-bottom: var(--space-2);
-  font-weight: 600;
-}
-
-.mode-choice label {
-  display: flex;
-  gap: var(--space-2);
-  align-items: baseline;
-  cursor: pointer;
-}
-
 .count-field {
   display: grid;
   gap: var(--space-1);
@@ -65,12 +45,6 @@
   flex-shrink: 0;
 }
 
-.check-row {
-  display: flex;
-  gap: var(--space-2);
-  align-items: center;
-  font-weight: 600;
-}
 /* An option row: the option button, then the ghost button that strikes it out. */
 .options > li {
   display: flex;
@@ -90,11 +64,6 @@
 
 .option-eliminate[aria-pressed="true"] {
   color: var(--danger);
-}
-
-.hint {
-  color: var(--accent);
-  font-size: var(--text-sm);
 }
 
 .disputed-badge {

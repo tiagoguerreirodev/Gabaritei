@@ -104,18 +104,18 @@ All UI text is in Portuguese. There are no accounts and no server.
 - **Scoring:** correct, wrong, blank or annulled (§3.4 of the analysis, without essays or pending grades).
 - **Topic strength** uses the latest *answered* response per question, ranked by when it was answered, the same ordering as the error notebook (a later blank never hides an earlier answer; a never-answered question counts as blank). Coverage counts questions answered at least once. It reports achievement, accuracy and coverage by area › matter › topic. Weakest topics come first, with a small-sample warning.
 - **Trend:** weekly accuracy from all answers. Each topic also gets a mini trend: the same weekly accuracy over its latest 8 weeks with answers.
-- **Topic table:** area › matter › topic expands in place, weakest first or in alphabetical order, with an achievement bar per row, the topic's mini trend and a "Treinar" action that opens the topic session dialog. Achievement leads the summary cards.
+- **Topic table:** area › matter › topic expands in place, weakest first or in alphabetical order, with an achievement bar per row, the topic's mini trend and a "Treinar" link that opens Banco filtered by the topic. Achievement leads the summary cards.
 - **Filters:** contest tag, board tag (both from the collections a question belongs to), feedback mode.
 - **Other views:** a home dashboard (with the first-use checklist from decision 4), and CSV export.
 - **All attempts are kept** (drops `U-E1`).
 
-### 3.5 Learning (*Erros e revisões*)
-- **Error notebook:** questions whose latest *answered* response is wrong (a later blank never hides an earlier wrong answer, the same blank rule as §3.4); the list links to the attempt holding that wrong answer. Blanks are optional: when included, a question whose latest result is blank is listed too.
+### 3.5 Learning (error notebook and reviews)
+- **Error notebook:** questions whose latest *answered* response is wrong (a later blank never hides an earlier wrong answer, the same blank rule as §3.4); Banco shows them through its *Erradas* status. Blanks are optional: when included, a question whose latest result is blank is listed too.
 - **Spaced repetition:** a full hit moves the interval along 1 → 3 → 7 → 14 → 30 → 60 days (the first hit is 1 day, as in the legacy app). A miss resets it to 1. A blank answer counts as a miss. Only finished attempts count, and annulled questions have no review.
 - **Derived state:** a review is recomputed from the question's answers against its current key, so key corrections and annulments apply to it, and it is rebuilt at startup.
-- **Practice sessions** are built from the Banco status filters *Erradas*, *Em branco* and *Revisão vencida* (§3.1, §3.3) with the same rules as below: the reviews session takes due reviews first, then recent errors (1–100 questions). Questions that sit in an unfinished attempt are left out of a new errors or reviews session, so a new errors or reviews session never repeats a question already in progress. The "due now" count (Learning page and Home) still includes them, with a note saying how many are in an open attempt.
+- **Practice sessions** are built from the Banco status filters *Erradas*, *Em branco* and *Revisão vencida* (§3.1, §3.3) as Banco filter sessions (up to `MAX_SELECTION_SESSION`, 200 questions). The *Due first* order takes due reviews first (most overdue first), then recent errors, without repeats. Questions that sit in an unfinished attempt are left out of a new session, so it never repeats a question already in progress. The "due now" count (Home) still includes them, with a note saying how many are in an open attempt.
 
-- **Page layout:** tabs with counts (*Para hoje*, *Atrasadas*, *Próximas*, *Caderno de erros*) over one list, with *Revisar tudo de hoje* on top. A row shows the topic, its matter, a chip with the review interval, the last answer date and a chip with the question's accuracy (green from 75%, amber from 50%, red below, always with the number). Its one action opens the past attempt; rows carry no stem, key or explanation.
+- **No page of its own:** Início and Desempenho (*Treinar*) open Banco with the filter already set (*Revisões de hoje* is the `Due` + `Wrong` status filter, due first). The old route `/erros-e-revisoes` redirects there. Attempts started before this change (`topic`, `errors`, `reviews`) keep opening with their titles.
 
 ### 3.6 Data
 - **Storage:** SQLite in the OS app-data folder.
@@ -193,7 +193,7 @@ The patterns below were **verified against the installed CLIs** (Claude Code 2.1
 
 **Events:** generation progress, re-check and explain progress.
 
-**Frontend pages (Solid):** *Início*, *Banco*, *Gerar*, *Revisar pacote*, *Resolver*, *Desempenho*, *Erros e revisões*, *Configurações*.
+**Frontend pages (Solid):** *Início*, *Banco*, *Gerar*, *Revisar pacote*, *Resolver*, *Desempenho*, *Configurações*.
 
 **Tables:**
 - `topics`, `questions`, `question_topics`

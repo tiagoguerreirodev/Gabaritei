@@ -48,7 +48,14 @@ const data: PerformanceData = {
     },
   ],
   weakest: [
-    { topicId: 3, area: "Português", matter: "Gramática", topic: "Crase", stats: crase, trend: [] },
+    {
+      topicId: 3,
+      area: "Português",
+      matter: "Gramática",
+      topic: "Crase",
+      stats: crase,
+      trend: [{ weekStart: "2026-11-16", answered: 3, correct: 1, accuracy: 1 / 3 }],
+    },
     {
       topicId: 1,
       area: "Direito",
@@ -122,6 +129,7 @@ describe("Desempenho", () => {
     expect(items[0]).toHaveTextContent("amostra pequena");
     expect(items[1]).toHaveTextContent("Controle");
     expect(items[1]).not.toHaveTextContent("amostra pequena");
+    expect(within(items[0]!).getByRole("img", { name: /Acerto de 33,3%/ })).toBeInTheDocument();
     expect(within(items[0]!).getByText("33,3%")).toHaveClass("badge", "badge-poor");
     expect(within(items[0]!).getByRole("link", { name: /Treinar/ })).toHaveAttribute(
       "href",

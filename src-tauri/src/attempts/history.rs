@@ -187,7 +187,10 @@ fn page_rows(
 }
 
 /// Each attempt's score and question count, from one query over the current question state.
-fn scores_of(conn: &Connection, ids: &[&AttemptId]) -> AppResult<HashMap<AttemptId, (Score, u32)>> {
+pub(super) fn scores_of(
+    conn: &Connection,
+    ids: &[&AttemptId],
+) -> AppResult<HashMap<AttemptId, (Score, u32)>> {
     let ids_json = serde_json::to_string(ids).expect("a list of IDs serializes");
     let mut statement = conn.prepare(
         "SELECT r.attempt_id, r.choice, q.answer_id, q.annulled

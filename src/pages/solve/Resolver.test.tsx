@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../../api";
+import type { AttemptClosing } from "../../bindings/AttemptClosing";
 import type { AttemptView } from "../../bindings/AttemptView";
 import type { FeedbackMode } from "../../bindings/FeedbackMode";
 import type { ResponseView } from "../../bindings/ResponseView";
@@ -73,6 +74,37 @@ let answerGate: Promise<void> = Promise.resolve();
 
 /** What the fake backend answers to "keyboard_shortcuts". */
 let shortcutsSaved = true;
+
+/** What the fake backend answers to "attempt_closing". */
+const closing: AttemptClosing = {
+  previous: {
+    id: "old",
+    finishedAt: "2026-11-19T10:00:00.000Z",
+    score: {
+      correct: 2,
+      wrong: 2,
+      blank: 0,
+      annulled: 0,
+      evaluated: 4,
+      achievement: 0.5,
+      accuracy: 0.5,
+    },
+  },
+  topics: [
+    {
+      path: { area: "Área", matter: "Matéria", topic: "Assunto" },
+      score: {
+        correct: 1,
+        wrong: 0,
+        blank: 2,
+        annulled: 0,
+        evaluated: 3,
+        achievement: 1 / 3,
+        accuracy: 1,
+      },
+    },
+  ],
+};
 
 function attemptView(mode: FeedbackMode): AttemptView {
   return {
@@ -177,6 +209,8 @@ function backend(mode: FeedbackMode, load: (view: AttemptView) => AttemptView = 
         return null;
       case "abandon":
         return null;
+      case "attempt_closing":
+        return closing;
     }
     throw new Error(`Unexpected command: ${command}`);
   });
@@ -941,7 +975,31 @@ describe("Resolver: answer-sheet UI", () => {
     }
   });
 
-  it("shows a recap on finishing, without a comparison", async () => {
+  it("shows the comparison, topic bars and next steps in the recap", async () => {
+    const { user } = await open("exam");
+    await user.click(screen.getByRole("button", { name: "Finalizar" }));
+    const dialog = await screen.findByRole("dialog", { name: "Finalizar tentativa?" });
+    await user.click(within(dialog).getByRole("button", { name: "Finalizar" }));
+
+    expect(await screen.findByTestId("recap-comparison")).toHaveTextContent(
+      "16,7 pontos percentuais abaixo da tentativa anterior (19/11/2026: 50%).",
+    );
+    expect(
+      screen.getByRole("meter", { name: "Aproveitamento em Matéria › Assunto" }),
+    ).toBeVisible();
+    const next = screen.getByRole("navigation", { name: "Próximos passos" });
+    expect(within(next).queryByRole("link", { name: "Refazer só os erros" })).toBeNull();
+    expect(within(next).getByRole("link", { name: "Ver revisões de hoje" })).toHaveAttribute(
+      "href",
+      "#/banco?status=due,wrong&ordem=dueFirst",
+    );
+    expect(within(next).getByRole("link", { name: "Voltar ao Início" })).toHaveAttribute(
+      "href",
+      "#/",
+    );
+  });
+
+  it("shows a recap on finishing", async () => {
     const { user } = await open("exam");
     await user.keyboard("b");
     await user.click(screen.getByRole("button", { name: "Finalizar" }));

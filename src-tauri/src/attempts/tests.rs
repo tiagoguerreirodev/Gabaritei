@@ -522,134 +522,86 @@ fn sessions_keep_boolean_options_in_order() {
     }
 }
 
-#[test]
-fn topic_sessions_prefer_unseen_then_least_recent() {
-    let (db, ids) = bank();
-    let topic_id: TopicId = db
-        .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
-        .unwrap();
-    // q1 answered long ago, q2 answered recently; q3 and q4 never answered.
-    db.with(|c| {
-        c.execute(
-            "INSERT INTO attempts (id, source_kind, feedback_mode, started_at, finished_at)
-             VALUES ('old', ?1, ?2, ?3, ?3)",
-            params![SourceKind::Topic, FeedbackMode::Exam, T0],
-        )?;
-        c.execute(
-            "INSERT INTO responses (attempt_id, position, question_id, snapshot, choice, answered_at)
-             VALUES ('old', 0, ?1, '{}', 'x', '2026-01-01T00:00:00.000Z'),
-                    ('old', 1, ?2, '{}', 'x', '2026-06-01T00:00:00.000Z')",
-            params![ids[0], ids[1]],
-        )?;
-        Ok(())
-    })
-    .unwrap();
-    let pick = |count| {
-        db.transaction(|tx| {
-            let view = start(
-                tx,
-                &SessionStart {
-                    source: SessionSource::Topic { topic_id, count },
-                    feedback_mode: FeedbackMode::Study,
-                },
-                T1,
-                &mut rand::rngs::StdRng::seed_from_u64(count.into()),
-            )?;
-            let mut chosen: Vec<QuestionId> = view
-                .questions
-                .iter()
-                .map(|q| q.question_id.clone())
-                .collect();
-            chosen.sort();
-            abandon(tx, &view.id)?;
-            Ok(chosen)
-        })
-        .unwrap()
-    };
-    let sorted = |list: &[&QuestionId]| {
-        let mut v: Vec<QuestionId> = list.iter().map(|s| (*s).clone()).collect();
-        v.sort();
-        v
-    };
-    assert_eq!(pick(2), sorted(&[&ids[2], &ids[3]]));
-    assert_eq!(pick(3), sorted(&[&ids[2], &ids[3], &ids[0]]));
+/// A single-topic Banco session, newest unseen first.
+fn topic_source(topic_id: TopicId, count: u32) -> SessionSource {
+    SessionSource::Filter {
+        filter: QuestionFilter {
+            topic_ids: vec![topic_id],
+            ..QuestionFilter::default()
+        },
+        count,
+        order: SessionOrder::UnseenFirst,
+    }
 }
 
 #[test]
-fn topic_sessions_use_the_full_topic_path_as_title() {
+fn old_source_kinds_still_load_with_their_titles() {
     let (db, _) = bank();
     let topic_id: TopicId = db
         .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
-        .unwrap();
-    let view = db
-        .transaction(|tx| {
-            start(
-                tx,
-                &SessionStart {
-                    source: SessionSource::Topic {
-                        topic_id,
-                        count: 10,
-                    },
-                    feedback_mode: FeedbackMode::Study,
-                },
-                T1,
-                &mut rand::rngs::StdRng::seed_from_u64(3),
-            )
-        })
         .unwrap();
     let TopicPath {
         area,
         matter,
         topic,
     } = crate::bank::question::tests::topic();
-    assert_eq!(view.title, format!("{area} › {matter} › {topic}"));
-}
+    db.with(|c| {
+        for (id, kind, source_ref) in [
+            ("old-topic", SourceKind::Topic, Some(topic_id.to_string())),
+            ("old-errors", SourceKind::Errors, None),
+            ("old-reviews", SourceKind::Reviews, None),
+        ] {
+            c.execute(
+                "INSERT INTO attempts (id, source_kind, source_ref, feedback_mode, started_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id, kind, source_ref, FeedbackMode::Study, T0],
+            )?;
+        }
+        Ok(())
+    })
+    .unwrap();
 
-#[test]
-fn topic_sessions_reject_zero_questions() {
-    let (db, _) = bank();
-    let topic_id: TopicId = db
-        .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
-        .unwrap();
-    let bad = db.transaction(|tx| {
-        start(
-            tx,
-            &SessionStart {
-                source: SessionSource::Topic { topic_id, count: 0 },
-                feedback_mode: FeedbackMode::Study,
-            },
-            T1,
-            &mut rand::rngs::StdRng::seed_from_u64(4),
-        )
-    });
-    assert!(bad.is_err());
+    let titles: Vec<String> = ["old-topic", "old-errors", "old-reviews"]
+        .into_iter()
+        .map(|id| db.with(|c| load(c, &id.into())).unwrap().title)
+        .collect();
+
+    assert_eq!(
+        titles,
+        [
+            format!("{area} › {matter} › {topic}"),
+            "Caderno de erros".to_string(),
+            "Revisões".to_string(),
+        ]
+    );
 }
 
 #[test]
 fn empty_sources_are_a_pt_br_error() {
     let (db, _) = bank();
-    for source in [
-        SessionSource::Errors {
-            filter: ErrorFilter::IncludeBlanks,
+    let nothing_due = SessionSource::Filter {
+        filter: QuestionFilter {
+            statuses: vec![StudyStatus::Due],
+            ..QuestionFilter::default()
         },
-        SessionSource::Reviews,
-    ] {
-        let result = db.transaction(|tx| {
-            start(
-                tx,
-                &SessionStart {
-                    source: source.clone(),
-                    feedback_mode: FeedbackMode::Exam,
-                },
-                T1,
-                &mut rand::rngs::StdRng::seed_from_u64(5),
-            )
-        });
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Não há questões disponíveis para esta sessão."
-        );
-    }
+        count: 5,
+        order: SessionOrder::DueFirst,
+    };
+    let result = db.transaction(|tx| {
+        start(
+            tx,
+            &SessionStart {
+                source: nothing_due,
+                feedback_mode: FeedbackMode::Exam,
+            },
+            T1,
+            &mut rand::rngs::StdRng::seed_from_u64(5),
+        )
+    });
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "Não há questões disponíveis para esta sessão."
+    );
     let missing = db.transaction(|tx| {
         start(
             tx,
@@ -740,10 +692,12 @@ fn annulling_rescores_a_finished_attempt() {
 }
 
 #[test]
-fn topic_sessions_skip_annulled_questions() {
+fn filter_sessions_skip_annulled_questions() {
     let (db, mut ids) = bank();
     let first = finish_exam_with_one_wrong_choice(&db);
-    annul_wrong_answer_in_study(&db, &first);
+    let (second, _) = annul_wrong_answer_in_study(&db, &first);
+    // Banco sessions leave out the questions of open attempts.
+    db.transaction(|tx| abandon(tx, &second.id)).unwrap();
     let topic_id: TopicId = db
         .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
         .unwrap();
@@ -752,10 +706,7 @@ fn topic_sessions_skip_annulled_questions() {
             start(
                 tx,
                 &SessionStart {
-                    source: SessionSource::Topic {
-                        topic_id,
-                        count: 10,
-                    },
+                    source: topic_source(topic_id, 10),
                     feedback_mode: FeedbackMode::Exam,
                 },
                 T2,
@@ -826,22 +777,23 @@ fn active_lists_unfinished_attempts_newest_first_with_counts_only() {
     let topic_id: TopicId = db
         .with(|c| Ok(c.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
         .unwrap();
-    let exam = start_collection(&db, FeedbackMode::Exam);
-    let choice = exam.questions[0].options[0].id.clone();
-    db.transaction(|tx| answer(tx, &exam.id, 0, Some(&choice), T1))
-        .unwrap();
     let topic = db
         .transaction(|tx| {
             start(
                 tx,
                 &SessionStart {
-                    source: SessionSource::Topic { topic_id, count: 2 },
+                    source: topic_source(topic_id, 2),
                     feedback_mode: FeedbackMode::Study,
                 },
                 T2,
                 &mut rand::rngs::StdRng::seed_from_u64(8),
             )
         })
+        .unwrap();
+    // The topic session goes first: a Banco session leaves out questions of open attempts.
+    let exam = start_collection(&db, FeedbackMode::Exam);
+    let choice = exam.questions[0].options[0].id.clone();
+    db.transaction(|tx| answer(tx, &exam.id, 0, Some(&choice), T1))
         .unwrap();
     // A finished attempt is history, not something to resume.
     db.transaction(|tx| {
@@ -862,12 +814,7 @@ fn active_lists_unfinished_attempts_newest_first_with_counts_only() {
     assert_eq!(
         summary,
         [
-            (
-                &topic.id,
-                "Direito › Constitucional › Controle de constitucionalidade",
-                0,
-                2
-            ),
+            (&topic.id, "Controle de constitucionalidade", 0, 2),
             (&exam.id, "Caderno de teste", 1, 4),
         ],
         "newest first; the exam counts its answered question but reveals nothing"
@@ -1248,4 +1195,61 @@ fn history_items_have_no_question_text() {
     ] {
         assert!(!json.contains(secret), "{secret} leaked: {json}");
     }
+}
+
+/// Answers the first two questions correctly and returns the attempt as it is afterwards.
+fn answer_first_two_correctly(db: &Database, view: &AttemptView) -> AttemptView {
+    let mut latest = view.clone();
+    for question in view.questions.iter().take(2) {
+        let key = key_of(db, &question.question_id);
+        latest = db
+            .transaction(|tx| answer(tx, &view.id, question.position, Some(&key), T1))
+            .unwrap();
+    }
+    latest
+}
+
+fn closing_of(db: &Database, id: &AttemptId) -> AppResult<AttemptClosing> {
+    db.with(|c| closing(c, id))
+}
+
+#[test]
+fn closing_scores_each_topic_of_the_attempt() {
+    let (db, _) = bank();
+    let view = start_collection(&db, FeedbackMode::Exam);
+    let view = answer_first_two_correctly(&db, &view);
+    finish_and_reload(&db, &view);
+    let topics = closing_of(&db, &view.id).unwrap().topics;
+    assert_eq!(topics.len(), 1);
+    assert_eq!((topics[0].score.correct, topics[0].score.blank), (2, 2));
+}
+
+#[test]
+fn closing_compares_with_the_previous_attempt_of_the_same_caderno() {
+    let (db, _) = bank();
+    let first = start_collection(&db, FeedbackMode::Exam);
+    let first = answer_first_two_correctly(&db, &first);
+    finish_and_reload(&db, &first);
+    let second = start_collection_with_seed(&db, FeedbackMode::Exam, 1);
+    db.transaction(|tx| finish(tx, &second.id, second.revision, "2026-11-21T10:00:00.000Z"))
+        .unwrap();
+    let previous = closing_of(&db, &second.id).unwrap().previous.unwrap();
+    assert_eq!((previous.id, previous.score.correct), (first.id.clone(), 2));
+    assert_eq!(closing_of(&db, &first.id).unwrap().previous, None);
+}
+
+#[test]
+fn closing_ignores_attempts_from_another_origin() {
+    let (db, _) = bank();
+    insert_finished(&db, "other", SourceKind::Errors, FeedbackMode::Exam, T0);
+    let view = start_collection(&db, FeedbackMode::Exam);
+    finish_and_reload(&db, &view);
+    assert_eq!(closing_of(&db, &view.id).unwrap().previous, None);
+}
+
+#[test]
+fn closing_refuses_an_unfinished_attempt() {
+    let (db, _) = bank();
+    let view = start_collection(&db, FeedbackMode::Exam);
+    assert!(closing_of(&db, &view.id).is_err());
 }

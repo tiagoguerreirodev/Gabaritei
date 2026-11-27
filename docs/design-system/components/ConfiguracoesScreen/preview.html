@@ -1,0 +1,80 @@
+<!-- @dsCard group="Screens" height=760 width=1100 -->
+<style>
+  body {
+    padding: 32px 40px;
+    background: var(--bg);
+  }
+  .page > .card {
+    margin: 0 0 24px;
+  }
+</style>
+<div class="page">
+  <h1>Configurações</h1>
+  <section class="card">
+    <h2>Aparência</h2>
+    <fieldset class="choice-group">
+      <legend>Tema</legend>
+      <label><input type="radio" name="t" checked /> Seguir o sistema</label
+      ><label><input type="radio" name="t" /> Claro</label
+      ><label><input type="radio" name="t" /> Escuro</label>
+    </fieldset>
+    <fieldset class="choice-group is-inline">
+      <legend>Tamanho do texto</legend>
+      <label><input type="radio" name="s" /> Pequeno</label
+      ><label><input type="radio" name="s" checked /> Normal</label
+      ><label><input type="radio" name="s" /> Grande</label
+      ><label><input type="radio" name="s" /> Muito grande</label>
+    </fieldset>
+  </section>
+  <section class="card card-wide">
+    <h2>Agentes</h2>
+    <p class="muted">
+      Os agentes rodam pelos programas instalados e já conectados neste computador.
+    </p>
+    <div class="settings-row">
+      <label class="field-label" for="c">Claude Code</label
+      ><input class="input" id="c" value="claude" /><button class="btn" type="button">Testar</button
+      ><button class="btn btn-ghost" type="button">Procurar</button>
+      <p class="settings-status ok">Conectado <span class="muted">(2.1.4)</span></p>
+    </div>
+    <div class="settings-row">
+      <label class="field-label" for="x">Codex</label
+      ><input class="input" id="x" value="codex" /><button class="btn" type="button">Testar</button
+      ><button class="btn btn-ghost" type="button">Procurar</button>
+    </div>
+  </section>
+  <section class="card card-wide" aria-labelledby="r">
+    <h2 id="r">Papéis</h2>
+    <div class="table-scroll" role="region" tabindex="0" aria-labelledby="r">
+      <table class="data-table is-text">
+        <thead>
+          <tr>
+            <th scope="col">Papel</th>
+            <th scope="col">Agente</th>
+            <th scope="col">Modelo</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">
+              Gerar<span class="muted" style="display: block; font-size: 0.8rem"
+                >escreve as questões</span
+              >
+            </th>
+            <td>Claude Code</td>
+            <td><input class="input" value="opus" /></td>
+          </tr>
+          <tr>
+            <th scope="row">
+              Verificação cega<span class="muted" style="display: block; font-size: 0.8rem"
+                >responde sem ver o gabarito</span
+              >
+            </th>
+            <td>Codex</td>
+            <td><input class="input" value="gpt-5" /></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>

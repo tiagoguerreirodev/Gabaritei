@@ -1,11 +1,24 @@
-<!-- @dsCard group="Display" height=80 -->
+<!-- @dsCard group="Display" height=110 -->
 <style>
   body {
     padding: 16px;
     background: var(--bg);
   }
+  .row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
 </style>
-<div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+<div class="row">
   <span class="badge">Cebraspe</span><span class="badge badge-accent">TRF 1ª Região</span
-  ><span class="badge badge-danger">Contestada</span><span class="badge badge-count">12</span>
+  ><span class="badge badge-danger">Contestada</span
+  ><span class="badge badge-success">Confirmada</span
+  ><span class="badge badge-dashed">Não verificada</span><span class="badge badge-count">12</span>
+</div>
+<div class="row">
+  <span class="badge badge-good">82%</span><span class="badge badge-fair">61%</span
+  ><span class="badge badge-poor">38%</span>
 </div>

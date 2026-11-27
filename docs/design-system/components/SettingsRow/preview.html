@@ -1,0 +1,37 @@
+<!-- @dsCard group="Forms" height=320 -->
+<style>
+  body {
+    padding: 16px;
+    background: var(--bg);
+  }
+  .card {
+    margin: 0;
+  }
+</style>
+<section class="card card-wide">
+  <h2>Agentes</h2>
+  <div class="settings-row">
+    <label class="field-label" for="c">Claude Code</label>
+    <input class="input" id="c" value="claude" />
+    <button class="btn" type="button">Testar</button>
+    <button class="btn btn-ghost" type="button">Procurar</button>
+    <p class="settings-status ok">Conectado <span class="muted">(2.1.4)</span></p>
+  </div>
+  <div class="settings-row">
+    <label class="field-label" for="x">Codex</label>
+    <input class="input" id="x" value="codex" />
+    <button class="btn" type="button">Testar</button>
+    <button class="btn btn-ghost" type="button">Procurar</button>
+    <p class="error settings-status" role="alert">
+      Não encontrado. Confira o caminho do executável.
+    </p>
+  </div>
+  <ul class="settings-list">
+    <li>
+      <span>Backup de 26 nov 2026, 22:10</span><button class="btn" type="button">Restaurar</button>
+    </li>
+    <li>
+      <span>Backup de 25 nov 2026, 21:47</span><button class="btn" type="button">Restaurar</button>
+    </li>
+  </ul>
+</section>

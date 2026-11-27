@@ -45,23 +45,4 @@ describe("api", () => {
       ["ai_catalog", { refresh: true }],
     ]);
   });
-
-  it("sends the include-blanks flag of the learning overview in camelCase", async () => {
-    const sent: unknown[] = [];
-    mockIPC((command, args) => {
-      sent.push([command, args]);
-      return {
-        due: 0,
-        dueInOpenAttempt: 0,
-        upcoming: 0,
-        errors: 0,
-        practice: 0,
-        practiceErrors: 0,
-        items: [],
-      };
-    });
-
-    await api.learningOverview(true);
-    expect(sent).toEqual([["learning_overview", { includeBlanks: true }]]);
-  });
 });

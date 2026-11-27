@@ -1,9 +1,9 @@
+import { A } from "@solidjs/router";
 import { For, Show, createMemo, createSignal } from "solid-js";
 import type { AreaStats } from "../../bindings/AreaStats";
 import type { GroupStats } from "../../bindings/GroupStats";
-import type { TopicStats } from "../../bindings/TopicStats";
 import { formatNumber, formatPercent } from "../../format";
-import StartSessionModal from "../solve/StartSessionModal";
+import { bancoPath, emptyFilter } from "../bank/filterUrl";
 import Sparkline from "./Sparkline";
 
 /** `weakest` keeps the backend's order (weakest first); `alphabetical` sorts by name. */
@@ -78,7 +78,6 @@ export default function StrengthTable(props: { areas: AreaStats[] }) {
       if (!next.delete(key)) next.add(key);
       return next;
     });
-  const [training, setTraining] = createSignal<{ topic: TopicStats; path: string }>();
 
   return (
     <>
@@ -175,20 +174,17 @@ export default function StrengthTable(props: { areas: AreaStats[] }) {
                                         <Sparkline weeks={topic.trend} />
                                       </td>
                                       <td>
-                                        <button
-                                          type="button"
-                                          class="btn btn-link is-inline"
-                                          aria-label={`Treinar este assunto: ${topic.name}`}
-                                          disabled={topic.stats.available === 0}
-                                          onClick={() =>
-                                            setTraining({
-                                              topic,
-                                              path: `${area.name} › ${matter.name} › ${topic.name}`,
-                                            })
-                                          }
-                                        >
-                                          Treinar
-                                        </button>
+                                        <Show when={topic.stats.available > 0}>
+                                          <A
+                                            class="btn btn-link is-inline"
+                                            aria-label={`Treinar este assunto: ${topic.name}`}
+                                            href={bancoPath({
+                                              filter: { ...emptyFilter, topicIds: [topic.topicId] },
+                                            })}
+                                          >
+                                            Treinar
+                                          </A>
+                                        </Show>
                                       </td>
                                     </tr>
                                   )}
@@ -206,16 +202,6 @@ export default function StrengthTable(props: { areas: AreaStats[] }) {
           </tbody>
         </table>
       </div>
-      <Show when={training()}>
-        {(target) => (
-          <StartSessionModal
-            title={target().path}
-            source={{ kind: "topic", topicId: target().topic.topicId }}
-            available={target().topic.stats.available}
-            onClose={() => setTraining(undefined)}
-          />
-        )}
-      </Show>
     </>
   );
 }

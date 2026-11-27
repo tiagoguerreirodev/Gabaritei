@@ -55,12 +55,6 @@ export const PerformanceIcon = () => (
     <path d="M5 20V12M12 20V5M19 20v-5" />
   </Icon>
 );
-export const LearningIcon = () => (
-  <Icon>
-    <path d="M20 12a8 8 0 1 1-2.5-5.8" />
-    <path d="M20 4v4h-4M12 8v4l3 2" />
-  </Icon>
-);
 export const HistoryIcon = () => (
   <Icon>
     <path d="M20 12a8 8 0 1 1-2.5-5.8" />
@@ -89,6 +83,5 @@ export const menuIcons: Record<string, () => JSX.Element> = {
   "/resolver": SolveIcon,
   "/desempenho": PerformanceIcon,
   "/historico": HistoryIcon,
-  "/erros-e-revisoes": LearningIcon,
   "/configuracoes": SettingsIcon,
 };

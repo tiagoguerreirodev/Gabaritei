@@ -1,19 +1,8 @@
-/*
- * Gabaritei components. Every value comes from tokens.css; no colour, size or radius is
- * written here. One class family per component, modifiers with a dash: .btn .btn-primary.
- * The app self-hosts both faces; previews load them from Google Fonts.
- */
-@import url("https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=Source+Serif+4:opsz,wght@8..60,400..700&display=swap");
+/* Gabaritei design system v3: component classes. Built only from token custom properties.
+   The first part is src/styles/ds/*.css as shipped at main@be1af88; the second adds the families
+   that v3 brings into the system from the per-screen stylesheets. */
 
-:root {
-  --ease: cubic-bezier(0.2, 0, 0, 1);
-  font-family: var(--font-ui);
-  font-size: 16px;
-  line-height: 1.5;
-  color: var(--text);
-  background: var(--bg);
-}
-
+/* Shared base: box model, links, the focus ring and the text helpers. */
 * {
   box-sizing: border-box;
 }
@@ -152,7 +141,7 @@ a {
   content: none;
 }
 
-/* ---- Card ---- */
+/* ---- Card and Stat ---- */
 .card {
   max-width: var(--content-width);
   padding: var(--space-5) var(--space-6);
@@ -255,25 +244,246 @@ a {
   opacity: 1;
 }
 
-/* ---- Tabs ---- */
-.tabs {
-  display: flex;
-  gap: var(--space-1);
-  border-bottom: 1px solid var(--border);
+/* ---- Modal ---- */
+.modal-backdrop {
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  background: var(--scrim);
 }
-.tab {
-  padding: var(--space-2) var(--space-4);
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  cursor: pointer;
-}
-.tab[aria-selected="true"] {
-  border-bottom-color: var(--accent);
+.modal {
+  width: min(36rem, 100%);
+  background: var(--surface);
   color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-overlay);
+}
+.modal-header,
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+}
+.modal-header h2 {
+  margin: 0;
+  font-size: 1.125rem;
+}
+.modal-body {
+  padding: 0 var(--space-5);
+}
+.modal-footer {
+  border-top: 1px solid var(--border);
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* The dialog takes focus from code only, so it shows no ring. */
+.modal:focus {
+  outline: none;
+}
+
+/* ---- Toast ---- */
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: 28rem;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-raised);
+}
+.toast-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: none;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.toast-error .toast-mark {
+  background: var(--danger);
+}
+.toast-text {
+  flex: 1;
+}
+
+/* ---- Meter: length plus printed number, never colour alone ---- */
+.meter {
+  display: grid;
+  grid-template-columns: minmax(7rem, 1fr) minmax(6rem, 2fr) 4rem;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+.meter-track {
+  height: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+}
+.meter-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--dur-base) var(--ease);
+}
+.meter-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Nav (sidebar) ---- */
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  width: var(--sidebar-width);
+  padding: var(--space-5) var(--space-3);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+.nav-brand {
+  padding: 0 var(--space-3) var(--space-4);
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  text-decoration: none;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.nav-item:hover {
+  background: var(--bg);
+}
+.nav-item[aria-current="page"] {
+  background: var(--accent-soft);
+  color: var(--accent);
   font-weight: 600;
+}
+.nav-item .badge-count {
+  margin-left: auto;
+}
+.icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+
+/* The shell around the nav items: brand row, menu groups, footer, and the icon-only form. */
+.nav[hidden] {
+  display: none;
+}
+.nav-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.nav-menu {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.nav-menu nav,
+.nav-footer nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+.nav-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.nav-version {
+  margin: 0;
+  padding: 0 var(--space-3);
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.nav-item {
+  position: relative;
+}
+/* The count in the review link's tooltip; the badge already shows it when labels are visible. */
+.nav-label-extra {
+  display: none;
+}
+
+/*
+ * Icon-only: collapsed by choice, and always on narrow windows (Layout sets data-nav). The label
+ * stays in the accessibility tree (clipped, not removed) and shows as a tooltip on hover or
+ * keyboard focus. The nav does not clip, so the tooltip can reach into the page.
+ */
+.shell[data-nav="collapsed"] {
+  --sidebar-width: var(--sidebar-width-collapsed);
+}
+.shell[data-nav="collapsed"] .nav-brand {
+  flex-direction: column;
+  padding: 0;
+}
+.shell[data-nav="collapsed"] .nav-brand-name,
+.shell[data-nav="collapsed"] .nav-version {
+  display: none;
+}
+.shell[data-nav="collapsed"] .nav-item {
+  justify-content: center;
+  padding-inline: var(--space-2);
+}
+.shell[data-nav="collapsed"] .nav-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.shell[data-nav="collapsed"] .nav-item .badge-count {
+  position: absolute;
+  top: calc(-1 * var(--space-1));
+  right: calc(-1 * var(--space-1));
+  margin: 0;
+  padding: 0 var(--space-1);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.shell[data-nav="collapsed"] .nav-item:hover .nav-label,
+.shell[data-nav="collapsed"] .nav-item:focus-visible .nav-label {
+  top: 50%;
+  left: calc(100% + var(--space-2));
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
+  transform: translateY(-50%);
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-raised);
+  font-size: 0.875rem;
+  font-weight: 400;
+  z-index: 30;
+  pointer-events: none;
+}
+.shell[data-nav="collapsed"] .nav-item:hover .nav-label-extra,
+.shell[data-nav="collapsed"] .nav-item:focus-visible .nav-label-extra {
+  display: inline;
 }
 
 /* ---- Bubble: the answer-sheet mark, shared by options and the navigator ---- */
@@ -364,6 +574,28 @@ a {
   color: var(--flag);
 }
 
+/* A confirmed right answer pops once as its bubble fills; the class is set only right after the
+   confirmation, never when navigating or reviewing. */
+.bubble.is-popping {
+  animation: bubble-pop var(--dur-base) var(--ease);
+}
+@keyframes bubble-pop {
+  from {
+    transform: scale(0.8);
+  }
+  60% {
+    transform: scale(1.12);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bubble.is-popping {
+    animation: none;
+  }
+}
+
 /* ---- Option: a row of the answer sheet ---- */
 .options {
   display: grid;
@@ -434,140 +666,6 @@ a {
   text-decoration: line-through;
 }
 
-/* ---- Meter: length plus printed number, never colour alone ---- */
-.meter {
-  display: grid;
-  grid-template-columns: minmax(7rem, 1fr) minmax(6rem, 2fr) 4rem;
-  align-items: center;
-  gap: var(--space-1) var(--space-3);
-}
-.meter-track {
-  height: 0.75rem;
-  overflow: hidden;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-}
-.meter-fill {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-  transition: width var(--dur-base) var(--ease);
-}
-.meter-value {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-/* ---- Nav (sidebar) ---- */
-.nav {
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  width: var(--sidebar-width);
-  padding: var(--space-5) var(--space-3);
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-}
-.nav-brand {
-  padding: 0 var(--space-3) var(--space-4);
-  font-size: 1.25rem;
-  font-weight: 700;
-}
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  color: var(--text);
-  text-decoration: none;
-  transition: background-color var(--dur-fast) var(--ease);
-}
-.nav-item:hover {
-  background: var(--bg);
-}
-.nav-item[aria-current="page"] {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-}
-.nav-item .badge-count {
-  margin-left: auto;
-}
-.icon {
-  width: 20px;
-  height: 20px;
-  flex: none;
-}
-
-/* ---- Modal ---- */
-.modal-backdrop {
-  display: grid;
-  place-items: center;
-  padding: var(--space-6);
-  background: var(--scrim);
-}
-.modal {
-  width: min(36rem, 100%);
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-overlay);
-}
-.modal-header,
-.modal-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-4) var(--space-5);
-}
-.modal-header h2 {
-  margin: 0;
-  font-size: 1.125rem;
-}
-.modal-body {
-  padding: 0 var(--space-5);
-}
-.modal-footer {
-  border-top: 1px solid var(--border);
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
-/* ---- Toast ---- */
-.toast {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  max-width: 28rem;
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-raised);
-}
-.toast-mark {
-  display: inline-grid;
-  place-items: center;
-  width: 1.25rem;
-  height: 1.25rem;
-  flex: none;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  color: var(--on-accent);
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-.toast-error .toast-mark {
-  background: var(--danger);
-}
-.toast-text {
-  flex: 1;
-}
-
 /* ---- Sheet: the question as a printed answer-sheet page, not a boxed card ---- */
 .solve-layout {
   display: grid;
@@ -631,6 +729,52 @@ a {
   margin-top: var(--space-6);
   padding-top: var(--space-4);
   border-top: 1px solid var(--rule);
+}
+
+/* Rich text (RichText.tsx): plain text keeps its line breaks; formulas are MathML. Shared by the
+   Sheet stem and options, the Explanation and the review rows. */
+.rich-text {
+  max-width: var(--measure);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-reading);
+  line-height: 1.7;
+}
+
+.rich-text code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+
+.rich-text .code-block {
+  display: block;
+  white-space: pre;
+  overflow-x: auto;
+  padding: var(--space-2) var(--space-3);
+  margin: var(--space-2) 0;
+}
+
+.rich-text .math-block {
+  display: block;
+  overflow-x: auto;
+  padding: var(--space-1) 0;
+  white-space: normal;
+}
+
+.rich-text .math-inline {
+  white-space: normal;
+}
+
+.rich-text math {
+  font-size: 1.1em;
+}
+
+.rich-text .math-error {
+  color: var(--danger);
 }
 
 /* ---- Explanation: after the answer, its own tinted panel ---- */
@@ -769,7 +913,7 @@ a {
 .form-row .field {
   max-width: none;
 }
-.field .input {
+.form .field .input {
   width: 100%;
 }
 .form-actions {
@@ -830,6 +974,8 @@ a {
   gap: var(--space-3);
   padding: var(--space-3) var(--space-2);
   list-style: none;
+}
+.review-row > summary {
   cursor: pointer;
 }
 .review-row > summary::-webkit-details-marker {
@@ -861,11 +1007,14 @@ a {
   gap: var(--space-3);
   padding: 0 var(--space-2) var(--space-5) calc(2.5rem + var(--space-5));
 }
-.review-row-body .sheet-stem {
+.review-row-stem {
+  font-family: var(--font-reading);
   font-size: 1rem;
+  line-height: 1.7;
   margin: 0;
 }
 .review-row-options {
+  list-style: none;
   margin: 0;
   padding-left: var(--space-5);
   font-family: var(--font-reading);
@@ -882,6 +1031,22 @@ a {
 }
 .badge-dashed {
   border-style: dashed;
+}
+
+.review-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  max-width: var(--content-width-wide);
+  margin: var(--space-3) 0;
+}
+.review-row-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  justify-content: flex-end;
 }
 
 /* ---- Filter chip: a removable filter value (caderno, "Questões de: …") ---- */
@@ -1150,41 +1315,549 @@ a {
     justify-content: flex-start;
   }
 }
+.history-sections {
+  display: grid;
+  gap: var(--space-6);
+}
 
-/* ---- Pager ---- */
-.pager {
+/* =====================================================================================
+   v3 families: the shell, states and the Início, Desempenho, Configurações, Gerar-progress
+   and Resolver-extra parts the app styled per screen. Same tokens, same rules.
+   ===================================================================================== */
+
+/* ---- Shell: nav column + content column; focus mode drops the nav ---- */
+.shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  min-height: 100vh;
+}
+.shell.focus-mode {
+  grid-template-columns: minmax(0, 1fr);
+}
+.content {
+  min-width: 0;
+  padding: var(--space-8) var(--space-10);
+  overflow-wrap: anywhere;
+}
+.page h1 {
+  margin: 0 0 var(--space-4);
+  font-size: 1.5rem;
+  line-height: 1.25;
+}
+.page > .card {
+  margin: var(--space-6) 0;
+}
+.card h2 {
+  margin: 0 0 var(--space-2);
+  font-size: 1.125rem;
+  line-height: 1.25;
+}
+.skip-link {
+  position: fixed;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: 100;
+  padding: var(--space-2) var(--space-4);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  transform: translateY(-200%);
+}
+.skip-link:focus-visible {
+  transform: none;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (max-width: 60rem) {
+  .content {
+    padding: var(--space-6) var(--space-5);
+  }
+}
+
+/* ---- State: loading skeleton, empty with one way forward, error with retry ---- */
+.state {
+  margin: var(--space-6) 0;
+}
+.skeleton {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 40rem;
+}
+.skeleton-line {
+  display: block;
+  width: 60%;
+  height: 1rem;
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  animation: skeleton-pulse 1.4s var(--ease) infinite alternate;
+}
+.skeleton-line[data-wide="true"] {
+  width: 100%;
+}
+@keyframes skeleton-pulse {
+  to {
+    opacity: 0.45;
+  }
+}
+.empty-title {
+  margin: 0 0 var(--space-1);
+  font-weight: 600;
+}
+.state-action {
+  margin-top: var(--space-3);
+}
+.error {
+  color: var(--danger);
+  white-space: pre-line;
+}
+.error-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.error-state .error {
+  margin: 0;
+}
+
+/* ---- TodayCard (Início): the day's one main action, printed with the sheet's top edge ---- */
+.today-card {
+  border-top: 3px solid var(--accent);
+}
+.today-kicker {
+  margin: 0 0 var(--space-1);
+  color: var(--accent);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.today-card .btn-primary {
+  margin-top: var(--space-2);
+}
+
+/* ---- Summary strip: a line of figures under the TodayCard ---- */
+.summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+  max-width: var(--content-width-wide);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+.summary-strip li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+/* ---- Badge bands: accuracy printed as a number, the band colour only reinforces it ---- */
+.badge-good {
+  border-color: var(--success);
+  color: var(--success);
+}
+.badge-fair {
+  border-color: var(--flag);
+  color: var(--flag);
+}
+.badge-poor {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* ---- StatGrid (Desempenho): tiles of figures, one lead tile two columns wide ---- */
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--space-3);
+  max-width: var(--content-width-wide);
+  margin: var(--space-4) 0;
+  padding: 0;
+  list-style: none;
+}
+.stat-cards .card {
+  margin: 0;
+}
+.stat-hint {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.stat-card-main {
+  grid-column: span 2;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.stat-card-main .stat-name {
+  color: var(--text);
+  font-weight: 600;
+}
+.stat-card-main .stat-value {
+  font-size: 3rem;
+  line-height: 1.1;
+}
+.stat-card-main .meter-track {
+  width: 100%;
+  height: 0.5rem;
+}
+@media (max-width: 30rem) {
+  .stat-card-main {
+    grid-column: auto;
+  }
+}
+
+/* ---- Meter, compact: track and number only, beside a name the row already shows ---- */
+.meter.compact {
+  grid-template-columns: 6rem 4rem;
+  width: auto;
+}
+
+/* ---- ItemList: quiet rows inside a card (areas, waiting packages, attempts, weak topics) ---- */
+.item-list {
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+.item-list > li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+}
+.item-list > li > :first-child {
+  flex: 1;
+}
+.item-list.is-ruled > li {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.item-title {
+  font-weight: 600;
+}
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+}
+.facts dt {
+  color: var(--muted);
+}
+.facts dd {
+  margin: 0;
+}
+
+/* ---- DataTable: hairline rows, numbers right-aligned, hierarchy by indent ---- */
+.table-scroll {
+  overflow-x: auto;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.data-table th,
+.data-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  font-weight: 400;
+  text-align: right;
+  vertical-align: middle;
+}
+.data-table th:first-child,
+.data-table.is-text th,
+.data-table.is-text td {
+  text-align: left;
+}
+.data-table thead th {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.data-table .level-area th {
+  font-weight: 600;
+}
+.data-table .level-matter th {
+  padding-left: var(--space-8);
+}
+.data-table .level-topic th {
+  padding-left: calc(var(--space-8) + var(--space-5));
+}
+.table-meter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.table-meter .meter-track {
+  display: inline-block;
+  width: 4rem;
+  height: 0.5rem;
+}
+.table-meter .meter-value {
+  min-width: 3.5rem;
+}
+
+/* ---- Chart: one accent line on hairline gridlines; sparkline for a row ---- */
+.trend-chart {
+  width: 100%;
+  max-width: 40rem;
+  height: auto;
+}
+.trend-chart .grid {
+  stroke: var(--border);
+}
+.trend-chart .axis {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.trend-chart .line,
+.sparkline .line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.sparkline .line {
+  stroke-width: 1.5;
+}
+.trend-chart .dot,
+.sparkline .dot {
+  fill: var(--accent);
+}
+.sparkline {
+  vertical-align: middle;
+}
+.chart-note {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+/* ---- ChoiceGroup: a fieldset of radios (theme, text size, order, session mode) ---- */
+.choice-group {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  border: 0;
+}
+.choice-group legend {
+  margin-bottom: var(--space-2);
+  font-weight: 600;
+}
+.choice-group label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+.choice-group.is-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+.choice-group.is-inline legend {
+  float: left;
+  margin: 0 var(--space-2) 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-weight: 400;
+}
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+/* ---- SettingsRow (Configurações): label, field, action, status below ---- */
+.settings-row {
+  display: grid;
+  grid-template-columns: 12rem 1fr auto auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-3) 0;
+}
+.settings-row .input {
+  min-width: 0;
+}
+.settings-status {
+  grid-column: 2 / -1;
+  margin: 0;
+}
+.settings-status.ok {
+  color: var(--success);
+}
+.settings-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.settings-list li {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border);
+}
+@media (max-width: 40rem) {
+  .settings-row {
+    grid-template-columns: 1fr;
+  }
+  .settings-status {
+    grid-column: 1;
+  }
+}
+
+/* ---- Steps: the bubble as a progress marker. Ring = to do, ✓ = done, filled = current ---- */
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: var(--space-3) 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+.steps li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   color: var(--muted);
+  counter-increment: step;
+}
+.steps li::before {
+  content: counter(step);
+  display: inline-grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius-pill);
   font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
 }
+.steps li.done::before {
+  content: "✓";
+  border-color: var(--success);
+  color: var(--success);
+}
+.steps li.current {
+  color: var(--text);
+  font-weight: 700;
+}
+.steps li.current::before {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
 
-/* ---- Empty state: what is missing and the one way forward ---- */
-.empty-state {
-  display: grid;
-  justify-items: start;
-  gap: var(--space-2);
-  padding: var(--space-6);
-  border: 1px dashed var(--border-strong);
+/* ---- Recap (Resolver, after Finalizar): headline score, counts with glyphs, facts ---- */
+.recap-headline {
+  margin: 0 0 var(--space-3);
+  font-size: 1.125rem;
+}
+.recap-headline strong {
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+}
+.recap-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+.recap-glyph {
+  display: inline-block;
+  width: 1.5rem;
+  margin-right: var(--space-1);
+  font-weight: 700;
+  text-align: center;
+}
+.recap-correct .recap-glyph {
+  color: var(--success);
+}
+.recap-wrong .recap-glyph {
+  color: var(--danger);
+}
+.recap-annulled {
+  text-decoration: line-through;
+}
+.recap-annulled .recap-glyph {
+  text-decoration: none;
+}
+.recap .facts {
+  grid-template-columns: repeat(2, max-content);
+}
+
+/* ---- Shortcuts: a raised panel of keys above its toggle ---- */
+.shortcuts {
+  position: relative;
+  display: inline-block;
+}
+.shortcuts-panel {
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: 50%;
+  z-index: 5;
+  width: max-content;
+  max-width: min(22rem, 90vw);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+  font-size: 0.875rem;
+  transform: translateX(-50%);
 }
-.empty-state-title {
-  margin: 0;
-  font-weight: 600;
+.shortcuts-panel ul {
+  margin: 0 0 var(--space-2);
+  padding-left: var(--space-4);
 }
-.empty-state p {
+.shortcuts-panel p {
   margin: 0;
-  color: var(--muted);
+}
+kbd {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
 }
 
+/* ---- Motion and forced colours ---- */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+  .nav-item[aria-current="page"],
+  .option.is-selected,
+  .bubble.is-current,
+  .steps li.current::before {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  .meter-fill {
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+  .skeleton-line {
+    border: 1px solid CanvasText;
   }
 }

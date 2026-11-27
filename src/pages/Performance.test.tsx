@@ -58,17 +58,19 @@ const data: PerformanceData = {
   filters: { contests: ["INSS", "TRT"], boards: ["Cebraspe", "FGV"] },
 };
 
+function renderPerformance() {
+  render(() => (
+    <HashRouter>
+      <Route path="/" component={Performance} />
+    </HashRouter>
+  ));
+}
+
 function backend(result: PerformanceData | { error: string }, exported = true) {
   const failures = { next: false };
   const queries: PerformanceQuery[] = [];
   const exports: PerformanceQuery[] = [];
-  const started: unknown[] = [];
   mockIPC((command, args) => {
-    if (command === "question_count_limits") return { min: 1, max: 20, initial: 10 };
-    if (command === "session_start") {
-      started.push(args);
-      return new Promise(() => {});
-    }
     const query = (args as { query: PerformanceQuery }).query;
     if (command === "performance") {
       queries.push(query);
@@ -86,7 +88,7 @@ function backend(result: PerformanceData | { error: string }, exported = true) {
     }
     throw new Error(`Unexpected command: ${command}`);
   });
-  return { queries, exports, failures, started };
+  return { queries, exports, failures };
 }
 
 /** Toasts live in module state; forget the ones earlier tests raised. */
@@ -97,7 +99,7 @@ afterEach(() => {
 describe("Desempenho", () => {
   it("shows the summary cards, the weakest topics first, the trend and the table", async () => {
     backend(data);
-    render(() => <Performance />);
+    renderPerformance();
 
     const cards = await screen.findByRole("list", { name: "Resumo" });
     expect(within(cards).getByText("Aproveitamento").nextElementSibling).toHaveTextContent("69,2%");
@@ -123,7 +125,7 @@ describe("Desempenho", () => {
   it("expands areas and matters in the table, weakest first", async () => {
     backend(data);
     const user = userEvent.setup();
-    render(() => <Performance />);
+    renderPerformance();
 
     const table = await screen.findByRole("table", { name: /Desempenho por área/ });
     const rowNames = () =>
@@ -148,7 +150,7 @@ describe("Desempenho", () => {
   it("sorts the table alphabetically on request", async () => {
     backend(data);
     const user = userEvent.setup();
-    render(() => <Performance />);
+    renderPerformance();
     const table = await screen.findByRole("table", { name: /Desempenho por área/ });
     const areaNames = () =>
       within(table)
@@ -164,9 +166,9 @@ describe("Desempenho", () => {
   });
 
   it("shows a mini trend for each topic and trains it from the table", async () => {
-    const { started } = backend(data);
+    backend(data);
     const user = userEvent.setup();
-    render(() => <Performance />);
+    renderPerformance();
     const table = await screen.findByRole("table", { name: /Desempenho por área/ });
     await user.click(within(table).getByRole("button", { name: "Direito" }));
     await user.click(within(table).getByRole("button", { name: "Constitucional" }));
@@ -177,26 +179,15 @@ describe("Desempenho", () => {
       }),
     ).toBeInTheDocument();
 
-    await user.click(within(table).getByRole("button", { name: "Treinar este assunto: Controle" }));
-    const dialog = await screen.findByRole("dialog", {
-      name: "Direito › Constitucional › Controle",
-    });
-    expect(await within(dialog).findByLabelText(/Quantidade de questões/)).toHaveValue(10);
-    await user.click(within(dialog).getByRole("button", { name: "Começar" }));
-    expect(started).toEqual([
-      {
-        request: {
-          source: { kind: "topic", topicId: 1, count: 10 },
-          feedbackMode: "study",
-        },
-      },
-    ]);
+    expect(
+      within(table).getByRole("link", { name: "Treinar este assunto: Controle" }),
+    ).toHaveAttribute("href", "#/banco?assuntos=1");
   });
 
   it("sends the filters and the time zone offset to the backend", async () => {
     const { queries } = backend(data);
     const user = userEvent.setup();
-    render(() => <Performance />);
+    renderPerformance();
     await screen.findByRole("list", { name: "Resumo" });
     expect(queries[0]).toEqual({
       contest: null,
@@ -257,7 +248,7 @@ describe("Desempenho", () => {
   it("keeps the tag options when a reload fails", async () => {
     const { failures } = backend(data);
     const user = userEvent.setup();
-    render(() => <Performance />);
+    renderPerformance();
     await screen.findByRole("list", { name: "Resumo" });
 
     failures.next = true;
@@ -270,7 +261,7 @@ describe("Desempenho", () => {
 
   it("breaks the trend line where a week has no answers", async () => {
     backend(data);
-    render(() => <Performance />);
+    renderPerformance();
     const chart = await screen.findByRole("img", { name: "Acerto semanal" });
     // 9 and 23 November are two weeks apart: two single-point segments, not one line.
     expect(chart.querySelectorAll("polyline")).toHaveLength(2);
@@ -278,7 +269,7 @@ describe("Desempenho", () => {
 
   it("offers the weekly numbers as a table for screen readers", async () => {
     backend(data);
-    render(() => <Performance />);
+    renderPerformance();
     const table = await screen.findByRole("table", { name: "Acerto semanal" });
     const rows = within(table).getAllByRole("row").slice(1);
     expect(rows[0]).toHaveTextContent("09/11");
@@ -287,22 +278,14 @@ describe("Desempenho", () => {
 
   it("explains an empty bank", async () => {
     backend(emptyPerformance);
-    render(() => (
-      <HashRouter>
-        <Route path="/" component={Performance} />
-      </HashRouter>
-    ));
+    renderPerformance();
     expect(await screen.findByText("Nenhuma questão no banco ainda.")).toBeVisible();
     expect(screen.getByRole("link", { name: "Gerar questões" })).toHaveAttribute("href", "#/gerar");
   });
 
   it("explains when nothing was finished yet", async () => {
     backend({ ...emptyPerformance, overall: stats(0, 0, 0, 12) });
-    render(() => (
-      <HashRouter>
-        <Route path="/" component={Performance} />
-      </HashRouter>
-    ));
+    renderPerformance();
     expect(await screen.findByText("Você ainda não finalizou nenhuma tentativa.")).toBeVisible();
     expect(screen.getAllByRole("link", { name: "Ir para o Banco" })).toHaveLength(2);
     expect(screen.getByText("Ainda não há respostas para mostrar a evolução.")).toBeVisible();
@@ -311,7 +294,7 @@ describe("Desempenho", () => {
 
   it("shows the backend's message when loading fails", async () => {
     backend({ error: "Falha ao calcular." });
-    render(() => <Performance />);
+    renderPerformance();
     expect(await screen.findByRole("alert")).toHaveTextContent("Falha ao calcular.");
   });
 });

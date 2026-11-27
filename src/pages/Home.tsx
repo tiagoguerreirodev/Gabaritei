@@ -8,6 +8,8 @@ import { Loading, ResourceView } from "../components/states";
 import { formatDate, formatNumber, formatPercent, questionCount } from "../format";
 import { modeLabel } from "../labels";
 import { openAttempt } from "../navigation";
+import { bancoPath } from "./bank/filterUrl";
+import { presets } from "./bank/presets";
 import FirstSteps from "./home/FirstSteps";
 import TodayCard from "./home/TodayCard";
 import { todayAction } from "./home/todayAction";
@@ -84,7 +86,7 @@ export default function Home() {
                   <ul class="waiting-list">
                     <Show when={summary().dueReviews > 0}>
                       <li>
-                        <A href="/erros-e-revisoes">Revisões pendentes</A>
+                        <A href={bancoPath(presets.reviews)}>Revisões pendentes</A>
                         <strong>{formatNumber(summary().dueReviews)}</strong>
                         <Show when={summary().dueInOpenAttempt > 0}>
                           <span class="muted">

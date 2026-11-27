@@ -12,6 +12,7 @@ import type { Catalog } from "./bindings/Catalog";
 import type { AiSettingsInput } from "./bindings/AiSettingsInput";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { Appearance } from "./bindings/Appearance";
+import type { AttemptClosing } from "./bindings/AttemptClosing";
 import type { AttemptView } from "./bindings/AttemptView";
 import type { BackupInfo } from "./bindings/BackupInfo";
 import type { BackupStatus } from "./bindings/BackupStatus";
@@ -109,6 +110,7 @@ export const api = {
   /** Unfinished attempts, newest first. Counts only. */
   activeAttempts: () => call<ActiveAttempt[]>("active_attempts"),
   /** One page of finished attempts, with scores from the current keys. */
+  attemptClosing: (id: string) => call<AttemptClosing>("attempt_closing", { id }),
   attemptHistory: (query: HistoryQuery) => call<HistoryPage>("attempt_history", { query }),
   /** Erros e revisões: counts and the list of reviews and errors (no answer keys). */
   learningOverview: (includeBlanks: boolean) =>

@@ -297,7 +297,9 @@ export default function Resolver(props: { attemptId: string; onLeave: () => void
                 </Show>
               </div>
             </header>
-            <Show when={attempt().score}>{(score) => <ScoreSummary score={score()} />}</Show>
+            <Show when={attempt().score}>
+              {(score) => <ScoreSummary attemptId={attempt().id} score={score()} />}
+            </Show>
             <div class="solve-layout">
               <div class="question-stage" ref={stage}>
                 <Show when={current()}>

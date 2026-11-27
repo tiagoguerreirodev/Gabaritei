@@ -1249,3 +1249,60 @@ fn history_items_have_no_question_text() {
         assert!(!json.contains(secret), "{secret} leaked: {json}");
     }
 }
+
+/// Answers the first two questions correctly and returns the attempt as it is afterwards.
+fn answer_first_two_correctly(db: &Database, view: &AttemptView) -> AttemptView {
+    let mut latest = view.clone();
+    for question in view.questions.iter().take(2) {
+        let key = key_of(db, &question.question_id);
+        latest = db
+            .transaction(|tx| answer(tx, &view.id, question.position, Some(&key), T1))
+            .unwrap();
+    }
+    latest
+}
+
+fn closing_of(db: &Database, id: &AttemptId) -> AppResult<AttemptClosing> {
+    db.with(|c| closing(c, id))
+}
+
+#[test]
+fn closing_scores_each_topic_of_the_attempt() {
+    let (db, _) = bank();
+    let view = start_collection(&db, FeedbackMode::Exam);
+    let view = answer_first_two_correctly(&db, &view);
+    finish_and_reload(&db, &view);
+    let topics = closing_of(&db, &view.id).unwrap().topics;
+    assert_eq!(topics.len(), 1);
+    assert_eq!((topics[0].score.correct, topics[0].score.blank), (2, 2));
+}
+
+#[test]
+fn closing_compares_with_the_previous_attempt_of_the_same_caderno() {
+    let (db, _) = bank();
+    let first = start_collection(&db, FeedbackMode::Exam);
+    let first = answer_first_two_correctly(&db, &first);
+    finish_and_reload(&db, &first);
+    let second = start_collection_with_seed(&db, FeedbackMode::Exam, 1);
+    db.transaction(|tx| finish(tx, &second.id, second.revision, "2026-11-21T10:00:00.000Z"))
+        .unwrap();
+    let previous = closing_of(&db, &second.id).unwrap().previous.unwrap();
+    assert_eq!((previous.id, previous.score.correct), (first.id.clone(), 2));
+    assert_eq!(closing_of(&db, &first.id).unwrap().previous, None);
+}
+
+#[test]
+fn closing_ignores_attempts_from_another_origin() {
+    let (db, _) = bank();
+    insert_finished(&db, "other", SourceKind::Errors, FeedbackMode::Exam, T0);
+    let view = start_collection(&db, FeedbackMode::Exam);
+    finish_and_reload(&db, &view);
+    assert_eq!(closing_of(&db, &view.id).unwrap().previous, None);
+}
+
+#[test]
+fn closing_refuses_an_unfinished_attempt() {
+    let (db, _) = bank();
+    let view = start_collection(&db, FeedbackMode::Exam);
+    assert!(closing_of(&db, &view.id).is_err());
+}

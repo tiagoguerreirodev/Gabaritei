@@ -1,4 +1,0 @@
-/* Cards stack with a gap; the design-system card itself has no outer margin. */
-.card {
-  margin: var(--space-6) 0;
-}

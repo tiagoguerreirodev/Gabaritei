@@ -37,14 +37,14 @@ export default function StatCards(props: { stats: GroupStats; label: string }) {
             style={{ width: `${Math.round((achievement() ?? 0) * 100)}%` }}
           />
         </span>
-        <span class="stat-hint muted">Acertos ÷ questões avaliadas</span>
+        <span class="stat-hint">Acertos ÷ questões avaliadas</span>
       </li>
       <For each={cards()}>
         {(card) => (
           <li class="card card-compact stat">
             <span class="stat-name">{card.name}</span>
             <strong class="stat-value">{card.value}</strong>
-            <span class="stat-hint muted">{card.hint}</span>
+            <span class="stat-hint">{card.hint}</span>
           </li>
         )}
       </For>

@@ -1,3 +1,11 @@
+/* Wide tables scroll sideways inside their card instead of the page. */
+.table-scroll {
+  overflow-x: auto;
+}
+.table-scroll:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
 /* ---- DataTable: a numeric table with indented levels and a short meter per row ---- */
 .data-table {
   width: 100%;
@@ -8,10 +16,13 @@
 .data-table td {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
-  text-align: right;
   font-weight: 400;
+  text-align: right;
+  vertical-align: middle;
 }
-.data-table th:first-child {
+.data-table th:first-child,
+.data-table.is-text th,
+.data-table.is-text td {
   text-align: left;
 }
 .data-table thead th {
@@ -41,12 +52,8 @@
 .table-meter .meter-value {
   min-width: 3.5rem;
 }
-
-/* A table that is wider than its card scrolls inside it and can be reached by keyboard. */
-.table-scroll {
-  overflow-x: auto;
-}
-.table-scroll:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 2px;
+/* Controls inside a text table (the roles table) fill their cell. */
+.data-table.is-text td .input {
+  width: 100%;
+  min-width: 10rem;
 }

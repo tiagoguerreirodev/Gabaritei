@@ -106,18 +106,25 @@ How the current stylesheets (`src/styles/*.css`, about 2,240 lines) map onto thi
 
 ## v3 follow-up (#48–#53)
 
-Class names and rules that moved or were folded in while the app adopted the v3 families.
+Class names and rules that moved or were folded in while the app adopted the v3 families (PRs #244–#254), and the drift-test pass after them.
 
 | Was | Now |
 | --- | --- |
-| `.tabs`, `.tab` (`ds/tabs.css`, `shell.css`) | removed; no screen uses Tabs |
+| `.generation-progress`, `.stage-list`, `.step-list`, `.first-steps-list`, `.first-step-mark` | `.steps` (Steps), with `done` and `current` on the `li` |
+| `.check` (a lone checkbox label) | `.choice-group` |
+| `.settings-modes` | `.choice-group` |
+| `.roles-table`, `.role-hint` | `.data-table.is-text`, `.muted.caption` |
+| `.backup-list` | `.settings-list` |
+| `.weakest-list`, `.weak-name`, `.weak-value` | `.item-list` with `.meter.compact` |
+| `.collection-list`, `.collection-title` | `.item-list.is-ruled`, `.item-title` |
+| `.verdict-counts` (`dl`) | `.stat-cards` (`ul`) of `.card.card-compact.stat` |
+| `.stat-hint.muted`, `.muted.chart-note` | `.stat-hint`, `.chart-note` (muted by the rule) |
+| `.card.score.recap`, `.recap-struck` | `.card.recap`, `.recap-annulled` |
+| `.notice` on a `.card-row` | removed; `.card-row` alone |
+| `.flag-button` | `.btn.btn-ghost` |
+| `.tabs`, `.tab` (`ds/tabs.css`) | removed; no screen uses Tabs |
 | `.pager` in `bank.css` | `.pager` in `ds/history.css` |
-| `.toasts`, `.toast` animation, `toast-in` in `shell.css` | `ds/toast.css` |
-| `.modal-backdrop` position and `.modal` max height in `shell.css` | `ds/modal.css` |
-| `.question-image` in `shell.css` | `ds/sheet.css` |
-| `.table-scroll` in `shell.css` | `ds/table.css` |
-| `input[type="checkbox"], input[type="radio"]` accent in `base.css` | `ds/field.css` |
+| `.toasts`, `toast-in`, `.modal-backdrop` position, `.modal` max height, `.question-image`, `.table-scroll` in `shell.css` | `ds/toast.css`, `ds/modal.css`, `ds/sheet.css`, `ds/table.css` |
+| Steps, SettingsRow, Recap and Shortcuts in `pages.css`, `settings.css`, `resolver.css` | `ds/steps.css`, `ds/settings.css`, `ds/recap.css`, `ds/shortcuts.css` |
 | `font-weight: normal`, `border: none` | `400`, `0` (same look, one spelling) |
-| `.trend-chart .line`, `.sparkline .line` without `fill` | `fill: none` in the rule |
-| `.data-table` without tabular numerals | `font-variant-numeric: tabular-nums` |
 | SVG `.axis` at `11px` | `0.6875rem` |

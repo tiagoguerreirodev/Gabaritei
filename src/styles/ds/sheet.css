@@ -108,8 +108,6 @@
 .rich-text .math-error {
   color: var(--danger);
 }
-
-/* An image inside a stem or an option: never wider than the sheet. */
 .question-image {
   display: block;
   max-width: 100%;

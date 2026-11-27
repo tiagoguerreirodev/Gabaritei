@@ -110,18 +110,19 @@ Retired in v3: **Tabs** (no screen used it after *Erros e revisões* was removed
 
 Rules the app needs that no family above implies. Each is in `bundle.css` and in the family's README.
 
-- **Recap closing screen:** `.recap-comparison` (previous-attempt line, muted), `.recap-topics` (topic bars list), `.recap-next` (next-step actions). See Recap.
+- **Recap closing screen:** `.recap-comparison` (previous-attempt line, muted), `.recap-topics` (topic bars list), `.recap-next` (next-step actions), `.recap-blank .recap-glyph` (a blank question's muted glyph) and `.card.recap:focus` (no ring: code moves focus there). See Recap.
 - **Modal:** `.modal-backdrop` covers the window (`position: fixed`, `z-index: 10`); `.modal` caps at `calc(100vh - 4rem)` and scrolls. Width is `min(36rem, 100%)`.
 - **Toast:** `.toasts` is the fixed stack at the bottom right (`z-index: 20`); `.toast` slides in with `toast-in`.
 - **Pager:** `.pager`, the previous / next row under any paged list.
 - **Sheet:** `.question-image`, an image inside a stem or option, never wider than the sheet.
-- **DataTable:** `.table-scroll` wraps a table wider than its card; it is focusable and shows the focus ring.
+- **DataTable:** `.table-scroll` wraps a table wider than its card; it is focusable and shows the focus ring. `.data-table.is-text td .input` makes a control fill its cell (the roles table).
 - **ChoiceGroup:** `.choice-group.is-inline label` aligns a radio with its text in the inline layout.
-- **Text helpers:** `.skip-link` (first focusable element, slides in on focus) and `.sr-only`.
-- **Meter:** `.meter.compact` also at the largest text size.
+- **SettingsRow:** the label column is the `settings-label-width` token (12rem); the row stacks below 40rem.
+- **Text helpers:** `.caption` (small block text under a label), `.skip-link` (first focusable element, slides in on focus) and `.sr-only`.
+- **Meter and ItemList:** `.meter.compact` also at the largest text size; `.meter` and `.item-list.is-ruled > li` stack at narrow widths and at the largest text size.
 
 ## Not covered yet
 
-- The families still styled in a per-screen stylesheet rather than `ds/` are listed in `BUNDLE_ONLY` in `dsDrift.test.ts`: Steps, SettingsRow, Recap, Shortcuts and the global motion and forced-colours rules. Moving one into `ds/` means deleting its line there.
+- Nothing in `bundle.css` is missing from `ds/`. `BUNDLE_ONLY` in `dsDrift.test.ts` is empty; an entry there needs a reason.
 - `src/styles/*.css` outside `ds/` holds screen-only layout (the Banco collection picker, Gerar's topic path and role picker, the generation banner, `.card` stacking). Those are arrangements of existing families, not new looks.
 - The v3 families keep the app's current class names except where `migration.md` lists a rename.

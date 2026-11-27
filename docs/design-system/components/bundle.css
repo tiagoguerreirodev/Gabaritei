@@ -22,6 +22,12 @@ a {
 .muted {
   color: var(--muted);
 }
+/* Small block text under a label or field. */
+.caption {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 400;
+}
 .reading {
   font-family: var(--font-reading);
   line-height: 1.7;
@@ -345,6 +351,23 @@ a {
   grid-template-columns: minmax(7rem, 1fr) minmax(6rem, 2fr) 4rem;
   align-items: center;
   gap: var(--space-1) var(--space-3);
+}
+.meter-name {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 40rem) {
+  .meter {
+    grid-template-columns: 1fr 4rem;
+  }
+  .meter-name {
+    grid-column: 1 / -1;
+  }
+}
+:root[data-text-size="xl"] .meter {
+  grid-template-columns: 1fr 4rem;
+}
+:root[data-text-size="xl"] .meter-name {
+  grid-column: 1 / -1;
 }
 .meter-track {
   height: 0.75rem;
@@ -1531,11 +1554,11 @@ a {
   margin: 0;
 }
 .stat-hint {
+  color: var(--muted);
   font-size: 0.8rem;
 }
 .stat-card-main {
   grid-column: span 2;
-  gap: var(--space-1);
   border-color: var(--accent);
   background: var(--accent-soft);
 }
@@ -1583,6 +1606,16 @@ a {
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--border);
 }
+@media (max-width: 40rem) {
+  .item-list.is-ruled > li {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+:root[data-text-size="xl"] .item-list.is-ruled > li {
+  flex-direction: column;
+  align-items: flex-start;
+}
 .item-title {
   display: block;
   font-weight: 600;
@@ -1620,11 +1653,17 @@ a {
   border-bottom: 1px solid var(--border);
   font-weight: 400;
   text-align: right;
+  vertical-align: middle;
 }
 .data-table th:first-child,
 .data-table.is-text th,
 .data-table.is-text td {
   text-align: left;
+}
+/* Controls inside a text table (the roles table) fill their cell. */
+.data-table.is-text td .input {
+  width: 100%;
+  min-width: 10rem;
 }
 .data-table thead th {
   color: var(--muted);
@@ -1684,6 +1723,7 @@ a {
   vertical-align: middle;
 }
 .chart-note {
+  color: var(--muted);
   font-size: 0.875rem;
 }
 
@@ -1730,7 +1770,7 @@ input[type="radio"] {
 /* ---- SettingsRow (Configurações): label, field, action, status below ---- */
 .settings-row {
   display: grid;
-  grid-template-columns: 12rem 1fr auto auto;
+  grid-template-columns: var(--settings-label-width) 1fr auto auto;
   align-items: center;
   gap: var(--space-2) var(--space-3);
   margin: var(--space-3) 0;
@@ -1841,11 +1881,19 @@ input[type="radio"] {
 .recap-wrong .recap-glyph {
   color: var(--danger);
 }
+/* Left blank: neutral, not a verdict colour. */
+.recap-blank .recap-glyph {
+  color: var(--muted);
+}
 .recap-annulled {
   text-decoration: line-through;
 }
 .recap-annulled .recap-glyph {
   text-decoration: none;
+}
+/* The card takes focus when it opens; the focus moves the reader, so no ring. */
+.card.recap:focus {
+  outline: none;
 }
 .recap .facts {
   grid-template-columns: repeat(2, max-content);

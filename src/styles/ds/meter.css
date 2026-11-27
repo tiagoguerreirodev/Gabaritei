@@ -29,3 +29,26 @@
   grid-template-columns: 6rem 4rem;
   width: auto;
 }
+
+/*
+ * Stacked layout (name above, bar and number below) for narrow viewports and for the largest text
+ * size. A media-query rem is the browser's default 16px, not the app's text size, so the xl rules
+ * apply at any width; the media query only matters if the minimum window width is lowered.
+ */
+.meter-name {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 40rem) {
+  .meter {
+    grid-template-columns: 1fr 4rem;
+  }
+  .meter-name {
+    grid-column: 1 / -1;
+  }
+}
+:root[data-text-size="xl"] .meter {
+  grid-template-columns: 1fr 4rem;
+}
+:root[data-text-size="xl"] .meter-name {
+  grid-column: 1 / -1;
+}

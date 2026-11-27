@@ -483,6 +483,19 @@ fn the_weakest_topics_list_excludes_unseen_topics() {
 }
 
 #[test]
+fn weak_topics_carry_their_own_weekly_trend() {
+    let p = performance_with_strong_weak_and_unseen_groups();
+    let weak = &p.weakest[0];
+    let weeks: Vec<(&str, u32, u32)> = weak
+        .trend
+        .iter()
+        .map(|w| (w.week_start.as_str(), w.answered, w.correct))
+        .collect();
+    assert_eq!(weak.topic, "Crase");
+    assert_eq!(weeks, [("2026-11-02", 2, 1)]);
+}
+
+#[test]
 fn weekly_trend_uses_iso_weeks_in_local_time() {
     let f = fixture(&[("q1", &[D])]);
     // Sunday 22 Nov 23:30 in Brasília is Monday 23 Nov 02:30 UTC; Monday 16 Nov is a week start.

@@ -33,12 +33,30 @@ function collect(css: string, context: string, rules: Rules): void {
 }
 
 function addRule(rules: Rules, context: string, selectorList: string, body: string): void {
-  for (const selector of selectorList.split(",").map(squash)) {
+  for (const selector of splitSelectors(selectorList).map(squash)) {
     const key = `${context}${selector}`;
     const merged = rules.get(key) ?? new Map<string, string>();
     for (const [property, value] of declarations(body)) merged.set(property, value);
     rules.set(key, merged);
   }
+}
+
+/** Splits on commas outside parentheses, so `:is(a, b)` stays one selector. */
+function splitSelectors(selectorList: string): string[] {
+  const selectors: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < selectorList.length; index++) {
+    const char = selectorList[index];
+    if (char === "(") depth++;
+    if (char === ")") depth--;
+    if (char === "," && depth === 0) {
+      selectors.push(selectorList.slice(start, index));
+      start = index + 1;
+    }
+  }
+  selectors.push(selectorList.slice(start));
+  return selectors;
 }
 
 function matchingBrace(css: string, open: number): number {

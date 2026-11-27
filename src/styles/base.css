@@ -9,44 +9,17 @@ main:focus {
 
 /* ---- Controls: readable in both themes, with a border that meets 3:1 ---- */
 
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent);
+}
+
 ::placeholder {
   color: var(--muted);
   opacity: 1;
 }
 
-/* ---- Motion: nothing moves for people who asked for less ---- */
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-
-/* ---- Windows high contrast and similar: use the system palette ---- */
-
-@media (forced-colors: active) {
-  :focus-visible {
-    outline-color: Highlight;
-  }
-
-  .nav-item[aria-current="page"],
-  .option.is-selected,
-  .bubble.is-current {
-    outline: 2px solid Highlight;
-    outline-offset: -2px;
-  }
-
-  .meter-fill {
-    background: Highlight;
-    forced-color-adjust: none;
-  }
-
-  .skeleton-line {
-    border: 1px solid CanvasText;
-  }
+/* App-only: cards outside `.page > .card` (recap, banner, empty states) stack with the same gap. */
+.card {
+  margin: var(--space-6) 0;
 }

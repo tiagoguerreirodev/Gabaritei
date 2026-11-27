@@ -12,11 +12,11 @@
   margin: 0;
 }
 .stat-hint {
+  color: var(--muted);
   font-size: 0.8rem;
 }
 .stat-card-main {
   grid-column: span 2;
-  gap: var(--space-1);
   border-color: var(--accent);
   background: var(--accent-soft);
 }

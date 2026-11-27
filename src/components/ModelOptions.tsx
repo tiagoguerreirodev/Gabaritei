@@ -122,18 +122,20 @@ export function FastField(props: FieldProps) {
   const value = () => props.editor.value();
   return (
     <Show when={props.editor.options()?.showFast !== false}>
-      <label class="check">
-        <input
-          type="checkbox"
-          aria-label={`Modo rápido: ${props.label}`}
-          checked={value().fast}
-          disabled={props.editor.changing()}
-          onChange={(event) =>
-            props.editor.onChange({ ...value(), fast: event.currentTarget.checked })
-          }
-        />
-        Modo rápido
-      </label>
+      <div class="choice-group">
+        <label>
+          <input
+            type="checkbox"
+            aria-label={`Modo rápido: ${props.label}`}
+            checked={value().fast}
+            disabled={props.editor.changing()}
+            onChange={(event) =>
+              props.editor.onChange({ ...value(), fast: event.currentTarget.checked })
+            }
+          />
+          Modo rápido
+        </label>
+      </div>
       <Show when={value().agent === "claude"}>
         <p class="muted" role="note">
           Exige uso extra ativado na conta Claude; sem isso, roda no modo normal.

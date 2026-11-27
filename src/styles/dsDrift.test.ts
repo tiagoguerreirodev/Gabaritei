@@ -8,18 +8,9 @@ const DS_DIR = "src/styles/ds";
 
 /**
  * Rules that may exist in the published bundle without being in `src/styles/ds/`, matched against
- * `<at-rule context> <selector>`. The bundle documents these families, but the app still styles
- * them in a per-screen stylesheet. Move a family into `ds/` and delete its line here.
+ * `<at-rule context> <selector>`. Each one needs a reason; delete the line when it stops applying.
  */
-const BUNDLE_ONLY: { pattern: RegExp; reason: string }[] = [
-  { pattern: /^\.page > \.card$/, reason: "the app stacks cards with `.card` in shell.css" },
-  { pattern: /^\.data-table\.is-text /, reason: "text tables: Configurações, not moved yet" },
-  { pattern: /^(@media \(max-width: 40rem\) )?\.settings-/, reason: "SettingsRow, settings.css" },
-  { pattern: /^\.steps/, reason: "Steps, still in the Gerar stylesheet" },
-  { pattern: /^\.recap/, reason: "Recap, resolver.css" },
-  { pattern: /^(\.shortcuts|kbd$)/, reason: "Shortcuts, resolver.css" },
-  { pattern: /^@media \((prefers-reduced-motion|forced-colors)/, reason: "global, base.css" },
-];
+const BUNDLE_ONLY: { pattern: RegExp; reason: string }[] = [];
 
 describe("design-system bundle and src/styles/ds", () => {
   const bundle = parseRules(readFileSync(BUNDLE, "utf8"));

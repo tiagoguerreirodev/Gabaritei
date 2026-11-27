@@ -130,7 +130,7 @@ export default function TrendChart(props: { weeks: WeekPoint[] }) {
           </For>
         </tbody>
       </table>
-      <p class="muted chart-note">
+      <p class="chart-note">
         Cada ponto é uma semana (de segunda a domingo); todas as respostas contam, não só a última
         de cada questão.
       </p>

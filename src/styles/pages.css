@@ -42,68 +42,16 @@
   margin: 0;
 }
 
-.backup-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.backup-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-2) 0;
-  border-top: 1px solid var(--border);
-}
-
 .confirm-row {
   display: flex;
   justify-content: flex-end;
   margin-top: var(--space-3);
 }
 
-/* ---- Mastery bars (Início): length plus printed number, never color alone ---- */
+/* ---- Mastery bars (Início): the meter fills its row; rows may wrap ---- */
 
 .meter {
   width: 100%;
-}
-
-.meter-name {
-  overflow-wrap: anywhere;
-}
-
-/*
- * Stacked layout (name above, bar and number below) for narrow viewports and for the largest text
- * size. A media-query rem is the browser's default 16px, not the app's text size, so the xl rules
- * below apply at any width; the media query only matters if the minimum window width is lowered.
- */
-@media (max-width: 40rem) {
-  .meter {
-    grid-template-columns: 1fr 4rem;
-  }
-
-  .meter-name {
-    grid-column: 1 / -1;
-  }
-
-  .item-list.is-ruled > li {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-}
-
-:root[data-text-size="xl"] .meter {
-  grid-template-columns: 1fr 4rem;
-}
-
-:root[data-text-size="xl"] .meter-name {
-  grid-column: 1 / -1;
-}
-
-:root[data-text-size="xl"] .item-list.is-ruled > li {
-  flex-direction: column;
-  align-items: flex-start;
 }
 
 .item-list > li {
@@ -111,67 +59,6 @@
 }
 
 /* ---- Gerar: etapas, opções avançadas, erros ---- */
-
-.step-list,
-.steps,
-.stage-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-5);
-  margin: var(--space-3) 0;
-  padding: 0;
-  list-style: none;
-  counter-reset: step;
-}
-
-.step-list li,
-.steps li,
-.stage-list li {
-  counter-increment: step;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--muted);
-}
-
-/* The marker's shape carries the state: ring = to do, check = done, filled + bold = current. */
-.step-list li::before,
-.steps li::before,
-.stage-list li::before {
-  content: counter(step);
-  display: inline-grid;
-  place-items: center;
-  width: 1.6rem;
-  height: 1.6rem;
-  border: 2px solid var(--border-strong);
-  border-radius: var(--radius-pill);
-  font-size: 0.875rem;
-}
-
-.step-list li.done::before,
-.steps li.done::before,
-.stage-list li.done::before {
-  content: "✓";
-  color: var(--success);
-  border-color: var(--success);
-}
-
-.step-list li.current,
-.steps li.current,
-.stage-list li.current {
-  color: var(--text);
-  font-weight: 700;
-  text-decoration: underline;
-  text-underline-offset: 0.25em;
-}
-
-.step-list li.current::before,
-.steps li.current::before,
-.stage-list li.current::before {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
 
 .form > .field-error {
   margin: var(--space-2) 0;

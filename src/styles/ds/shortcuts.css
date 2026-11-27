@@ -1,0 +1,39 @@
+/* ---- Shortcuts: the keyboard help panel and its keys ---- */
+
+.shortcuts {
+  position: relative;
+  display: inline-block;
+}
+
+.shortcuts-panel {
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: 50%;
+  z-index: 5;
+  width: max-content;
+  max-width: min(22rem, 90vw);
+  padding: var(--space-3) var(--space-4);
+  transform: translateX(-50%);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+  font-size: 0.875rem;
+}
+
+.shortcuts-panel ul {
+  margin: 0 0 var(--space-2);
+  padding-left: var(--space-4);
+}
+
+.shortcuts-panel p {
+  margin: 0;
+}
+
+kbd {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}

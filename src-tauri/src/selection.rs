@@ -259,12 +259,12 @@ fn recent_errors_first<T: std::borrow::Borrow<Candidate>>(mut free: Vec<T>) -> V
     free
 }
 
-/// Due reviews (most overdue first), then wrong answers (most recent first, as the reviews
-/// session does), then whatever else matches.
+/// Due reviews (most overdue first), then wrong answers (most recent first, skipping those already
+/// due), then whatever else matches.
 fn due_first(free: Vec<Candidate>) -> Vec<Candidate> {
     let mut due: Vec<&Candidate> = free.iter().filter(|c| c.facts.due_at.is_some()).collect();
     due.sort_by(|a, b| (&a.facts.due_at, &a.id).cmp(&(&b.facts.due_at, &b.id)));
-    let due_ids = due.into_iter().map(|c| c.id.clone()).collect();
+    let mut chosen: Vec<QuestionId> = due.into_iter().map(|c| c.id.clone()).collect();
     let wrong_ids = recent_errors_first(
         free.iter()
             .filter(|c| c.facts.latest == Some(LatestStatus::Wrong))
@@ -272,7 +272,11 @@ fn due_first(free: Vec<Candidate>) -> Vec<Candidate> {
     )
     .into_iter()
     .map(|c| c.id.clone());
-    let mut chosen = learning::fill_review_session(due_ids, wrong_ids, u32::MAX);
+    for id in wrong_ids {
+        if !chosen.contains(&id) {
+            chosen.push(id);
+        }
+    }
     let rest: Vec<QuestionId> = free
         .iter()
         .map(|c| c.id.clone())

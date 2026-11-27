@@ -60,12 +60,17 @@ export function bancoSearch(state: BancoState): BancoParams {
 
 /** A link to Banco with the given parts filled in, for presets and shortcuts. */
 export function bancoHref(state: Partial<BancoState>): string {
+  return `#${bancoPath(state)}`;
+}
+
+/** Like `bancoHref`, without the leading `#`, for the router's own links and redirects. */
+export function bancoPath(state: Partial<BancoState>): string {
   const params = bancoSearch({ ...emptyBancoState, ...state });
   const query = Object.entries(params)
     .filter((entry): entry is [string, string] => entry[1] !== undefined)
     .map(([key, value]) => `${key}=${encodeURIComponent(value).replace(/%2C/g, ",")}`)
     .join("&");
-  return query ? `#/banco?${query}` : "#/banco";
+  return query ? `/banco?${query}` : "/banco";
 }
 
 function splitList(value: string | undefined): string[] {

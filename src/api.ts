@@ -25,7 +25,6 @@ import type { GenerateRequest } from "./bindings/GenerateRequest";
 import type { GenerationStatus } from "./bindings/GenerationStatus";
 import type { DraftListItem } from "./bindings/DraftListItem";
 import type { DraftSummary } from "./bindings/DraftSummary";
-import type { LearningOverview } from "./bindings/LearningOverview";
 import type { ActiveAttempt } from "./bindings/ActiveAttempt";
 import type { HistoryPage } from "./bindings/HistoryPage";
 import type { HistoryQuery } from "./bindings/HistoryQuery";
@@ -110,9 +109,6 @@ export const api = {
   activeAttempts: () => call<ActiveAttempt[]>("active_attempts"),
   /** One page of finished attempts, with scores from the current keys. */
   attemptHistory: (query: HistoryQuery) => call<HistoryPage>("attempt_history", { query }),
-  /** Erros e revisões: counts and the list of reviews and errors (no answer keys). */
-  learningOverview: (includeBlanks: boolean) =>
-    call<LearningOverview>("learning_overview", { includeBlanks }),
   /** Topic strength, weekly trend and filter options. */
   performance: (query: PerformanceQuery) => call<Performance>("performance", { query }),
   /** Asks where to save the performance table as CSV and writes it. `false` if cancelled. */

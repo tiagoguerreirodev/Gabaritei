@@ -28,4 +28,13 @@ describe("design-system styles", () => {
     const mixed = files.filter(({ css }) => css.includes("color-mix("));
     expect(mixed.map(({ name }) => name)).toEqual([]);
   });
+
+  it("no_legacy_token_names_remain", () => {
+    const legacy =
+      /--radius\)|--radius[ ;]|--shadow-toast|--shadow-modal|--flag-bar|--text-(xs|sm|base|md|lg|xl|2xl)\b|--leading-|--space-0-5|color-mix\(/;
+    const stylesheets = readdirSync("src/styles", { recursive: true, encoding: "utf8" })
+      .filter((name) => name.endsWith(".css"))
+      .map((name) => ({ name, css: readFileSync(`src/styles/${name}`, "utf8") }));
+    expect(stylesheets.filter(({ css }) => legacy.test(css)).map(({ name }) => name)).toEqual([]);
+  });
 });

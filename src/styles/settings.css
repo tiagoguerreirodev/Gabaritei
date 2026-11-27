@@ -54,6 +54,6 @@
 
 .role-hint {
   display: block;
-  font-size: var(--text-xs);
+  font-size: 0.8rem;
   font-weight: normal;
 }

@@ -202,7 +202,7 @@
   height: 1.6rem;
   border: 2px solid var(--border-strong);
   border-radius: var(--radius-pill);
-  font-size: var(--text-sm);
+  font-size: 0.875rem;
 }
 
 .step-list li.done::before,
@@ -247,12 +247,12 @@
 }
 
 .card.today-card h2 {
-  font-size: var(--text-lg);
+  font-size: 1.125rem;
 }
 
 .today-kicker {
   margin: 0 0 var(--space-1);
-  font-size: var(--text-sm);
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--accent);
 }

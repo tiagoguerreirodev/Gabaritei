@@ -1,5 +1,33 @@
 # Migration
 
+## Version 3: the per-screen stylesheets → v3 families
+
+Version 3 adopts what `main@be1af88` ships. The classes below come from `src/styles/{shell,pages,performance,settings,resolver,bank}.css`; most keep their names, and these are the renames and changes.
+
+| Old (app today) | v3 | Why |
+| --- | --- | --- |
+| `.today-card` with `border-left: 4px solid accent` | `.today-card` with `border-top: 3px solid accent` | The print edge is the Sheet's top edge; a side stripe reads as a generic alert card. |
+| `.step-list`, `.stage-list` | `.steps` | One family for both. The current step drops its underline: the filled bubble and bold label carry it, and the underline ran into the marker. |
+| `.accuracy-chip.accuracy-good / -fair / -poor` | `.badge.badge-good / -fair / -poor` | Accuracy bands are Badge variants. |
+| `.strength-table`, `.roles-table` | `.data-table`, `.data-table.is-text` | One table family. |
+| `.mastery-bar` in a table cell, `.table-mastery` | `.meter-track` inside `.table-meter` | The Meter's own parts. |
+| `.area-list`, `.waiting-list`, `.weakest-list` | `.item-list` | One quiet row list. |
+| `.attempt-list`, `.attempt-title` | `.item-list.is-ruled`, `.item-title` | Same list, ruled when rows carry two lines and an action. |
+| `.mode-choice` | `.choice-group` | Radios with a legend. |
+| `.order-choice` | `.choice-group.is-inline` | Same, on one line. |
+| `.backup-list` | `.settings-list` | Lists of stored items in Configurações. |
+| `.card.score` | `.card.recap` | Named after the family. |
+| `.chip` (uppercase caderno meta) | `.badge`, sentence case | No uppercase outside the sheet's printed labels. |
+| `.tabs`, `.tab` (`src/styles/ds/tabs.css`) | removed | No screen uses tabs since *Erros e revisões* went away. |
+| `.empty-state` dashed box (v2 spec, never built) | plain `.state.empty-state` > `.empty-title` | Fits the app; no extra frame. |
+| `.check-row` (Atalhos checkbox) | a `label` inside `.choice-group` | Same control family as the radios. |
+| `.hint` (accent hint text in Resolver) | `.field-hint` | One hint style. |
+
+Unchanged and now documented: `.shell`, `.shell.focus-mode`, `.content`, `.page`, `.skip-link`, `.sr-only`, `.state`, `.skeleton`, `.skeleton-line`, `.state-action`, `.error`, `.error-state`, `.summary-strip`, `.stat-cards`, `.stat-card-main`, `.stat-hint`, `.meter.compact`, `.facts`, `.table-scroll`, `.trend-chart`, `.sparkline`, `.chart-note`, `.settings-row`, `.settings-status`, `.recap-*`, `.shortcuts`, `.shortcuts-panel`, `kbd`.
+
+## Version 2: the old stylesheets → v2
+
+
 How the current stylesheets (`src/styles/*.css`, about 2,240 lines) map onto this system. Apply these renames when you refactor the app.
 
 ## Tokens

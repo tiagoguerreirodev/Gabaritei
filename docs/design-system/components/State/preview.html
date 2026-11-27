@@ -1,0 +1,25 @@
+<!-- @dsCard group="Feedback" height=300 subtitle="Loading, empty, error" -->
+<style>
+  body {
+    padding: 16px;
+    background: var(--bg);
+  }
+  .state {
+    margin: 0 0 24px;
+  }
+</style>
+<div class="state skeleton" aria-busy="true">
+  <span class="skeleton-line" data-wide="true"></span><span class="skeleton-line"></span
+  ><span class="skeleton-line" style="width: 40%"></span>
+</div>
+<div class="state empty-state">
+  <p class="empty-title">Nenhuma tentativa ainda.</p>
+  <p class="muted" style="margin: 0">
+    As tentativas aparecem aqui assim que você começar uma no Banco.
+  </p>
+  <div class="state-action"><a class="btn btn-primary" href="#">Ir para o Banco</a></div>
+</div>
+<div class="state error-state">
+  <p class="error">Não foi possível ler o banco de questões.</p>
+  <button class="btn" type="button">Tentar de novo</button>
+</div>

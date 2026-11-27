@@ -1,0 +1,118 @@
+<!-- @dsCard group="Screens" height=820 width=1100 -->
+<style>
+  body {
+    padding: 32px 40px;
+    background: var(--bg);
+  }
+  .page > .card {
+    margin: 0 0 24px;
+  }
+  .filter-bar {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+</style>
+<div class="page">
+  <h1>Desempenho</h1>
+  <div class="filter-bar">
+    <label class="field"
+      ><span class="field-label">Área</span
+      ><select class="input">
+        <option>Todas as áreas</option>
+      </select></label
+    >
+  </div>
+  <ul class="stat-cards">
+    <li class="card card-compact stat stat-card-main">
+      <span class="stat-name">Aproveitamento</span><span class="stat-value">68%</span
+      ><span class="meter-track"><span class="meter-fill" style="width: 68%"></span></span
+      ><span class="stat-hint">pontos ÷ questões avaliadas</span>
+    </li>
+    <li class="card card-compact stat">
+      <span class="stat-name">Acerto entre respondidas</span><span class="stat-value">74%</span
+      ><span class="stat-hint">de 418 respondidas</span>
+    </li>
+    <li class="card card-compact stat">
+      <span class="stat-name">Questões avaliadas</span><span class="stat-value">452</span>
+    </li>
+  </ul>
+  <section class="card card-wide">
+    <h2>Assuntos mais fracos</h2>
+    <ul class="item-list">
+      <li>
+        <span>Atos administrativos</span
+        ><svg class="sparkline" width="64" height="20" viewBox="0 0 64 20" aria-hidden="true">
+          <polyline class="line" points="2,14 18,12 34,15 50,8 62,6" />
+          <circle class="dot" cx="62" cy="6" r="2.5" /></svg
+        ><span class="badge badge-poor">48%</span><a class="btn" href="#">Treinar</a>
+      </li>
+      <li>
+        <span>Concordância verbal</span
+        ><svg class="sparkline" width="64" height="20" viewBox="0 0 64 20" aria-hidden="true">
+          <polyline class="line" points="2,8 18,10 34,9 50,12 62,11" />
+          <circle class="dot" cx="62" cy="11" r="2.5" /></svg
+        ><span class="badge badge-fair">57%</span><a class="btn" href="#">Treinar</a>
+      </li>
+    </ul>
+  </section>
+  <section class="card card-wide" aria-labelledby="tt">
+    <div class="card-row">
+      <h2 id="tt" style="margin: 0">Por área, matéria e assunto</h2>
+      <button class="btn" type="button">Exportar CSV</button>
+    </div>
+    <fieldset class="choice-group is-inline" style="margin-top: 12px">
+      <legend>Ordenar por</legend>
+      <label><input type="radio" name="o" checked /> Hierarquia</label
+      ><label><input type="radio" name="o" /> Mais fracos primeiro</label>
+    </fieldset>
+    <div class="table-scroll" role="region" tabindex="0" aria-labelledby="tt">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Assunto</th>
+            <th scope="col">Respondidas</th>
+            <th scope="col">Acerto</th>
+            <th scope="col">Aproveitamento</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="level-area">
+            <th scope="row">Direito</th>
+            <td>212</td>
+            <td>76%</td>
+            <td>
+              <span class="table-meter"
+                ><span class="meter-track"><span class="meter-fill" style="width: 71%"></span></span
+                ><span class="meter-value">71%</span></span
+              >
+            </td>
+          </tr>
+          <tr class="level-matter">
+            <th scope="row">Direito Administrativo</th>
+            <td>130</td>
+            <td>79%</td>
+            <td>
+              <span class="table-meter"
+                ><span class="meter-track"><span class="meter-fill" style="width: 74%"></span></span
+                ><span class="meter-value">74%</span></span
+              >
+            </td>
+          </tr>
+          <tr class="level-topic">
+            <th scope="row">Atos administrativos</th>
+            <td>48</td>
+            <td>62%</td>
+            <td>
+              <span class="table-meter"
+                ><span class="meter-track"><span class="meter-fill" style="width: 48%"></span></span
+                ><span class="meter-value">48%</span></span
+              >
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>

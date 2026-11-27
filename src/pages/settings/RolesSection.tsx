@@ -29,7 +29,7 @@ export default function RolesSection(props: {
         </button>
       </p>
       <div class="table-scroll" role="region" tabindex="0" aria-labelledby="roles-title">
-        <table class="roles-table">
+        <table class="data-table is-text">
           <thead>
             <tr>
               <th scope="col">Função</th>
@@ -46,7 +46,7 @@ export default function RolesSection(props: {
                   <tr>
                     <th scope="row">
                       {name}
-                      <span class="muted role-hint">{roleLabels[role].hint}</span>
+                      <span class="muted caption">{roleLabels[role].hint}</span>
                     </th>
                     <td>
                       <AgentField label={name} editor={editor} />

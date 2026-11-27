@@ -7,22 +7,9 @@
   margin-bottom: var(--space-4);
 }
 
-.filter-bar label {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  font-size: 0.875rem;
-  color: var(--muted);
-}
-
 .filter-bar input,
 .filter-bar select {
   min-width: 14rem;
-}
-
-/* An action in the filter row (Exportar CSV) sits on the inputs' baseline, not the labels'. */
-.filter-bar > .btn {
-  align-self: flex-end;
 }
 
 /* The row's one button: the whole row is the click target. */
@@ -49,12 +36,4 @@
   align-items: baseline;
   gap: var(--space-2);
   font-variant-numeric: tabular-nums;
-}
-
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
 }

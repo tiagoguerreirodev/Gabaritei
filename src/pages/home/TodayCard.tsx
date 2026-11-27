@@ -1,17 +1,14 @@
 import { A } from "@solidjs/router";
-import { Match, Show, Switch, createSignal } from "solid-js";
-import type { WeakTopic } from "../../bindings/WeakTopic";
+import { Match, Switch } from "solid-js";
 import { formatDate, formatNumber, formatPercent } from "../../format";
 import { modeLabel } from "../../labels";
 import { openAttempt } from "../../navigation";
-import StartSessionModal from "../solve/StartSessionModal";
+import { bancoPath, emptyFilter } from "../bank/filterUrl";
+import { presets } from "../bank/presets";
 import type { TodayAction } from "./todayAction";
 
 /** The highlighted card at the top of Início: one main action, chosen by urgency. */
 export default function TodayCard(props: { action: TodayAction }) {
-  const [starting, setStarting] = createSignal<"reviews" | WeakTopic>();
-  const topicPath = (topic: WeakTopic) => `${topic.area} › ${topic.matter} › ${topic.topic}`;
-
   return (
     <section class="card card-wide today-card" aria-labelledby="today-title">
       <Switch>
@@ -44,9 +41,9 @@ export default function TodayCard(props: { action: TodayAction }) {
                 {due === 1 ? "1 revisão pendente" : `${formatNumber(due)} revisões pendentes`}
               </h2>
               <p class="muted">Revise agora para fixar o que você já estudou.</p>
-              <button type="button" class="btn btn-primary" onClick={() => setStarting("reviews")}>
+              <A class="btn btn-primary" href={bancoPath(presets.reviews)}>
                 Fazer revisões
-              </button>
+              </A>
             </>
           )}
         </Match>
@@ -59,9 +56,12 @@ export default function TodayCard(props: { action: TodayAction }) {
                 {topic.area} › {topic.matter} · aproveitamento de{" "}
                 {formatPercent(topic.stats.score.achievement)}
               </p>
-              <button type="button" class="btn btn-primary" onClick={() => setStarting(topic)}>
+              <A
+                class="btn btn-primary"
+                href={bancoPath({ filter: { ...emptyFilter, topicIds: [topic.topicId] } })}
+              >
                 Treinar assunto
-              </button>
+              </A>
             </>
           )}
         </Match>
@@ -74,25 +74,6 @@ export default function TodayCard(props: { action: TodayAction }) {
           </A>
         </Match>
       </Switch>
-
-      <Show when={starting()} keyed>
-        {(target) =>
-          target === "reviews" ? (
-            <StartSessionModal
-              title="Praticar revisões"
-              source={{ kind: "reviews" }}
-              onClose={() => setStarting(undefined)}
-            />
-          ) : (
-            <StartSessionModal
-              title={topicPath(target)}
-              source={{ kind: "topic", topicId: target.topicId }}
-              available={target.stats.available}
-              onClose={() => setStarting(undefined)}
-            />
-          )
-        }
-      </Show>
     </section>
   );
 }

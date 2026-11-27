@@ -32,7 +32,7 @@
 .attempt-list li {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: var(--space-0-5) var(--space-4);
+  gap: var(--space-1) var(--space-4);
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--border);
 }
@@ -45,26 +45,4 @@
 
 .attempt-title {
   font-weight: 600;
-}
-
-.order-choice {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-4);
-  margin: 0 0 var(--space-3);
-  padding: 0;
-  border: 0;
-}
-
-.order-choice legend {
-  float: left;
-  margin-right: var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-
-.order-choice label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
 }

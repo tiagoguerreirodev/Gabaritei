@@ -1,8 +1,9 @@
 # Nav
-The sidebar, organized by activity: brand name, then one `.nav-item` per page (icon + label), Configurações and the version at the bottom.
+The sidebar, organized by activity: a brand row with the collapse toggle, the main menu, then Configurações and the version in the footer.
 
-- Order: **Início, Banco, Gerar, Desempenho, Histórico**, then **Revisar pacote** only while a generated package waits (with a `badge-count` of waiting packages), and **Configurações** in the footer. Resolver has no entry: it opens from Banco, Início or Histórico.
-- There is no *Erros e revisões* entry any more: its lists are Banco presets (*Revisões de hoje*, *Caderno de erros*). The old route redirects to Banco with *Revisões de hoje*.
+- Order: **Início, Banco, Gerar**, then **Revisar pacote** only while a generated package waits (with a `badge-count`), then **Desempenho, Histórico**; **Configurações** in the footer (`nav aria-label="Menu secundário"`). Resolver has no entry: it opens from Banco, Início or Histórico.
+- Structure: `aside.nav` > `div.nav-brand` (`span.nav-brand-name` + ghost toggle *Recolher menu*) > `div.nav-menu` > `nav` of `a.nav-item` (icon + `span.nav-label`) > `div.nav-footer` > `nav` + `p.nav-version`.
 - The current page has `aria-current="page"`: `accent` text on `accent-soft`.
-- Below 60rem, or when the user collapses it, the nav shows icons only (`sidebar-width-collapsed`). Labels stay in the accessibility tree and show as a tooltip (`surface`, `shadow-raised`, `radius-sm`) on hover or focus. Write the collapsed rules once, keyed on the shell's collapsed state.
-- Icons are the app's line set (`src/components/icons.tsx`), inline as SVG with `currentColor`. Histórico uses the clock-with-return-arrow glyph that *Erros e revisões* used.
+- Icon-only form (`.shell[data-nav="collapsed"]`): chosen with the toggle, and always below `breakpoint-narrow`. Width `sidebar-width-collapsed`; labels stay in the accessibility tree and show as a tooltip (`surface`, `shadow-raised`, `radius-sm`) on hover or focus; the count badge sits on the icon's corner.
+- In focus mode (an unfinished attempt open) there is no nav at all; see Shell.
+- The old *Erros e revisões* route redirects to Banco with *Revisões de hoje*.

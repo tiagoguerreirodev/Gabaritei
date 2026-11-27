@@ -27,14 +27,15 @@ use crate::ai::roles::{self, Role, RoleConfig};
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, ResolvedClis};
 use crate::appearance::{self, Appearance};
-use crate::attempts::{self, ActiveAttempt, AttemptView, HistoryPage, HistoryQuery, SessionStart};
+use crate::attempts::{
+    self, ActiveAttempt, AttemptClosing, AttemptView, HistoryPage, HistoryQuery, SessionStart,
+};
 use crate::backup::{BackupInfo, BackupService, BackupStatus, OpenableFolder, RelocateOutcome};
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
 use crate::bank::{self, TopicPath};
 use crate::db::Database;
 use crate::error::{AppError, AppResult, ErrorPayload};
 use crate::ids::{AttemptId, CollectionId, DraftId};
-use crate::learning::{self, LearningOverview};
 use crate::metrics::{self, HomeSummary, Performance, PerformanceQuery};
 use crate::migrate::{self, LegacyImportOutcome, LegacyImportStatus};
 use crate::paths::AppPaths;
@@ -371,13 +372,10 @@ pub fn attempt_history(db: State<'_, Database>, query: HistoryQuery) -> AppResul
     db.with(|conn| attempts::history(conn, &query))
 }
 
-/// The *Erros e revisões* page: counts, and the list of reviews and errors. No answer keys.
+/// Previous-attempt comparison and per-topic scores for a finished attempt. No questions or keys.
 #[tauri::command(async)]
-pub fn learning_overview(
-    db: State<'_, Database>,
-    include_blanks: bool,
-) -> AppResult<LearningOverview> {
-    db.with(|conn| learning::overview(conn, &crate::clock::now(), include_blanks.into()))
+pub fn attempt_closing(db: State<'_, Database>, id: AttemptId) -> AppResult<AttemptClosing> {
+    db.with(|conn| attempts::closing(conn, &id))
 }
 
 /// Asks where to save the performance table as CSV (using the same filters) and writes it.
@@ -1078,7 +1076,7 @@ mod tests {
     }
 
     #[test]
-    fn topic_attempt_ipc_preserves_scalar_ids() {
+    fn filter_attempt_ipc_preserves_scalar_ids() {
         let db = solving_db();
         let topic_id: crate::ids::TopicId = db
             .with(|conn| Ok(conn.query_row("SELECT id FROM topics", [], |r| r.get(0))?))
@@ -1088,12 +1086,13 @@ mod tests {
             .call(
                 "session_start",
                 json!({ "request": {
-                    "source": { "kind": "topic", "topicId": topic_id, "count": 1 },
+                    "source": { "kind": "filter", "filter": { "topicIds": [topic_id] }, "count": 1, "order": "unseenFirst" },
                     "feedbackMode": "study"
                 } }),
             )
-            .expect("topic session starts");
-        assert_eq!(view["sourceRef"], json!(topic_id.to_string()));
+            .expect("filter session starts");
+        let source_ref: Value = serde_json::from_str(view["sourceRef"].as_str().unwrap()).unwrap();
+        assert_eq!(source_ref["topicIds"], json!([topic_id]));
         assert!(view["id"].is_string());
         assert!(view["questions"][0]["questionId"].is_string());
     }
@@ -1105,19 +1104,6 @@ mod tests {
         for secret in ["SEGREDO", "REF-", "answerId", "outcome"] {
             assert!(!text.contains(secret), "{secret} leaked: {text}");
         }
-    }
-
-    #[test]
-    fn learning_overview_decodes_camel_case_and_has_no_question_content() {
-        let app = MockApp::new(solving_db());
-        let overview = app
-            .call("learning_overview", json!({ "includeBlanks": true }))
-            .expect("overview succeeds");
-        assert_eq!(overview["due"], json!(0));
-        assert_eq!(overview["errors"], json!(0));
-        assert_eq!(overview["items"], json!([]));
-        let missing = app.call("learning_overview", json!({}));
-        assert!(missing.is_err(), "includeBlanks is required");
     }
 
     #[test]

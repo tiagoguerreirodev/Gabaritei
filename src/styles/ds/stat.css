@@ -12,7 +12,7 @@
   margin: 0;
 }
 .stat-hint {
-  font-size: var(--text-xs);
+  font-size: 0.8rem;
 }
 .stat-card-main {
   grid-column: span 2;

@@ -49,7 +49,7 @@ export default function AppearanceSection() {
   return (
     <section class="card" aria-labelledby="appearance-title">
       <h2 id="appearance-title">Aparência</h2>
-      <fieldset class="mode-choice" aria-busy={saving()}>
+      <fieldset class="choice-group" aria-busy={saving()}>
         <legend>Tema</legend>
         <For each={THEMES}>
           {(option) => (
@@ -66,7 +66,7 @@ export default function AppearanceSection() {
           )}
         </For>
       </fieldset>
-      <fieldset class="mode-choice" aria-busy={saving()}>
+      <fieldset class="choice-group" aria-busy={saving()}>
         <legend>Tamanho do texto</legend>
         <For each={TEXT_SIZES}>
           {(option) => (

@@ -20,10 +20,10 @@ use ts_rs::TS;
 use crate::bank::{QuestionOption, QuestionType};
 use crate::error::{AppError, AppResult};
 use crate::ids::{AttemptId, CollectionId, QuestionId, TopicId};
-use crate::learning::ErrorFilter;
 use crate::selection::{QuestionFilter, SessionOrder};
 
 mod active;
+mod closing;
 mod history;
 mod response;
 mod scoring;
@@ -31,15 +31,13 @@ mod session;
 mod view;
 
 pub use active::{ActiveAttempt, abandon, active};
+pub use closing::{AttemptClosing, PreviousAttempt, TopicScore, closing};
 pub use history::{HistoryItem, HistoryPage, HistoryQuery, HistorySource, history};
 pub use response::{annul, answer, eliminate, finish, flag, restore, revealed_question};
 pub(crate) use scoring::{ANSWERED_RESPONSE_SQL, HIT_SQL, MISS_SQL};
 pub use scoring::{Outcome, QuestionStatus, RESPONSE_TIME_SQL, Score, outcome};
 pub use session::start;
 pub use view::load;
-
-/// Largest topic session.
-pub const MAX_TOPIC_SESSION: u32 = 200;
 
 /// Largest session started from a filter.
 pub const MAX_SELECTION_SESSION: u32 = 200;
@@ -71,16 +69,6 @@ crate::enum_text::stored_enum!(FeedbackMode {
 pub enum SessionSource {
     /// Every question of a collection.
     Collection { collection_id: CollectionId },
-    /// Up to `count` questions of a topic: unseen first, then least recently answered.
-    Topic { topic_id: TopicId, count: u32 },
-    /// The error notebook, most recent errors first (up to 100). Blanks join when asked.
-    Errors {
-        #[serde(rename = "includeBlanks")]
-        #[ts(type = "boolean")]
-        filter: ErrorFilter,
-    },
-    /// Due reviews (most overdue first), then recent errors (up to 100 in all).
-    Reviews,
     /// Up to `count` questions that match a combined filter, picked in the given order.
     Filter {
         filter: QuestionFilter,

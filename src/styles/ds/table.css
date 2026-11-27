@@ -14,7 +14,7 @@
   text-align: left;
 }
 .data-table thead th {
-  font-size: var(--text-sm);
+  font-size: 0.875rem;
   color: var(--muted);
 }
 .data-table .level-area th {

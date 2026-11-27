@@ -24,3 +24,16 @@
   background: var(--accent);
   color: var(--on-accent);
 }
+/* Achievement bands: the printed percentage carries the meaning, the color only reinforces it. */
+.badge-good {
+  border-color: var(--success);
+  color: var(--success);
+}
+.badge-fair {
+  border-color: var(--flag);
+  color: var(--flag);
+}
+.badge-poor {
+  border-color: var(--danger);
+  color: var(--danger);
+}

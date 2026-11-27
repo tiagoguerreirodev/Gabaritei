@@ -1,10 +1,10 @@
 use rand::{Rng, seq::SliceRandom};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::view::{collection_title, topic_title};
+use super::view::collection_title;
 use super::{
-    AttemptId, AttemptView, CollectionId, MAX_TOPIC_SESSION, QuestionId, QuestionOption,
-    QuestionType, SessionSource, SessionStart, Snapshot, SourceKind, SourceRef, TopicId, load,
+    AttemptId, AttemptView, CollectionId, QuestionId, QuestionOption, QuestionType, SessionSource,
+    SessionStart, Snapshot, SourceKind, SourceRef, load,
 };
 use crate::{
     error::{AppError, AppResult},
@@ -24,16 +24,6 @@ pub fn start(
             Some(SourceRef::Collection(collection_id.clone())),
             collection_questions(conn, collection_id)?,
         ),
-        SessionSource::Topic { topic_id, count } => (
-            SourceKind::Topic,
-            Some(SourceRef::Topic(*topic_id)),
-            topic_questions(conn, *topic_id, *count, rng)?,
-        ),
-        SessionSource::Errors { filter } => (
-            SourceKind::Errors,
-            None,
-            crate::learning::error_questions(conn, *filter, crate::learning::MAX_SESSION)?,
-        ),
         SessionSource::Filter {
             filter,
             count,
@@ -42,11 +32,6 @@ pub fn start(
             SourceKind::Filter,
             Some(SourceRef::Filter(filter.clone())),
             crate::selection::pick(conn, filter, *count, *order, now, rng)?,
-        ),
-        SessionSource::Reviews => (
-            SourceKind::Reviews,
-            None,
-            crate::learning::review_session(conn, now, crate::learning::MAX_SESSION)?,
         ),
     };
     if questions.is_empty() {
@@ -103,45 +88,6 @@ fn collection_questions(
         .query_map(params![collection_id], |r| r.get::<_, QuestionId>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ids)
-}
-
-/// Questions of a topic for a session: never answered first, then least recently answered;
-/// annulled questions skipped. Ties are broken at random.
-fn topic_questions(
-    conn: &Connection,
-    topic_id: TopicId,
-    count: u32,
-    rng: &mut impl Rng,
-) -> AppResult<Vec<QuestionId>> {
-    if !(crate::question_count::MIN_COUNT..=MAX_TOPIC_SESSION).contains(&count) {
-        return Err(AppError::Invalid(format!(
-            "Escolha de 1 a {MAX_TOPIC_SESSION} questões."
-        )));
-    }
-    if topic_title(conn, topic_id)?.is_none() {
-        return Err(AppError::Invalid("Assunto não encontrado.".into()));
-    }
-
-    let mut stmt = conn.prepare(
-        "SELECT q.id, MAX(r.answered_at)
-         FROM question_topics qt
-         JOIN questions q ON q.id = qt.question_id
-         LEFT JOIN responses r ON r.question_id = q.id AND r.answered_at IS NOT NULL
-         WHERE qt.topic_id = ?1 AND q.annulled = 0
-         GROUP BY q.id",
-    )?;
-    let mut rows = stmt
-        .query_map(params![topic_id], |r| {
-            Ok((r.get::<_, QuestionId>(0)?, r.get::<_, Option<String>>(1)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    rows.shuffle(rng);
-    let rows = crate::selection::unseen_first(rows, |row| row.1.clone());
-    Ok(rows
-        .into_iter()
-        .take(count as usize)
-        .map(|(id, _)| id)
-        .collect())
 }
 
 /// Builds the shown snapshot of a question: options shuffled, except Certo/Errado, which

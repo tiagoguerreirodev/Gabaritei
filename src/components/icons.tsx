@@ -55,6 +55,12 @@ export const PerformanceIcon = () => (
     <path d="M5 20V12M12 20V5M19 20v-5" />
   </Icon>
 );
+export const HistoryIcon = () => (
+  <Icon>
+    <path d="M20 12a8 8 0 1 1-2.5-5.8" />
+    <path d="M20 4v4h-4M12 8v4l3 2" />
+  </Icon>
+);
 export const SettingsIcon = () => (
   <Icon>
     <path d="M5 7h2M11 7h8M5 17h8M17 17h2" />
@@ -76,5 +82,6 @@ export const menuIcons: Record<string, () => JSX.Element> = {
   "/revisar-pacote": PackageIcon,
   "/resolver": SolveIcon,
   "/desempenho": PerformanceIcon,
+  "/historico": HistoryIcon,
   "/configuracoes": SettingsIcon,
 };

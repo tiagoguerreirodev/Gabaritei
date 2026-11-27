@@ -997,3 +997,202 @@ fn a_filter_count_outside_one_to_200_is_refused() {
         );
     }
 }
+
+// ---- Histórico -------------------------------------------------------------------------------
+
+fn history_query() -> HistoryQuery {
+    HistoryQuery {
+        source: None,
+        mode: None,
+        page: 0,
+        page_size: 0,
+    }
+}
+
+fn history_page(db: &Database, query: &HistoryQuery) -> HistoryPage {
+    db.with(|c| history(c, query)).unwrap()
+}
+
+/// Inserts a finished attempt over `c1` with no responses.
+fn insert_finished(db: &Database, id: &str, kind: SourceKind, mode: FeedbackMode, at: &str) {
+    db.with(|c| {
+        c.execute(
+            "INSERT INTO attempts (id, source_kind, source_ref, feedback_mode, started_at, finished_at)
+             VALUES (?1, ?2, 'c1', ?3, ?4, ?4)",
+            params![id, kind, mode, at],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+}
+
+fn finish_and_reload(db: &Database, view: &AttemptView) {
+    db.transaction(|tx| finish(tx, &view.id, view.revision, T2))
+        .unwrap();
+}
+
+#[test]
+fn history_lists_finished_attempts_newest_first() {
+    let (db, _) = bank();
+    insert_finished(
+        &db,
+        "older",
+        SourceKind::Collection,
+        FeedbackMode::Study,
+        T0,
+    );
+    insert_finished(&db, "newer", SourceKind::Collection, FeedbackMode::Exam, T1);
+    let ids: Vec<_> = history_page(&db, &history_query())
+        .items
+        .iter()
+        .map(|item| item.id.to_string())
+        .collect();
+    assert_eq!(ids, ["newer", "older"]);
+}
+
+#[test]
+fn history_skips_unfinished_attempts() {
+    let (db, _) = bank();
+    start_collection(&db, FeedbackMode::Exam);
+    assert_eq!(history_page(&db, &history_query()).total, 0);
+}
+
+#[test]
+fn scores_follow_the_current_key() {
+    let (db, _) = bank();
+    let (finished, wrong) = finish_mixed_exam(&db);
+    let before = history_page(&db, &history_query()).items[0].score.correct;
+    let corrected = &finished.questions[1].question_id;
+    db.with(|c| {
+        c.execute(
+            "UPDATE questions SET answer_id = ?2 WHERE id = ?1",
+            params![corrected, wrong],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    let after = history_page(&db, &history_query()).items[0].score.correct;
+    assert_eq!((before, after), (1, 2));
+}
+
+#[test]
+fn an_all_annulled_attempt_has_no_achievement() {
+    let (db, _) = bank();
+    let exam = start_collection(&db, FeedbackMode::Exam);
+    finish_and_reload(&db, &exam);
+    db.with(|c| {
+        c.execute("UPDATE questions SET annulled = 1", [])?;
+        Ok(())
+    })
+    .unwrap();
+    let item = history_page(&db, &history_query()).items.remove(0);
+    assert_eq!(
+        (item.total, item.score.annulled, item.score.achievement),
+        (4, 4, None)
+    );
+}
+
+#[test]
+fn history_filters_by_source_and_mode() {
+    let (db, _) = bank();
+    insert_finished(
+        &db,
+        "c-study",
+        SourceKind::Collection,
+        FeedbackMode::Study,
+        T0,
+    );
+    insert_finished(
+        &db,
+        "c-exam",
+        SourceKind::Collection,
+        FeedbackMode::Exam,
+        T1,
+    );
+    insert_finished(&db, "f-exam", SourceKind::Filter, FeedbackMode::Exam, T2);
+    insert_finished(&db, "errors", SourceKind::Errors, FeedbackMode::Study, T2);
+    let ids = |source, mode| -> Vec<String> {
+        let query = HistoryQuery {
+            source,
+            mode,
+            ..history_query()
+        };
+        let mut ids: Vec<_> = history_page(&db, &query)
+            .items
+            .iter()
+            .map(|item| item.id.to_string())
+            .collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(
+        ids(Some(HistorySource::Collection), None),
+        ["c-exam", "c-study"]
+    );
+    assert_eq!(ids(Some(HistorySource::Filter), None), ["f-exam"]);
+    assert_eq!(ids(Some(HistorySource::Older), None), ["errors"]);
+    assert_eq!(ids(None, Some(FeedbackMode::Exam)), ["c-exam", "f-exam"]);
+}
+
+#[test]
+fn pages_are_newest_first_without_repeats() {
+    let (db, _) = bank();
+    for (id, at) in [("a", T0), ("b", T1), ("c", T1), ("d", T2), ("e", T2)] {
+        insert_finished(&db, id, SourceKind::Collection, FeedbackMode::Study, at);
+    }
+    let pages: Vec<Vec<String>> = (0..3)
+        .map(|page| {
+            let query = HistoryQuery {
+                page,
+                page_size: 2,
+                ..history_query()
+            };
+            history_page(&db, &query)
+                .items
+                .iter()
+                .map(|item| item.id.to_string())
+                .collect()
+        })
+        .collect();
+    assert_eq!(pages, [vec!["d", "e"], vec!["b", "c"], vec!["a"]]);
+}
+
+#[test]
+fn a_page_size_above_100_is_refused() {
+    let (db, _) = bank();
+    let query = HistoryQuery {
+        page_size: 101,
+        ..history_query()
+    };
+    let error = db.with(|c| history(c, &query)).unwrap_err();
+    assert_eq!(error.to_string(), "Escolha até 100 itens por página.");
+}
+
+#[test]
+fn history_items_name_their_collection_for_redoing() {
+    let (db, _) = bank();
+    let exam = start_collection(&db, FeedbackMode::Exam);
+    finish_and_reload(&db, &exam);
+    let item = history_page(&db, &history_query()).items.remove(0);
+    assert_eq!(
+        (item.title.as_str(), item.collection_id),
+        ("Caderno de teste", Some("c1".into()))
+    );
+}
+
+#[test]
+fn history_items_have_no_question_text() {
+    let (db, _) = bank();
+    finish_mixed_exam(&db);
+    let json = serde_json::to_string(&history_page(&db, &history_query())).unwrap();
+    for secret in [
+        SECRET,
+        "REF-SECRETA",
+        "answerId",
+        "explanation",
+        "stem",
+        "options",
+    ] {
+        assert!(!json.contains(secret), "{secret} leaked: {json}");
+    }
+}

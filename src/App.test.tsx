@@ -46,7 +46,13 @@ describe("App shell", () => {
   it("lists the main destinations and settings in the sidebar, in pt-BR", () => {
     render(() => <App />);
 
-    expect(linkLabels("Menu principal")).toEqual(["Início", "Banco", "Gerar", "Desempenho"]);
+    expect(linkLabels("Menu principal")).toEqual([
+      "Início",
+      "Banco",
+      "Gerar",
+      "Desempenho",
+      "Histórico",
+    ]);
     expect(linkLabels("Menu secundário")).toEqual(["Configurações"]);
   });
 

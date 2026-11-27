@@ -2,6 +2,7 @@ import { Navigate } from "@solidjs/router";
 import type { Component } from "solid-js";
 import Bank from "./pages/Bank";
 import Generate from "./pages/Generate";
+import History from "./pages/History";
 import Home from "./pages/Home";
 import { bancoPath } from "./pages/bank/filterUrl";
 import { presets } from "./pages/bank/presets";
@@ -31,6 +32,7 @@ export const routes: AppRoute[] = [
   { path: "/revisar-pacote", label: "Revisar pacote", component: ReviewPackage, menu: "waiting" },
   { path: "/resolver", label: "Resolver", component: Solve, menu: "none" },
   { path: "/desempenho", label: "Desempenho", component: Performance, menu: "main" },
+  { path: "/historico", label: "Histórico", component: History, menu: "main" },
   { path: "/configuracoes", label: "Configurações", component: Settings, menu: "footer" },
 ];
 

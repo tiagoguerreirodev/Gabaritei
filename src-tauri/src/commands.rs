@@ -27,7 +27,7 @@ use crate::ai::roles::{self, Role, RoleConfig};
 use crate::ai::secrets::Secrets;
 use crate::ai::settings::{self, AiSettings, AiSettingsInput, ResolvedClis};
 use crate::appearance::{self, Appearance};
-use crate::attempts::{self, AttemptView, SessionStart};
+use crate::attempts::{self, ActiveAttempt, AttemptView, HistoryPage, HistoryQuery, SessionStart};
 use crate::backup::{BackupInfo, BackupService, BackupStatus, OpenableFolder, RelocateOutcome};
 use crate::bank::catalog::{self, CollectionDetail, CollectionPage, CollectionQuery, TopicTree};
 use crate::bank::{self, TopicPath};
@@ -356,6 +356,18 @@ pub fn performance(db: State<'_, Database>, query: PerformanceQuery) -> AppResul
 #[tauri::command(async)]
 pub fn home(db: State<'_, Database>) -> AppResult<HomeSummary> {
     db.with(|conn| metrics::home(conn, &crate::clock::now()))
+}
+
+/// Unfinished attempts, newest first, for the *Em andamento* list of Histórico.
+#[tauri::command(async)]
+pub fn active_attempts(db: State<'_, Database>) -> AppResult<Vec<ActiveAttempt>> {
+    db.with(|conn| attempts::active(conn))
+}
+
+/// One page of finished attempts with scores from the current keys. No questions or keys.
+#[tauri::command(async)]
+pub fn attempt_history(db: State<'_, Database>, query: HistoryQuery) -> AppResult<HistoryPage> {
+    db.with(|conn| attempts::history(conn, &query))
 }
 
 /// Asks where to save the performance table as CSV (using the same filters) and writes it.

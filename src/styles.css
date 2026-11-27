@@ -7,7 +7,6 @@
 @import "./styles/ds/badge.css";
 @import "./styles/ds/field.css";
 @import "./styles/ds/choice.css";
-@import "./styles/ds/tabs.css";
 @import "./styles/ds/modal.css";
 @import "./styles/ds/toast.css";
 @import "./styles/ds/meter.css";
@@ -27,10 +26,12 @@
 @import "./styles/ds/review.css";
 @import "./styles/ds/bank.css";
 @import "./styles/ds/history.css";
+@import "./styles/ds/steps.css";
+@import "./styles/ds/recap.css";
+@import "./styles/ds/shortcuts.css";
 @import "./styles/ds/today.css";
+@import "./styles/ds/settings.css";
 @import "./styles/base.css";
-@import "./styles/shell.css";
 @import "./styles/bank.css";
 @import "./styles/resolver.css";
-@import "./styles/settings.css";
 @import "./styles/pages.css";

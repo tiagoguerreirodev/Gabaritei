@@ -39,11 +39,3 @@
 .collection-title {
   font-weight: 600;
 }
-
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-}

@@ -45,8 +45,8 @@ export function SmallSample(props: { stats: GroupStats }) {
 function MasteryBar(props: { stats: GroupStats }) {
   const achievement = () => props.stats.score.achievement;
   return (
-    <span class="table-mastery">
-      <span class="meter-track mastery-bar" aria-hidden="true">
+    <span class="table-meter">
+      <span class="meter-track" aria-hidden="true">
         <span class="meter-fill" style={{ width: `${Math.round((achievement() ?? 0) * 100)}%` }} />
       </span>
       <span class="meter-value">{formatPercent(achievement())}</span>
@@ -104,7 +104,7 @@ export default function StrengthTable(props: { areas: AreaStats[] }) {
         tabindex="0"
         aria-label="Desempenho por área, matéria e assunto"
       >
-        <table class="strength-table" aria-label="Desempenho por área, matéria e assunto">
+        <table class="data-table" aria-label="Desempenho por área, matéria e assunto">
           <thead>
             <tr>
               <th scope="col">Área › matéria › assunto</th>

@@ -1,4 +1,4 @@
-/* ---- Geração ---- */
+/* ---- Gerar: layout da tela ---- */
 
 .topic-path {
   display: grid;
@@ -32,13 +32,15 @@
   margin: 0 0 var(--space-2);
 }
 
+/* ---- Configurações ---- */
+
 .actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
 }
 
-.notice p {
+.card-row > p {
   margin: 0;
 }
 
@@ -167,16 +169,17 @@
   color: var(--on-accent);
 }
 
-.form > .field-error {
-  margin: var(--space-2) 0;
-  white-space: pre-line;
-  font-weight: 600;
-}
-
+/* The banner's inner group: Acompanhar and Cancelar side by side. */
 .banner-actions {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+}
+
+.form > .field-error {
+  margin: var(--space-2) 0;
+  white-space: pre-line;
+  font-weight: 600;
 }
 
 /* ---- Revisar pacote: resumo e triagem ---- */

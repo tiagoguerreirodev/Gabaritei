@@ -16,7 +16,7 @@ export default function GenerationProgress() {
   onMount(() => setGenerationPanelShown(true));
   onCleanup(() => setGenerationPanelShown(false));
   return (
-    <div class="generation-progress">
+    <div>
       <p role="status">
         <Show when={generationStageSentence()}>{(sentence) => <>{sentence()}…</>}</Show>
         <Show when={generationStatus()?.progress?.label}>

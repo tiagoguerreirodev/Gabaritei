@@ -21,7 +21,7 @@ export default function ScoreSummary(props: { attemptId: string; score: Score })
   );
   const loaded = () => (closing.state === "ready" ? closing() : undefined);
   return (
-    <section class="card score recap" aria-label="Resultado" tabindex="-1" ref={section}>
+    <section class="card recap" aria-label="Resultado" tabindex="-1" ref={section}>
       <h2>Resultado</h2>
       <p class="recap-headline" data-testid="recap-points">
         <strong>

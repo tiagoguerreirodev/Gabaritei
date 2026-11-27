@@ -14,7 +14,7 @@ export default function LeftBehindNotice(props: {
   onDismiss: () => void;
 }) {
   return (
-    <div class="card card-row notice" role="status" data-testid="left-behind">
+    <div class="card card-row" role="status" data-testid="left-behind">
       <Show
         when={availableOffer(props.offer)}
         fallback={

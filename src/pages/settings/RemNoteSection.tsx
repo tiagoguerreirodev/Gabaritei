@@ -63,7 +63,7 @@ export default function RemNoteSection(props: {
         Deixa a IA consultar suas anotações do RemNote ao gerar questões. Só ferramentas de leitura
         são permitidas.
       </p>
-      <fieldset class="settings-modes">
+      <fieldset class="choice-group">
         <legend>Como conectar</legend>
         <For each={modes}>
           {(mode) => (
@@ -137,7 +137,7 @@ export default function RemNoteSection(props: {
       </Show>
 
       <Show when={props.remnote.mode === "server" && toolNames().length > 0}>
-        <fieldset class="settings-modes">
+        <fieldset class="choice-group">
           <legend>Ferramentas permitidas (somente leitura)</legend>
           <For each={toolNames()}>
             {(tool) => (

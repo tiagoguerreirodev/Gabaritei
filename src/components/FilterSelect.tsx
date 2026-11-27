@@ -12,8 +12,8 @@ export default function FilterSelect(props: {
   onChange: (value: string) => void;
 }) {
   return (
-    <label>
-      <span>{labels[props.field].name}</span>
+    <label class="field">
+      <span class="field-label">{labels[props.field].name}</span>
       <select
         class="input"
         value={props.value}

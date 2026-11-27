@@ -299,7 +299,7 @@ function Content(props: {
       </p>
       <Show when={notice()}>
         {(current) => (
-          <p class="card card-row notice" role="status" data-testid={current().id}>
+          <p class="card card-row" role="status" data-testid={current().id}>
             {current().text}{" "}
             <button
               type="button"
@@ -320,7 +320,7 @@ function Content(props: {
           </Show>
         }
       >
-        <ul class="backup-list">
+        <ul class="settings-list">
           <For each={backups()}>
             {(backup) => (
               <li>

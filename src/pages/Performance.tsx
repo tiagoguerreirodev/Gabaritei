@@ -12,10 +12,42 @@ import { showSuccess } from "../components/toasts";
 import StatCards from "./performance/StatCards";
 import StrengthTable, { SmallSample } from "./performance/StrengthTable";
 import TrendChart from "./performance/TrendChart";
-import { formatPercent } from "../format";
+import { achievementBand, formatPercent } from "../format";
+import type { WeakTopic } from "../bindings/WeakTopic";
+import { bancoPath, emptyFilter } from "./bank/filterUrl";
+import Sparkline from "./performance/Sparkline";
 
 /** Minutes to add to UTC to get the local time (−180 in Brasília). */
 const localOffsetMinutes = () => -new Date().getTimezoneOffset();
+
+function WeakTopicRow(props: { topic: WeakTopic }) {
+  const achievement = () => props.topic.stats.score.achievement;
+  return (
+    <li>
+      <span>
+        <strong>{props.topic.topic}</strong>
+        <span class="muted">
+          {" "}
+          {props.topic.area} › {props.topic.matter}
+        </span>
+      </span>
+      <Sparkline weeks={props.topic.trend} />
+      <Show when={achievement()}>
+        {(ratio) => (
+          <span class={`badge badge-${achievementBand(ratio())}`}>{formatPercent(ratio())}</span>
+        )}
+      </Show>
+      <SmallSample stats={props.topic.stats} />
+      <A
+        class="btn"
+        aria-label={`Treinar este assunto: ${props.topic.topic}`}
+        href={bancoPath({ filter: { ...emptyFilter, topicIds: [props.topic.topicId] } })}
+      >
+        Treinar
+      </A>
+    </li>
+  );
+}
 
 /** Desempenho: strength by topic (latest answer per question) and the weekly trend. */
 export default function Performance() {
@@ -81,8 +113,8 @@ export default function Performance() {
           options={options().boards ?? []}
           onChange={setBoard}
         />
-        <label>
-          <span>Modo</span>
+        <label class="field">
+          <span class="field-label">Modo</span>
           <select
             class="input"
             value={mode()}
@@ -97,14 +129,6 @@ export default function Performance() {
             </For>
           </select>
         </label>
-        <button
-          type="button"
-          class="btn"
-          disabled={exporting.active()}
-          onClick={() => void exportCsv()}
-        >
-          Exportar CSV
-        </button>
       </div>
 
       <Show when={result.loading && current()}>
@@ -184,25 +208,9 @@ export default function Performance() {
             >
               <section class="card card-wide" aria-labelledby="weakest-title">
                 <h2 id="weakest-title">Assuntos mais fracos</h2>
-                <ol class="weakest-list">
-                  <For each={data().weakest}>
-                    {(topic) => (
-                      <li>
-                        <span class="weak-name">
-                          <strong>{topic.topic}</strong>
-                          <span class="muted">
-                            {" "}
-                            {topic.area} › {topic.matter}
-                          </span>
-                        </span>
-                        <span class="weak-value">
-                          {formatPercent(topic.stats.score.achievement)}
-                        </span>
-                        <SmallSample stats={topic.stats} />
-                      </li>
-                    )}
-                  </For>
-                </ol>
+                <ul class="item-list">
+                  <For each={data().weakest}>{(topic) => <WeakTopicRow topic={topic} />}</For>
+                </ul>
               </section>
             </Show>
             <section class="card card-wide" aria-labelledby="trend-title">
@@ -211,7 +219,17 @@ export default function Performance() {
             </section>
             <Show when={data().areas.length > 0}>
               <section class="card card-wide" aria-labelledby="table-title">
-                <h2 id="table-title">Por área, matéria e assunto</h2>
+                <div class="card-row">
+                  <h2 id="table-title">Por área, matéria e assunto</h2>
+                  <button
+                    type="button"
+                    class="btn"
+                    disabled={exporting.active()}
+                    onClick={() => void exportCsv()}
+                  >
+                    Exportar CSV
+                  </button>
+                </div>
                 <StrengthTable areas={data().areas} />
               </section>
             </Show>

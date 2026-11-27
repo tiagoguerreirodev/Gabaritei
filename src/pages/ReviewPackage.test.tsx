@@ -316,10 +316,12 @@ describe("Revisar pacote", () => {
     backend({ ...summary, problems: [{ position: 2, message: "Algo errado." }] });
     renderAt("/revisar-pacote?id=d1");
     const region = within(await screen.findByRole("region", { name: "Resumo da conferência" }));
-    expect(region.getByText("Conferidas").closest("div")).toHaveTextContent("2");
-    expect(region.getByText("Corrigidas e conferidas").closest("div")).toHaveTextContent("1");
-    expect(region.getByText("Contestadas").closest("div")).toHaveTextContent("1");
-    expect(region.getByText("Problemas").closest("div")).toHaveTextContent("1");
+    const tiles = region.getByRole("list", { name: "Contagens da conferência" });
+    const tile = (label: string) => within(tiles).getByText(label).closest("li");
+    expect(tile("Aprovadas")).toHaveTextContent("2");
+    expect(tile("Aprovadas após correção")).toHaveTextContent("1");
+    expect(tile("Contestadas")).toHaveTextContent("1");
+    expect(tile("Com problemas")).toHaveTextContent("1");
     // It comes before the package details.
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
     expect(headings[0]).toBe("Resumo da conferência");
@@ -329,7 +331,7 @@ describe("Revisar pacote", () => {
     await openSummary();
     const checks = within(screen.getByRole("region", { name: "Conferência às cegas" }));
     expect(
-      checks.getByText("2 conferidas, 1 corrigidas e conferidas, 1 contestadas."),
+      checks.getByText("2 aprovadas, 1 aprovadas após correção, 1 contestadas."),
     ).toBeVisible();
   });
 
@@ -511,7 +513,7 @@ describe("Revisar pacote", () => {
     expect(screen.queryByRole("button", { name: "Conferir de novo" })).not.toBeInTheDocument();
     // Partial counts are not shown as if final.
     expect(screen.getAllByText(/Conferência em andamento/).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/0 conferidas/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/0 aprovadas/)).not.toBeInTheDocument();
   });
 
   async function checkThenImport() {

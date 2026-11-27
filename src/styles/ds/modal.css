@@ -38,3 +38,14 @@
 .modal:focus {
   outline: none;
 }
+
+/* Covers the window and scrolls when the dialog is tall. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+}
+.modal {
+  max-height: calc(100vh - 4rem);
+  overflow: auto;
+}

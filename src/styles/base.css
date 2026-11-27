@@ -18,3 +18,8 @@ input[type="radio"] {
   color: var(--muted);
   opacity: 1;
 }
+
+/* App-only: cards outside `.page > .card` (recap, banner, empty states) stack with the same gap. */
+.card {
+  margin: var(--space-6) 0;
+}

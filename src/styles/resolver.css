@@ -194,8 +194,3 @@
 .confirm-row {
   margin-top: var(--space-5);
 }
-
-/* Option letter in the package review preview (review/QuestionLines.tsx), not part of the sheet. */
-.option-letter {
-  font-weight: 700;
-}

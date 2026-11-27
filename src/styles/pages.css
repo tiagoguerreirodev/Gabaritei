@@ -28,10 +28,6 @@
   margin: var(--space-4) 0;
 }
 
-.disputed-badge {
-  margin: 0 0 var(--space-2);
-}
-
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -214,21 +210,7 @@
   color: var(--success);
 }
 
-/* ---- Revisar pacote: the verdict count tiles (screen-only layout) ---- */
-.verdict-counts {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-  gap: var(--space-3);
-  max-width: var(--content-width-wide);
-  margin: var(--space-3) 0;
-}
-.verdict-counts dd {
-  margin: 0;
-}
-.verdict-disputed {
-  border-style: dashed;
-  border-color: var(--danger);
-}
-.verdict-problems {
-  border-color: var(--danger);
+/* Option letter in the package review preview (review/QuestionLines.tsx). */
+.option-letter {
+  font-weight: 700;
 }

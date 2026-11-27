@@ -95,7 +95,7 @@ describe("Início", () => {
     const names = areas.getAllByRole("listitem").map((li) => li.textContent);
     expect(names).toEqual(["Português20%", "Direito70%"]);
 
-    const waiting = screen.getByRole("heading", { name: "Aguardando você" }).parentElement!;
+    const waiting = screen.getByRole("heading", { name: "Aguardando revisão" }).parentElement!;
     expect(within(waiting).getByRole("link", { name: "Revisões pendentes" })).toHaveAttribute(
       "href",
       "#/banco?status=due,wrong&ordem=dueFirst",
@@ -176,7 +176,7 @@ describe("Início", () => {
       "href",
       "#/revisar-pacote",
     );
-    const mainAction = screen.getByRole("heading", { name: /nenhuma tentativa/ });
+    const mainAction = screen.getByRole("heading", { name: /nenhuma tentativa/i });
     expect(heading.compareDocumentPosition(mainAction)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
@@ -193,7 +193,7 @@ describe("Início", () => {
     renderHome();
 
     await screen.findByRole("list", { name: "Resumo" });
-    expect(screen.queryByRole("heading", { name: "Aguardando você" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Aguardando revisão" })).toBeNull();
   });
 
   it("shows only the waiting items with a count", async () => {
@@ -201,7 +201,7 @@ describe("Início", () => {
     renderHome();
 
     const waiting = within(
-      (await screen.findByRole("heading", { name: "Aguardando você" })).parentElement!,
+      (await screen.findByRole("heading", { name: "Aguardando revisão" })).parentElement!,
     );
     expect(waiting.getByRole("link", { name: "Revisões pendentes" })).toBeVisible();
     expect(waiting.queryByRole("link", { name: "Pacotes para revisar" })).toBeNull();
@@ -252,11 +252,11 @@ describe("Início", () => {
     ));
 
     const today = within(
-      await screen.findByRole("region", { name: "Você ainda não finalizou nenhuma tentativa." }),
+      await screen.findByRole("region", { name: "Nenhuma tentativa finalizada ainda." }),
     );
     expect(today.getByRole("link", { name: "Ir para o Banco" })).toHaveAttribute("href", "#/banco");
     expect(screen.queryByRole("list", { name: "Resumo" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Aguardando você" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Aguardando revisão" })).toBeNull();
   });
 
   it("shows the backend's message when loading fails", async () => {

@@ -84,7 +84,7 @@ export default function Home() {
 
               <Show when={summary().dueReviews > 0 || summary().draftsWaiting > 0}>
                 <section class="card card-wide" aria-labelledby="waiting-title">
-                  <h2 id="waiting-title">Aguardando você</h2>
+                  <h2 id="waiting-title">Aguardando revisão</h2>
                   <ul class="item-list">
                     <Show when={summary().dueReviews > 0}>
                       <li>

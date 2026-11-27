@@ -110,7 +110,7 @@ function GenerateView(props: {
           <StepList states={reviewSteps} />
           <GenerationProgress />
           <p class="muted">
-            Isto pode levar alguns minutos. Você pode usar outras páginas enquanto isso.
+            Isto pode levar alguns minutos. Dá para usar outras páginas enquanto isso.
           </p>
         </section>
       </Match>

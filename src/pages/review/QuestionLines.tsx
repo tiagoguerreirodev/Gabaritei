@@ -134,7 +134,7 @@ export default function QuestionLines(props: { summary: DraftSummary }) {
       </Show>
       <Show when={s().disputed > 0}>
         <p class="muted">
-          Questões contestadas ganham um aviso quando você as responder, e você pode anulá-las.
+          Questões contestadas ganham um aviso ao serem respondidas e podem ser anuladas.
         </p>
       </Show>
     </section>

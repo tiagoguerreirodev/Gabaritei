@@ -364,7 +364,7 @@ describe("BackupSection", () => {
       ]),
     );
     expect(await screen.findByTestId("backup-list-slow")).toHaveTextContent(
-      "Você ainda pode fazer backups nesta pasta.",
+      "Ainda dá para fazer backups nesta pasta.",
     );
     expect(screen.queryByTestId("folder-unavailable")).not.toBeInTheDocument();
     expect(screen.queryByText("Nenhum backup nesta pasta ainda.")).not.toBeInTheDocument();

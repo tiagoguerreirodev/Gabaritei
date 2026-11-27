@@ -159,7 +159,7 @@ export default function Performance() {
                   title={
                     filtering()
                       ? "Nenhuma tentativa finalizada com estes filtros."
-                      : "Você ainda não finalizou nenhuma tentativa."
+                      : "Nenhuma tentativa finalizada ainda."
                   }
                   action={
                     <Show

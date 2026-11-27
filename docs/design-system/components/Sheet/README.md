@@ -5,3 +5,4 @@ The question surface in Resolver: a printed answer-sheet page instead of a boxed
 - The sheet has no border or shadow: the top edge, the gutter rule and the `rule` lines are the only ornament. Never add more.
 - Stem and options are capped at `measure` (65ch). The Explanation panel follows the options inside the same sheet.
 - Sit it in `.solve-layout` with the navigator Rail to its right.
+- `.question-image`: an image in a stem or option, a block capped at the sheet width, `space-4` above and below, `radius-md`.

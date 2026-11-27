@@ -33,3 +33,7 @@
   color: var(--muted);
   opacity: 1;
 }
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent);
+}

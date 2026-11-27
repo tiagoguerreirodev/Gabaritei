@@ -103,3 +103,28 @@ How the current stylesheets (`src/styles/*.css`, about 2,240 lines) map onto thi
 - **Selected states use `is-*`** (`is-selected`, `is-correct`) rather than mixing `.selected`, `.answered`, `.outcome-*` and `.option-key`.
 - **Hard-coded paddings** (0.35rem × 0.8rem, 0.45rem × 0.9rem, 0.9rem) are folded into `space-2` × `space-4` and `space-3` × `space-4`.
 - **The collapsed-sidebar rules** are written twice in `shell.css` (`.sidebar-collapsed` and the 60rem media query); write them once on a shared selector.
+
+## v3 follow-up (#48–#53)
+
+Class names and rules that moved or were folded in while the app adopted the v3 families (PRs #244–#254), and the drift-test pass after them.
+
+| Was | Now |
+| --- | --- |
+| `.generation-progress`, `.stage-list`, `.step-list`, `.first-steps-list`, `.first-step-mark` | `.steps` (Steps), with `done` and `current` on the `li` |
+| `.check` (a lone checkbox label) | `.choice-group` |
+| `.settings-modes` | `.choice-group` |
+| `.roles-table`, `.role-hint` | `.data-table.is-text`, `.muted.caption` |
+| `.backup-list` | `.settings-list` |
+| `.weakest-list`, `.weak-name`, `.weak-value` | `.item-list` with `.meter.compact` |
+| `.collection-list`, `.collection-title` | `.item-list.is-ruled`, `.item-title` |
+| `.verdict-counts` (`dl`) | `.stat-cards` (`ul`) of `.card.card-compact.stat` |
+| `.stat-hint.muted`, `.muted.chart-note` | `.stat-hint`, `.chart-note` (muted by the rule) |
+| `.card.score.recap`, `.recap-struck` | `.card.recap`, `.recap-annulled` |
+| `.notice` on a `.card-row` | removed; `.card-row` alone |
+| `.flag-button` | `.btn.btn-ghost` |
+| `.tabs`, `.tab` (`ds/tabs.css`) | removed; no screen uses Tabs |
+| `.pager` in `bank.css` | `.pager` in `ds/history.css` |
+| `.toasts`, `toast-in`, `.modal-backdrop` position, `.modal` max height, `.question-image`, `.table-scroll` in `shell.css` | `ds/toast.css`, `ds/modal.css`, `ds/sheet.css`, `ds/table.css` |
+| Steps, SettingsRow, Recap and Shortcuts in `pages.css`, `settings.css`, `resolver.css` | `ds/steps.css`, `ds/settings.css`, `ds/recap.css`, `ds/shortcuts.css` |
+| `font-weight: normal`, `border: none` | `400`, `0` (same look, one spelling) |
+| SVG `.axis` at `11px` | `0.6875rem` |

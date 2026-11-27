@@ -22,6 +22,12 @@ a {
 .muted {
   color: var(--muted);
 }
+/* Small block text under a label or field. */
+.caption {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 400;
+}
 .reading {
   font-family: var(--font-reading);
   line-height: 1.7;
@@ -245,7 +251,11 @@ a {
 }
 
 /* ---- Modal ---- */
+/* Covers the window and scrolls when the dialog is tall. */
 .modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
   display: grid;
   place-items: center;
   padding: var(--space-6);
@@ -253,6 +263,8 @@ a {
 }
 .modal {
   width: min(36rem, 100%);
+  max-height: calc(100vh - 4rem);
+  overflow: auto;
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
@@ -286,7 +298,17 @@ a {
 }
 
 /* ---- Toast ---- */
+.toasts {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
 .toast {
+  animation: toast-in var(--dur-base) var(--ease);
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -315,6 +337,13 @@ a {
 .toast-text {
   flex: 1;
 }
+/* Slides up into place; the reduced-motion rule makes it appear at once. */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
+}
 
 /* ---- Meter: length plus printed number, never colour alone ---- */
 .meter {
@@ -322,6 +351,23 @@ a {
   grid-template-columns: minmax(7rem, 1fr) minmax(6rem, 2fr) 4rem;
   align-items: center;
   gap: var(--space-1) var(--space-3);
+}
+.meter-name {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 40rem) {
+  .meter {
+    grid-template-columns: 1fr 4rem;
+  }
+  .meter-name {
+    grid-column: 1 / -1;
+  }
+}
+:root[data-text-size="xl"] .meter {
+  grid-template-columns: 1fr 4rem;
+}
+:root[data-text-size="xl"] .meter-name {
+  grid-column: 1 / -1;
 }
 .meter-track {
   height: 0.75rem;
@@ -777,6 +823,15 @@ a {
   color: var(--danger);
 }
 
+/* An image inside a stem or an option: never wider than the sheet. */
+.question-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: var(--space-4) 0;
+  border-radius: var(--radius-md);
+}
+
 /* ---- Explanation: after the answer, its own tinted panel ---- */
 .explanation {
   display: grid;
@@ -1085,6 +1140,14 @@ a {
   background: var(--surface);
 }
 
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
 /* ---- Banco: filters on the left, the result on the right ---- */
 .bank-presets {
   display: flex;
@@ -1362,7 +1425,9 @@ a {
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text);
+  font: inherit;
   font-weight: 600;
+  cursor: pointer;
   transform: translateY(-200%);
 }
 .skip-link:focus-visible {
@@ -1373,9 +1438,11 @@ a {
   width: 1px;
   height: 1px;
   margin: -1px;
+  padding: 0;
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+  border: 0;
 }
 @media (max-width: 60rem) {
   .content {
@@ -1514,7 +1581,8 @@ a {
 }
 
 /* ---- Meter, compact: track and number only, beside a name the row already shows ---- */
-.meter.compact {
+.meter.compact,
+:root[data-text-size="xl"] .meter.compact {
   grid-template-columns: 6rem 4rem;
   width: auto;
 }
@@ -1538,7 +1606,18 @@ a {
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--border);
 }
+@media (max-width: 40rem) {
+  .item-list.is-ruled > li {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+:root[data-text-size="xl"] .item-list.is-ruled > li {
+  flex-direction: column;
+  align-items: flex-start;
+}
 .item-title {
+  display: block;
   font-weight: 600;
 }
 .facts {
@@ -1555,8 +1634,13 @@ a {
 }
 
 /* ---- DataTable: hairline rows, numbers right-aligned, hierarchy by indent ---- */
+/* A table wider than its card scrolls inside it and can be reached by keyboard. */
 .table-scroll {
   overflow-x: auto;
+}
+.table-scroll:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
 }
 .data-table {
   width: 100%;
@@ -1575,6 +1659,11 @@ a {
 .data-table.is-text th,
 .data-table.is-text td {
   text-align: left;
+}
+/* Controls inside a text table (the roles table) fill their cell. */
+.data-table.is-text td .input {
+  width: 100%;
+  min-width: 10rem;
 }
 .data-table thead th {
   color: var(--muted);
@@ -1615,7 +1704,7 @@ a {
 }
 .trend-chart .axis {
   fill: var(--muted);
-  font-size: 11px;
+  font-size: 0.6875rem;
 }
 .trend-chart .line,
 .sparkline .line {
@@ -1660,6 +1749,7 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2) var(--space-4);
+  margin: 0 0 var(--space-3);
 }
 .choice-group.is-inline legend {
   float: left;
@@ -1667,6 +1757,10 @@ a {
   color: var(--muted);
   font-size: 0.875rem;
   font-weight: 400;
+}
+.choice-group.is-inline label {
+  align-items: center;
+  gap: var(--space-1);
 }
 input[type="checkbox"],
 input[type="radio"] {
@@ -1676,7 +1770,7 @@ input[type="radio"] {
 /* ---- SettingsRow (Configurações): label, field, action, status below ---- */
 .settings-row {
   display: grid;
-  grid-template-columns: 12rem 1fr auto auto;
+  grid-template-columns: var(--settings-label-width) 1fr auto auto;
   align-items: center;
   gap: var(--space-2) var(--space-3);
   margin: var(--space-3) 0;
@@ -1787,14 +1881,39 @@ input[type="radio"] {
 .recap-wrong .recap-glyph {
   color: var(--danger);
 }
+/* Left blank: neutral, not a verdict colour. */
+.recap-blank .recap-glyph {
+  color: var(--muted);
+}
 .recap-annulled {
   text-decoration: line-through;
 }
 .recap-annulled .recap-glyph {
   text-decoration: none;
 }
+/* The card takes focus when it opens; the focus moves the reader, so no ring. */
+.card.recap:focus {
+  outline: none;
+}
 .recap .facts {
   grid-template-columns: repeat(2, max-content);
+}
+.recap-comparison {
+  margin: 0 0 var(--space-3);
+  color: var(--muted);
+}
+.recap-topics {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+.recap-next {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 
 /* ---- Shortcuts: a raised panel of keys above its toggle ---- */

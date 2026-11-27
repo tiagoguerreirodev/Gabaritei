@@ -7,3 +7,4 @@ One attempt in Histórico: what it was, how it went, and what to do with it.
 - Scores are computed from the current key, so a key correction changes them. Rows never show stems or keys.
 - Group rows under `.history-section` headings in `label` style (*Em andamento*, *Finalizadas*), newest first, with a Pager below when there is more than one page.
 - Below 40rem the actions wrap under the text.
+- `.pager`: previous / next buttons and the page count on one line (`space-between`, `space-4` above). It is the Pager of any paged list.

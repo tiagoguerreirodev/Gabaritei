@@ -4,46 +4,31 @@ import { formatNumber } from "../../format";
 
 function counts(s: DraftSummary) {
   return [
-    {
-      kind: "agreed",
-      label: "Conferidas",
-      count: s.agreed,
-      icon: "✓",
-      style: "verdict-ok",
-      waiting: s.checking,
-    },
+    { kind: "agreed", label: "Aprovadas", count: s.agreed, glyph: "✓", waiting: s.checking },
     {
       kind: "fixed",
-      label: "Corrigidas e conferidas",
+      label: "Aprovadas após correção",
       count: s.fixed,
-      icon: "✓",
-      style: "verdict-ok",
+      glyph: "✓",
       waiting: s.checking,
     },
     {
       kind: "disputed",
       label: "Contestadas",
       count: s.disputed,
-      icon: "▲",
-      style: "verdict-disputed",
+      glyph: undefined,
+      badge: "badge badge-danger badge-dashed",
       waiting: s.checking,
     },
     {
       kind: "problems",
-      label: "Problemas",
+      label: "Com problemas",
       count: s.problems.length,
-      icon: "✕",
-      style: "verdict-problems",
+      glyph: "✗",
+      badge: "badge badge-danger",
       waiting: false,
     },
-    {
-      kind: "unchecked",
-      label: "Sem conferência",
-      count: s.unchecked,
-      icon: "○",
-      style: undefined,
-      waiting: false,
-    },
+    { kind: "unchecked", label: "Não verificadas", count: s.unchecked, glyph: "—", waiting: false },
   ] as const;
 }
 
@@ -83,19 +68,23 @@ export default function VerdictCounts(props: { summary: DraftSummary }) {
       <Show when={props.summary.checking}>
         <p class="muted">Conferência em andamento: os números aparecem quando ela terminar.</p>
       </Show>
-      <dl class="verdict-counts">
+      <ul class="stat-cards" aria-label="Contagens da conferência">
         <For each={rows()}>
           {(row) => (
-            <div class={`card card-compact stat ${row.style ?? ""}`}>
-              <dt class="stat-name">
-                <span aria-hidden="true">{row.icon} </span>
-                {row.label}
-              </dt>
-              <dd class="stat-value">{row.waiting ? "…" : formatNumber(row.count)}</dd>
-            </div>
+            <li class="card card-compact stat">
+              <span class="stat-name">
+                <span class={"badge" in row ? row.badge : undefined}>
+                  <Show when={row.glyph}>
+                    <span aria-hidden="true">{row.glyph} </span>
+                  </Show>
+                  {row.label}
+                </span>
+              </span>
+              <strong class="stat-value">{row.waiting ? "…" : formatNumber(row.count)}</strong>
+            </li>
           )}
         </For>
-      </dl>
+      </ul>
     </section>
   );
 }

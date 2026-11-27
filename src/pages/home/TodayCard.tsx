@@ -40,7 +40,7 @@ export default function TodayCard(props: { action: TodayAction }) {
               <h2 id="today-title">
                 {due === 1 ? "1 revisão pendente" : `${formatNumber(due)} revisões pendentes`}
               </h2>
-              <p class="muted">Revise agora para fixar o que você já estudou.</p>
+              <p class="muted">Revise agora para fixar o que já estudou.</p>
               <A class="btn btn-primary" href={bancoPath(presets.reviews)}>
                 Fazer revisões
               </A>
@@ -67,7 +67,7 @@ export default function TodayCard(props: { action: TodayAction }) {
         </Match>
         <Match when={props.action.kind === "start"}>
           <p class="today-kicker">Comece por aqui</p>
-          <h2 id="today-title">Você ainda não finalizou nenhuma tentativa.</h2>
+          <h2 id="today-title">Nenhuma tentativa finalizada ainda.</h2>
           <p class="muted">Comece um caderno ou um assunto no Banco.</p>
           <A class="btn btn-primary" href="/banco">
             Ir para o Banco

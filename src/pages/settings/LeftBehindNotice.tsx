@@ -42,9 +42,9 @@ export default function LeftBehindNotice(props: {
                 when={props.relocated}
                 fallback="Nada foi movido nem apagado. Se quiser, leve os backups para a pasta nova: cada cópia é conferida antes de qualquer original ser apagado. Os backups do outro computador, se houver, ficam onde estão."
               >
-                O que não foi movido continua na pasta anterior. Você pode tentar de novo. Os
-                backups levados passam a contar no limite da pasta nova (7 diários, 7 manuais e 5 de
-                antes de restaurar).
+                O que não foi movido continua na pasta anterior. Dá para tentar de novo. Os backups
+                levados passam a contar no limite da pasta nova (7 diários, 7 manuais e 5 de antes
+                de restaurar).
               </Show>
             </p>
             <button type="button" class="btn" disabled={props.busy} onClick={() => props.onCopy()}>

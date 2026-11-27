@@ -97,7 +97,7 @@ export default function BackupSection(props: {
       <h2 id="backup-title">Backups</h2>
       <p class="muted">
         O Gabaritei faz um backup por dia enquanto está aberto e guarda os 7 mais recentes. Os
-        backups feitos por você ficam à parte e não tomam o lugar dos diários.
+        backups manuais ficam à parte e não tomam o lugar dos diários.
       </p>
       <p class="muted">
         Os dois computadores podem usar a mesma pasta (por exemplo, uma pasta sincronizada na
@@ -183,7 +183,7 @@ export default function BackupSection(props: {
             </p>
             <p class="muted">
               Antes disso, o Gabaritei guarda uma cópia dos dados atuais na mesma pasta, e ela
-              também aparece na lista para você voltar atrás.
+              também aparece na lista, para voltar atrás se for preciso.
             </p>
           </ConfirmModal>
         )}
@@ -235,7 +235,7 @@ const listingNotices: Record<
   },
   slow: {
     id: "backup-list-slow",
-    text: "A leitura da lista de backups está demorando. Você ainda pode fazer backups nesta pasta.",
+    text: "A leitura da lista de backups está demorando. Ainda dá para fazer backups nesta pasta.",
   },
 };
 

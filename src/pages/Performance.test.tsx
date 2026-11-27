@@ -320,7 +320,7 @@ describe("Desempenho", () => {
   it("explains when nothing was finished yet", async () => {
     backend({ ...emptyPerformance, overall: stats(0, 0, 0, 12) });
     renderPerformance();
-    expect(await screen.findByText("Você ainda não finalizou nenhuma tentativa.")).toBeVisible();
+    expect(await screen.findByText("Nenhuma tentativa finalizada ainda.")).toBeVisible();
     expect(screen.getAllByRole("link", { name: "Ir para o Banco" })).toHaveLength(2);
     expect(screen.getByText("Ainda não há respostas para mostrar a evolução.")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Assuntos mais fracos" })).not.toBeInTheDocument();

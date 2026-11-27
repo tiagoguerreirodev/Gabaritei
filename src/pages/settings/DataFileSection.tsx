@@ -78,7 +78,8 @@ export default function DataFileSection(props: {
           </p>
           <p class="muted">
             Antes de substituir, o Gabaritei guarda uma cópia dos dados atuais na pasta de backups,
-            e ela aparece na lista para você voltar atrás. Um arquivo inválido não altera nada.
+            e ela aparece na lista, para voltar atrás se for preciso. Um arquivo inválido não altera
+            nada.
           </p>
         </ConfirmModal>
       </Show>

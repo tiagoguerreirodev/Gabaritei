@@ -504,7 +504,28 @@ fn due_or_wrong_questions_are_all_picked_with_due_first() {
         .pick(&statuses(&[Due, Wrong]), 100, SessionOrder::DueFirst)
         .unwrap();
 
-    assert_eq!(picked.len(), 4);
+    assert_eq!(
+        picked,
+        world.ids(&["due_early", "due_late", "wrong_new", "wrong_old"])
+    );
+}
+
+#[test]
+fn a_question_both_due_and_wrong_is_picked_once() {
+    let world = simple(&["both", "wrong_only"]);
+    world.attempt(
+        "a1",
+        T1,
+        true,
+        &[("both", "wrong", false), ("wrong_only", "wrong", false)],
+    );
+    world.review_due("both", "2026-11-05T10:00:00.000Z");
+
+    let picked = world
+        .pick(&statuses(&[Due, Wrong]), 100, SessionOrder::DueFirst)
+        .unwrap();
+
+    assert_eq!(picked, world.ids(&["both", "wrong_only"]));
 }
 
 #[test]

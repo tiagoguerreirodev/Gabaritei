@@ -174,15 +174,17 @@ export default function StrengthTable(props: { areas: AreaStats[] }) {
                                         <Sparkline weeks={topic.trend} />
                                       </td>
                                       <td>
-                                        <A
-                                          class="btn btn-link is-inline"
-                                          aria-label={`Treinar este assunto: ${topic.name}`}
-                                          href={bancoPath({
-                                            filter: { ...emptyFilter, topicIds: [topic.topicId] },
-                                          })}
-                                        >
-                                          Treinar
-                                        </A>
+                                        <Show when={topic.stats.available > 0}>
+                                          <A
+                                            class="btn btn-link is-inline"
+                                            aria-label={`Treinar este assunto: ${topic.name}`}
+                                            href={bancoPath({
+                                              filter: { ...emptyFilter, topicIds: [topic.topicId] },
+                                            })}
+                                          >
+                                            Treinar
+                                          </A>
+                                        </Show>
                                       </td>
                                     </tr>
                                   )}

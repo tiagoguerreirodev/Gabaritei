@@ -249,21 +249,5 @@ pub(crate) fn open_attempt_questions(conn: &Connection) -> AppResult<HashSet<Que
     Ok(ids)
 }
 
-pub(crate) fn fill_review_session(
-    mut due: Vec<QuestionId>,
-    errors: impl IntoIterator<Item = QuestionId>,
-    limit: u32,
-) -> Vec<QuestionId> {
-    for id in errors {
-        if due.len() >= limit as usize {
-            break;
-        }
-        if !due.contains(&id) {
-            due.push(id);
-        }
-    }
-    due
-}
-
 #[cfg(test)]
 mod tests;

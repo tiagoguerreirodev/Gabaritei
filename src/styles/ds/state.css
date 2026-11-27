@@ -1,0 +1,58 @@
+/* State: what a screen shows while loading, when empty, and when loading failed. */
+.state {
+  margin: var(--space-6) 0;
+}
+
+.skeleton {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 40rem;
+}
+
+.skeleton-line {
+  display: block;
+  height: 1rem;
+  width: 60%;
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  animation: skeleton-pulse 1.4s var(--ease) infinite alternate;
+}
+
+.skeleton-line[data-wide="true"] {
+  width: 100%;
+}
+
+@keyframes skeleton-pulse {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0.45;
+  }
+}
+
+.empty-title {
+  margin: 0 0 var(--space-1);
+  font-weight: 600;
+}
+
+.state-action {
+  margin-top: var(--space-3);
+}
+
+.error {
+  color: var(--danger);
+  white-space: pre-line;
+}
+
+.error-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.error-state .error {
+  margin: 0;
+}

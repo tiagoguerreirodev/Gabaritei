@@ -32,21 +32,6 @@
   align-self: flex-end;
 }
 
-/* The printed percentage carries the meaning; the band color only reinforces it. */
-.facts {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--space-1) var(--space-4);
-}
-
-.facts dt {
-  color: var(--muted);
-}
-
-.facts dd {
-  margin: 0;
-}
-
 .collection-list {
   list-style: none;
   margin: 0;

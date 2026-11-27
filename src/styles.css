@@ -12,6 +12,9 @@
 @import "./styles/ds/toast.css";
 @import "./styles/ds/meter.css";
 @import "./styles/ds/nav.css";
+@import "./styles/ds/shell.css";
+@import "./styles/ds/state.css";
+@import "./styles/ds/list.css";
 @import "./styles/ds/bubble.css";
 @import "./styles/ds/option.css";
 @import "./styles/ds/sheet.css";

@@ -7,20 +7,6 @@
   margin-left: auto;
 }
 
-.flag-button:disabled {
-  cursor: default;
-}
-
-.count-field {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.count-field input {
-  width: 6rem;
-  font: inherit;
-}
-
 /* The sheet and the rail sit side by side; the width follows the two columns and their gap. */
 .resolver {
   max-width: calc(var(--sheet-width) + var(--rail-width) + var(--space-8));
@@ -83,6 +69,10 @@
   color: var(--danger);
 }
 
+.recap-blank .recap-glyph {
+  color: var(--muted);
+}
+
 .recap-annulled {
   text-decoration: line-through;
 }
@@ -137,7 +127,7 @@
 }
 
 .disputed-badge {
-  margin: 0;
+  margin: 0 0 var(--space-2);
 }
 
 /* The AI panels inside the explanation: stacked, with the same rhythm as its sections. */
@@ -192,6 +182,8 @@
 
 /* Estudo: the one primary action sits right under the options. */
 .confirm-row {
+  display: flex;
+  justify-content: flex-end;
   margin-top: var(--space-5);
 }
 

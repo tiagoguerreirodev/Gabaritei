@@ -98,7 +98,7 @@ export default function RecheckPanel(props: {
               </Show>
               <p>{result().reasoning}</p>
               <Show when={result().sources.length > 0}>
-                <h4>Fontes</h4>
+                <span class="label">Fontes</span>
                 <ul class="explanation-refs">
                   <For each={result().sources}>{(source) => <li>{source}</li>}</For>
                 </ul>

@@ -42,21 +42,6 @@
   margin: 0;
 }
 
-.backup-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.backup-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-2) 0;
-  border-top: 1px solid var(--border);
-}
-
 .confirm-row {
   display: flex;
   justify-content: flex-end;

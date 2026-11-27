@@ -66,7 +66,7 @@ If a task seems to need breaking any of these, stop and ask the owner.
 | `src/format.ts`, `src/labels.ts` | Shared display formatting and pt-BR labels. |
 | `src/navigation.ts` | Navigation helpers usable outside router components. |
 | `src/styles/tokens.css` | **Generated** from `docs/design-system/tokens.json` by `npm run tokens` (`scripts/tokens.ts`); never edit by hand. A test fails when the two drift. |
-| `src/styles/ds/` | Design-system component families (base, button, card, badge, field, tabs, meter, modal, toast, nav, bubble, option, sheet, explanation, rail, form, review, choice, bank, history, shell, state, list), one file each, copied from `docs/design-system/components/bundle.css`. Screen-only styles stay in the other files in `src/styles/`. |
+| `src/styles/ds/` | Design-system component families (base, button, card, badge, field, tabs, meter, modal, toast, nav, bubble, option, sheet, explanation, rail, form, review, choice, bank, history, shell, state, list, settings), one file each, copied from `docs/design-system/components/bundle.css`. Screen-only styles stay in the other files in `src/styles/`. |
 | `src/bindings/` | TypeScript types **generated** from Rust by `cargo test` (ts-rs). Committed; never edit by hand. |
 | `src/routes.ts`, `src/pages/` | Route table (pt-BR labels, menu placement) and one component per page. |
 | `src/pages/History.tsx` | Histórico: open attempts, finished attempts with derived scores, *Abrir* and *Refazer*. |

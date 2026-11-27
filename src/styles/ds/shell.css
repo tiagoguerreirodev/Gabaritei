@@ -1,0 +1,69 @@
+/* Shell: the nav column and the content column that holds one page. */
+.shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+/* Focus mode (an unfinished attempt is open): no nav, the page is only the exam. */
+.shell.focus-mode {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.content {
+  min-width: 0;
+  padding: var(--space-8) var(--space-10);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 60rem) {
+  .content {
+    padding: var(--space-6) var(--space-5);
+  }
+}
+
+/* Heading scale: page title (h1), then one style for every card and dialog title (h2). */
+.page h1 {
+  margin: 0 0 var(--space-4);
+  font-size: 1.5rem;
+  line-height: 1.25;
+}
+
+.card h2 {
+  margin: 0 0 var(--space-2);
+  font-size: 1.125rem;
+  line-height: 1.25;
+}
+
+/* First stop for keyboard users, hidden until focused. */
+.skip-link {
+  position: fixed;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: 100;
+  padding: var(--space-2) var(--space-4);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transform: translateY(-200%);
+}
+
+.skip-link:focus-visible {
+  transform: none;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

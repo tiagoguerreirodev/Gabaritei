@@ -1,0 +1,42 @@
+/* ---- DataTable: a numeric table with indented levels and a short meter per row ---- */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.data-table th,
+.data-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  font-weight: normal;
+}
+.data-table th:first-child {
+  text-align: left;
+}
+.data-table thead th {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.data-table .level-area th {
+  font-weight: 600;
+}
+.data-table .level-matter th {
+  padding-left: var(--space-8);
+}
+.data-table .level-topic th {
+  padding-left: calc(var(--space-8) + var(--space-5));
+}
+.table-meter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.table-meter .meter-track {
+  display: inline-block;
+  width: 4rem;
+  height: 0.5rem;
+}
+.table-meter .meter-value {
+  min-width: 3.5rem;
+}

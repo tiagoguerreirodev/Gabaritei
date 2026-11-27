@@ -63,52 +63,6 @@
   margin-top: var(--space-3);
 }
 
-/* ---- Shared states: skeleton, empty action, error with retry ---- */
-
-.skeleton {
-  display: grid;
-  gap: var(--space-3);
-  max-width: 40rem;
-}
-
-.skeleton-line {
-  display: block;
-  height: 1rem;
-  width: 60%;
-  border-radius: var(--radius-sm);
-  background: var(--border);
-  animation: skeleton-pulse 1.4s var(--ease) infinite alternate;
-}
-
-.skeleton-line[data-wide="true"] {
-  width: 100%;
-}
-
-@keyframes skeleton-pulse {
-  from {
-    opacity: 1;
-  }
-
-  to {
-    opacity: 0.45;
-  }
-}
-
-.state-action {
-  margin-top: var(--space-3);
-}
-
-.error-state {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.error-state .error {
-  margin: 0;
-}
-
 /* ---- Mastery bars (Início): length plus printed number, never color alone ---- */
 
 .meter {

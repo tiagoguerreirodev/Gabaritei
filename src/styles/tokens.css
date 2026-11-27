@@ -42,6 +42,11 @@
   --sheet-width: 46rem;
   --rail-width: 13.5rem;
   --gutter-width: 3rem;
+  --stat-tile-min: 11rem;
+  --settings-label-width: 12rem;
+  --chart-width: 40rem;
+  --breakpoint-narrow: 60rem;
+  --breakpoint-compact: 40rem;
   --dur-fast: 120ms;
   --dur-base: 200ms;
   --font-ui:

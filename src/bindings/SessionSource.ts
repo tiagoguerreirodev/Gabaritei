@@ -2,9 +2,8 @@
 import type { CollectionId } from "./CollectionId";
 import type { QuestionFilter } from "./QuestionFilter";
 import type { SessionOrder } from "./SessionOrder";
-import type { TopicId } from "./TopicId";
 
 /**
  * Where a session's questions come from.
  */
-export type SessionSource = { "kind": "collection", collectionId: CollectionId, } | { "kind": "topic", topicId: TopicId, count: number, } | { "kind": "errors", includeBlanks: boolean, } | { "kind": "reviews" } | { "kind": "filter", filter: QuestionFilter, count: number, order: SessionOrder, };
+export type SessionSource = { "kind": "collection", collectionId: CollectionId, } | { "kind": "filter", filter: QuestionFilter, count: number, order: SessionOrder, };

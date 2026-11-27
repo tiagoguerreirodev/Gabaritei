@@ -35,7 +35,7 @@ export const STRONG_ACHIEVEMENT = 0.7;
 /** Achievement below this reads as weak. */
 export const WEAK_ACHIEVEMENT = 0.5;
 
-/** The color band of an achievement chip. The printed percentage always goes with it. */
+/** The color band of an achievement badge. The printed percentage always goes with it. */
 export const achievementBand = (ratio: number) => {
   if (ratio >= STRONG_ACHIEVEMENT) return "strong";
   if (ratio >= WEAK_ACHIEVEMENT) return "fair";

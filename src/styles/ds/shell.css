@@ -25,14 +25,14 @@
 /* Heading scale: page title (h1), then one style for every card and dialog title (h2). */
 .page h1 {
   margin: 0 0 var(--space-4);
-  font-size: var(--text-2xl);
-  line-height: var(--leading-tight);
+  font-size: 1.5rem;
+  line-height: 1.25;
 }
 
 .card h2 {
   margin: 0 0 var(--space-2);
-  font-size: var(--text-md);
-  line-height: var(--leading-tight);
+  font-size: 1.125rem;
+  line-height: 1.25;
 }
 
 /* First stop for keyboard users, hidden until focused. */

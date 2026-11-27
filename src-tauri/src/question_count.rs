@@ -1,4 +1,4 @@
-//! Counts accepted by the generation and topic-practice forms.
+//! Counts accepted by the generation and Banco session forms.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -12,7 +12,6 @@ const SELECTION_DEFAULT_COUNT: u32 = 20;
 #[ts(export)]
 pub enum CountContext {
     Generation,
-    Topic { available: u32 },
     Selection { available: u32 },
 }
 
@@ -29,10 +28,6 @@ impl CountContext {
     pub fn limits(self) -> CountLimits {
         let (max, default) = match self {
             Self::Generation => (crate::ai::generate::MAX_COUNT, DEFAULT_COUNT),
-            Self::Topic { available } => (
-                available.min(crate::attempts::MAX_TOPIC_SESSION),
-                DEFAULT_COUNT,
-            ),
             Self::Selection { available } => (
                 available.min(crate::attempts::MAX_SELECTION_SESSION),
                 SELECTION_DEFAULT_COUNT,
@@ -60,20 +55,6 @@ mod tests {
                 initial: 10
             }
         );
-    }
-
-    #[test]
-    fn practice_respects_the_topic_size_and_the_session_limit() {
-        for (available, max, initial) in [(0, 0, 0), (4, 4, 4), (250, 200, 10)] {
-            assert_eq!(
-                CountContext::Topic { available }.limits(),
-                CountLimits {
-                    min: 1,
-                    max,
-                    initial
-                }
-            );
-        }
     }
 
     #[test]

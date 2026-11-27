@@ -148,7 +148,7 @@ const stepStateLabels: Record<StepState, string> = {
  */
 function StepList(props: { states: StepStates }) {
   return (
-    <ol class="step-list" role="list" aria-label="Etapas">
+    <ol class="steps" role="list" aria-label="Etapas">
       <For each={STEPS}>
         {(step) => (
           <li

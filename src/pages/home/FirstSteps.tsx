@@ -21,6 +21,8 @@ const steps: Record<FirstStep, { label: string; href: string; link: string }> = 
 export default function FirstSteps(props: { steps: FirstStepStatus[] }) {
   const doneCount = () => props.steps.filter((status) => status.done).length;
 
+  const currentIndex = () => props.steps.findIndex((status) => !status.done);
+
   return (
     <Show when={props.steps.length > 0}>
       <section class="card card-wide first-steps" aria-labelledby="first-steps-title">
@@ -28,16 +30,20 @@ export default function FirstSteps(props: { steps: FirstStepStatus[] }) {
         <p class="muted">
           {doneCount()} de {props.steps.length} concluídos
         </p>
-        <ol class="first-steps-list">
+        <ol class="steps" role="list">
           <For each={props.steps}>
-            {(status) => (
-              <li classList={{ done: status.done }}>
-                <span class="first-step-mark" aria-hidden="true">
-                  {status.done ? "✓" : "○"}
-                </span>
-                <span>
-                  {steps[status.step].label}
-                  <span class="sr-only">{status.done ? " (concluído)" : ""}</span>
+            {(status, index) => (
+              <li
+                classList={{ done: status.done, current: index() === currentIndex() }}
+                aria-current={index() === currentIndex() ? "step" : undefined}
+              >
+                {steps[status.step].label}
+                <span class="sr-only">
+                  {status.done
+                    ? " (concluída)"
+                    : index() === currentIndex()
+                      ? " (em andamento)"
+                      : " (pendente)"}
                 </span>
                 <Show when={!status.done}>
                   <A href={steps[status.step].href}>{steps[status.step].link}</A>

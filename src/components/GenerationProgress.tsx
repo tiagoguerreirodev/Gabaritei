@@ -16,14 +16,14 @@ export default function GenerationProgress() {
   onMount(() => setGenerationPanelShown(true));
   onCleanup(() => setGenerationPanelShown(false));
   return (
-    <div class="generation-progress">
+    <div>
       <p role="status">
         <Show when={generationStageSentence()}>{(sentence) => <>{sentence()}…</>}</Show>
         <Show when={generationStatus()?.progress?.label}>
           {(label) => <span class="muted"> {label()}</span>}
         </Show>
       </p>
-      <ol class="stage-list" role="list" aria-label="Etapas da geração">
+      <ol class="steps" role="list" aria-label="Etapas da geração">
         <For each={generationStages()}>
           {(stage, index) => (
             <li

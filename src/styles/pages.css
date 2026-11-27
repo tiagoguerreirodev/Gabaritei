@@ -63,47 +63,10 @@
   margin-top: var(--space-3);
 }
 
-/* ---- Mastery bars (Início): length plus printed number, never color alone ---- */
+/* ---- Mastery bars (Início): the meter fills its row; rows may wrap ---- */
 
 .meter {
   width: 100%;
-}
-
-.meter-name {
-  overflow-wrap: anywhere;
-}
-
-/*
- * Stacked layout (name above, bar and number below) for narrow viewports and for the largest text
- * size. A media-query rem is the browser's default 16px, not the app's text size, so the xl rules
- * below apply at any width; the media query only matters if the minimum window width is lowered.
- */
-@media (max-width: 40rem) {
-  .meter {
-    grid-template-columns: 1fr 4rem;
-  }
-
-  .meter-name {
-    grid-column: 1 / -1;
-  }
-
-  .item-list.is-ruled > li {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-}
-
-:root[data-text-size="xl"] .meter {
-  grid-template-columns: 1fr 4rem;
-}
-
-:root[data-text-size="xl"] .meter-name {
-  grid-column: 1 / -1;
-}
-
-:root[data-text-size="xl"] .item-list.is-ruled > li {
-  flex-direction: column;
-  align-items: flex-start;
 }
 
 .item-list > li {

@@ -83,6 +83,10 @@ describe("Início", () => {
     expect(within(strip).getByText("Cobertura").parentElement).toHaveTextContent(
       "Cobertura40%40 de 100",
     );
+    expect(within(strip).getByText("Acerto entre respondidas").nextElementSibling).toHaveClass(
+      "badge",
+      "badge-good",
+    );
     expect(screen.getByText("9.368 questões no banco.")).toBeVisible();
 
     const areas = within(

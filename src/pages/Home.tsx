@@ -5,7 +5,7 @@ import type { GroupStats } from "../bindings/GroupStats";
 import LegacyImport from "../components/LegacyImport";
 import MasteryBar from "../components/MasteryBar";
 import { Loading, ResourceView } from "../components/states";
-import { formatDate, formatNumber, formatPercent, questionCount } from "../format";
+import { achievementBand, formatDate, formatNumber, formatPercent, questionCount } from "../format";
 import { modeLabel } from "../labels";
 import { openAttempt } from "../navigation";
 import { bancoPath } from "./bank/filterUrl";
@@ -55,16 +55,18 @@ export default function Home() {
               <Show when={otherAttempts().length > 0}>
                 <section class="card card-wide" aria-labelledby="active-title">
                   <h2 id="active-title">Outras tentativas em andamento</h2>
-                  <ul class="attempt-list">
+                  <ul class="item-list is-ruled">
                     <For each={otherAttempts()}>
                       {(attempt) => (
                         <li>
-                          <span class="attempt-title">{attempt.title}</span>
-                          <span class="muted">
-                            {modeLabel[attempt.feedbackMode]} · {formatNumber(attempt.answered)} de{" "}
-                            {formatNumber(attempt.total)} respondidas · iniciada em{" "}
-                            {formatDate(attempt.startedAt)}
-                          </span>
+                          <div>
+                            <span class="item-title">{attempt.title}</span>
+                            <span class="muted">
+                              {modeLabel[attempt.feedbackMode]} · {formatNumber(attempt.answered)}{" "}
+                              de {formatNumber(attempt.total)} respondidas · iniciada em{" "}
+                              {formatDate(attempt.startedAt)}
+                            </span>
+                          </div>
                           <button
                             type="button"
                             class="btn"
@@ -83,7 +85,7 @@ export default function Home() {
               <Show when={summary().dueReviews > 0 || summary().draftsWaiting > 0}>
                 <section class="card card-wide" aria-labelledby="waiting-title">
                   <h2 id="waiting-title">Aguardando você</h2>
-                  <ul class="waiting-list">
+                  <ul class="item-list">
                     <Show when={summary().dueReviews > 0}>
                       <li>
                         <A href={bancoPath(presets.reviews)}>Revisões pendentes</A>
@@ -109,7 +111,7 @@ export default function Home() {
               <Show when={evaluated()}>
                 <section class="card card-wide" aria-labelledby="areas-title">
                   <h2 id="areas-title">Aproveitamento por área</h2>
-                  <ul class="area-list">
+                  <ul class="item-list">
                     <For each={summary().areas.filter((a) => a.stats.score.evaluated > 0)}>
                       {(area) => (
                         <li>
@@ -133,7 +135,14 @@ export default function Home() {
 function SummaryStrip(props: { stats: GroupStats }) {
   const items = () => [
     { name: "Aproveitamento", value: formatPercent(props.stats.score.achievement) },
-    { name: "Acerto entre respondidas", value: formatPercent(props.stats.score.accuracy) },
+    {
+      name: "Acerto entre respondidas",
+      value: formatPercent(props.stats.score.accuracy),
+      band:
+        props.stats.score.accuracy === null
+          ? undefined
+          : achievementBand(props.stats.score.accuracy),
+    },
     {
       name: "Cobertura",
       value: formatPercent(props.stats.coverage),
@@ -146,7 +155,9 @@ function SummaryStrip(props: { stats: GroupStats }) {
         {(item) => (
           <li>
             <span class="stat-name">{item.name}</span>
-            <strong>{item.value}</strong>
+            <Show when={item.band} fallback={<strong>{item.value}</strong>}>
+              <strong class={`badge badge-${item.band}`}>{item.value}</strong>
+            </Show>
             <Show when={item.hint}>
               <span class="muted">{item.hint}</span>
             </Show>
